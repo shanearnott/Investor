@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Label, Textarea } from "@/components/ui/input";
 import { newId, Scenario, ScenarioSchema } from "@/lib/models";
+import { formatMoney } from "@/lib/utils";
 
 function blank(): Scenario {
   return ScenarioSchema.parse({
@@ -130,52 +131,114 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
       <CardHeader>
         <CardTitle>{draft.name ? `Edit "${draft.name}"` : "Add scenario"}</CardTitle>
       </CardHeader>
-      <CardContent className="space-y-3">
+      <CardContent className="space-y-4">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           <Field label="Name">
             <Input value={d.name} onChange={(e) => update("name", e.target.value)} />
           </Field>
-          <Field label="Horizon (years)">
-            <Input type="number" min={1} max={50} value={d.horizon_years} onChange={(e) => update("horizon_years", Number(e.target.value))} />
+          <Field label="Horizon" hint="How far into the future to project">
+            <SuffixedInput
+              suffix="years"
+              type="number"
+              min={1}
+              max={50}
+              value={d.horizon_years}
+              onChange={(e) => update("horizon_years", Number(e.target.value))}
+            />
           </Field>
-          <Field label="Inflation %/yr">
-            <Input type="number" step="0.1" value={d.inflation_pct} onChange={(e) => update("inflation_pct", Number(e.target.value))} />
+          <Field label="Inflation" hint="Used for the optional real-value view">
+            <SuffixedInput
+              suffix="%/yr"
+              type="number"
+              step="0.1"
+              value={d.inflation_pct}
+              onChange={(e) => update("inflation_pct", Number(e.target.value))}
+            />
           </Field>
-          <Field label="Default stock growth %/yr">
-            <Input type="number" step="0.5" value={d.default_stock_growth_pct} onChange={(e) => update("default_stock_growth_pct", Number(e.target.value))} />
+          <Field label="Default stock growth" hint="Applied to stocks without an override below">
+            <SuffixedInput
+              suffix="%/yr"
+              type="number"
+              step="0.5"
+              value={d.default_stock_growth_pct}
+              onChange={(e) => update("default_stock_growth_pct", Number(e.target.value))}
+            />
           </Field>
-          <Field label="Default property growth %/yr">
-            <Input type="number" step="0.5" value={d.default_property_growth_pct} onChange={(e) => update("default_property_growth_pct", Number(e.target.value))} />
+          <Field label="Default property growth" hint="Applied to properties without an override below">
+            <SuffixedInput
+              suffix="%/yr"
+              type="number"
+              step="0.5"
+              value={d.default_property_growth_pct}
+              onChange={(e) => update("default_property_growth_pct", Number(e.target.value))}
+            />
           </Field>
         </div>
         <Field label="Description">
-          <Textarea value={d.description} onChange={(e) => update("description", e.target.value)} />
+          <Textarea
+            value={d.description}
+            onChange={(e) => update("description", e.target.value)}
+            placeholder='e.g. "Bull case: ACME doubles by IPO + 7%/yr property"'
+          />
         </Field>
 
         {data.stocks.length > 0 ? (
-          <div className="space-y-1">
+          <div className="space-y-2">
             <Label>Per-stock overrides</Label>
+            <p className="text-[11px] text-muted-foreground">
+              Set a different growth % or second-trigger date for individual stocks. Leave blank to use the defaults above.
+            </p>
+            <div className="hidden sm:grid grid-cols-[2fr_1fr_1fr] gap-2 px-2 text-[11px] uppercase tracking-wide text-muted-foreground">
+              <span>Stock</span>
+              <span>Growth (overrides default {d.default_stock_growth_pct}%/yr)</span>
+              <span>Second trigger override</span>
+            </div>
             <div className="space-y-2">
               {data.stocks.map((h) => {
                 const ov = d.stock_overrides[h.id] ?? {};
                 const rate = ov.annual_price_growth_pct ?? d.default_stock_growth_pct;
                 const trig = ov.second_trigger_date_override ?? "";
+                const usingOverride = ov.annual_price_growth_pct !== undefined;
                 return (
-                  <div key={h.id} className="grid grid-cols-1 gap-2 rounded-md border p-2 sm:grid-cols-3">
-                    <div className="text-sm font-medium">{h.ticker || h.company_name}</div>
-                    <Input
-                      type="number"
-                      step="0.5"
-                      value={rate}
-                      onChange={(e) => updateStockOv(h.id, { annual_price_growth_pct: Number(e.target.value) })}
-                      placeholder="growth %"
-                    />
-                    <Input
-                      type="date"
-                      value={trig || ""}
-                      onChange={(e) => updateStockOv(h.id, { second_trigger_date_override: e.target.value || null })}
-                      placeholder="Second trigger override"
-                    />
+                  <div
+                    key={h.id}
+                    className="grid grid-cols-1 gap-2 rounded-md border p-2 sm:grid-cols-[2fr_1fr_1fr]"
+                  >
+                    <div className="text-sm">
+                      <div className="font-medium">{h.ticker || h.company_name}</div>
+                      <div className="text-[11px] text-muted-foreground">
+                        current {formatMoney(h.current_share_price, h.currency, { fractionDigits: 2 })}/sh
+                        {h.equity_type === "RSU (double trigger)" && h.second_trigger_date
+                          ? ` · trigger ${h.second_trigger_date}`
+                          : ""}
+                      </div>
+                    </div>
+                    <div>
+                      <SuffixedInput
+                        suffix="%/yr"
+                        type="number"
+                        step="0.5"
+                        value={rate}
+                        onChange={(e) => updateStockOv(h.id, { annual_price_growth_pct: Number(e.target.value) })}
+                      />
+                      <p className="text-[10px] text-muted-foreground mt-1">
+                        {usingOverride
+                          ? `Overrides default ${d.default_stock_growth_pct}%/yr`
+                          : `Using default ${d.default_stock_growth_pct}%/yr`}
+                      </p>
+                    </div>
+                    <div>
+                      <Input
+                        type="date"
+                        value={trig || ""}
+                        onChange={(e) => updateStockOv(h.id, { second_trigger_date_override: e.target.value || null })}
+                      />
+                      <p className="text-[10px] text-muted-foreground mt-1">
+                        {trig
+                          ? `Overrides ${h.second_trigger_date ?? "—"}`
+                          : `Using ${h.second_trigger_date ?? "(none set)"}`}
+                      </p>
+                    </div>
                   </div>
                 );
               })}
@@ -184,24 +247,45 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
         ) : null}
 
         {data.properties.length > 0 ? (
-          <div className="space-y-1">
+          <div className="space-y-2">
             <Label>Per-property overrides</Label>
+            <p className="text-[11px] text-muted-foreground">
+              Override the growth rate for individual properties. Leave blank to use the default.
+            </p>
+            <div className="hidden sm:grid grid-cols-[2fr_1fr] gap-2 px-2 text-[11px] uppercase tracking-wide text-muted-foreground">
+              <span>Property</span>
+              <span>Growth (overrides default {d.default_property_growth_pct}%/yr)</span>
+            </div>
             <div className="space-y-2">
               {data.properties.map((p) => {
                 const ov = d.property_overrides[p.id] ?? {};
                 const rate = ov.annual_growth_pct ?? d.default_property_growth_pct;
+                const usingOverride = ov.annual_growth_pct !== undefined;
                 return (
-                  <div key={p.id} className="grid grid-cols-1 gap-2 rounded-md border p-2 sm:grid-cols-3">
-                    <div className="text-sm font-medium sm:col-span-2">
-                      {p.name} <span className="text-muted-foreground text-xs">{p.suburb}, {p.region}</span>
+                  <div
+                    key={p.id}
+                    className="grid grid-cols-1 gap-2 rounded-md border p-2 sm:grid-cols-[2fr_1fr]"
+                  >
+                    <div className="text-sm">
+                      <div className="font-medium">{p.name}</div>
+                      <div className="text-[11px] text-muted-foreground">
+                        {p.suburb}, {p.region} · current {formatMoney(p.current_value, p.currency)}
+                      </div>
                     </div>
-                    <Input
-                      type="number"
-                      step="0.5"
-                      value={rate}
-                      onChange={(e) => updatePropOv(p.id, { annual_growth_pct: Number(e.target.value) })}
-                      placeholder="growth %"
-                    />
+                    <div>
+                      <SuffixedInput
+                        suffix="%/yr"
+                        type="number"
+                        step="0.5"
+                        value={rate}
+                        onChange={(e) => updatePropOv(p.id, { annual_growth_pct: Number(e.target.value) })}
+                      />
+                      <p className="text-[10px] text-muted-foreground mt-1">
+                        {usingOverride
+                          ? `Overrides default ${d.default_property_growth_pct}%/yr`
+                          : `Using default ${d.default_property_growth_pct}%/yr`}
+                      </p>
+                    </div>
                   </div>
                 );
               })}
@@ -216,6 +300,20 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
         <Button onClick={submit}>Save</Button>
       </div>
     </Card>
+  );
+}
+
+function SuffixedInput({
+  suffix,
+  ...props
+}: { suffix: string } & React.InputHTMLAttributes<HTMLInputElement>) {
+  return (
+    <div className="relative">
+      <Input className="pr-12" {...props} />
+      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-muted-foreground">
+        {suffix}
+      </span>
+    </div>
   );
 }
 

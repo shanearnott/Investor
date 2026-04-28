@@ -40,7 +40,12 @@ type DataContextValue = {
   loadDemo: () => void;
   resetLocal: () => void;
   reload: () => Promise<void>;
+  /** Currency used to render all monetary values across charts/figures. */
+  displayCurrency: string;
+  setDisplayCurrency: (ccy: string) => void;
 };
+
+const DISPLAY_CCY_KEY = "investor:displayCurrency";
 
 const Ctx = createContext<DataContextValue | null>(null);
 
@@ -58,6 +63,23 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const [data, setData] = useState<CollectionsMap>(EMPTY);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [displayCurrency, setDisplayCurrencyState] = useState<string>(
+    DEFAULT_SETTINGS.primary_currency,
+  );
+
+  // Hydrate persisted display-currency choice
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const v = window.localStorage.getItem(DISPLAY_CCY_KEY);
+    if (v) setDisplayCurrencyState(v);
+  }, []);
+
+  const setDisplayCurrency = useCallback((ccy: string) => {
+    setDisplayCurrencyState(ccy);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(DISPLAY_CCY_KEY, ccy);
+    }
+  }, []);
 
   const inflightLoad = useRef(0);
 
@@ -142,8 +164,10 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       loadDemo,
       resetLocal,
       reload,
+      displayCurrency,
+      setDisplayCurrency,
     }),
-    [loading, error, data, setStocks, setProperties, setScenarios, setProjects, setSettings, loadDemo, resetLocal, reload],
+    [loading, error, data, setStocks, setProperties, setScenarios, setProjects, setSettings, loadDemo, resetLocal, reload, displayCurrency, setDisplayCurrency],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

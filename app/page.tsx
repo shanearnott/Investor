@@ -2,14 +2,16 @@
 
 import Link from "next/link";
 
+import { CurrencySelector } from "@/components/currency-selector";
 import { useData } from "@/components/data-provider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { convert } from "@/lib/fx";
 import { formatMoney } from "@/lib/utils";
 import { currentAllocationBreakdown } from "@/lib/projections";
 
 export default function HomePage() {
-  const { data, loadDemo, loading } = useData();
+  const { data, loadDemo, loading, displayCurrency } = useData();
 
   const stocksCount = data.stocks.length;
   const propertiesCount = data.properties.length;
@@ -21,17 +23,22 @@ export default function HomePage() {
     properties: data.properties,
     settings: data.settings,
   });
-  const today = Object.values(allocation).reduce((s, v) => s + v, 0);
+  // currentAllocationBreakdown returns values in primary_currency; convert for display
+  const todayPrimary = Object.values(allocation).reduce((s, v) => s + v, 0);
+  const today = convert(todayPrimary, data.settings.primary_currency, displayCurrency, data.settings);
 
   const showWelcome = !loading && stocksCount === 0 && propertiesCount === 0;
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
-      <section className="space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Investor</h1>
-        <p className="text-sm text-muted-foreground">
-          Personal investment tracker · scenario projections · project evaluation
-        </p>
+      <section className="flex flex-wrap items-end justify-between gap-3">
+        <div className="space-y-1">
+          <h1 className="text-2xl font-semibold tracking-tight">Investor</h1>
+          <p className="text-sm text-muted-foreground">
+            Personal investment tracker · scenario projections · project evaluation
+          </p>
+        </div>
+        <CurrencySelector />
       </section>
 
       {showWelcome ? (
@@ -83,12 +90,12 @@ export default function HomePage() {
           <CardHeader>
             <CardTitle>Vested net worth today</CardTitle>
             <CardDescription>
-              Liquid + vested-but-pre-trigger equity + property equity in {data.settings.primary_currency}
+              Liquid + vested-but-pre-trigger equity + property equity, in {displayCurrency}
             </CardDescription>
           </CardHeader>
           <CardContent>
             <p className="text-3xl font-semibold tabular-nums">
-              {formatMoney(today, data.settings.primary_currency)}
+              {formatMoney(today, displayCurrency)}
             </p>
             <p className="text-xs text-muted-foreground mt-1">
               See <Link href="/projections" className="underline">Projections</Link> for the full picture.

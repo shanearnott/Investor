@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 
+import { CurrencySelector } from "@/components/currency-selector";
 import { useData } from "@/components/data-provider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -61,11 +62,14 @@ export default function ProjectsPage() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-4">
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-xl font-semibold">Projects</h1>
-        <Button onClick={() => setEditing(blank(data.settings.primary_currency))}>
-          <Plus className="h-4 w-4" /> Add project
-        </Button>
+        <div className="flex items-center gap-3">
+          <CurrencySelector />
+          <Button onClick={() => setEditing(blank(data.settings.primary_currency))}>
+            <Plus className="h-4 w-4" /> Add project
+          </Button>
+        </div>
       </div>
 
       <p className="text-sm text-muted-foreground">
@@ -110,18 +114,22 @@ function ProjectCard({
   onEdit: () => void;
   onDelete: () => void;
 }) {
-  const { data } = useData();
+  const { data, displayCurrency } = useData();
   const [scenarioId, setScenarioId] = useState<string>(
     project.scenario_id || scenarios[0]?.id || "",
   );
   const scenario = scenarios.find((s) => s.id === scenarioId) ?? scenarios[0];
 
+  // Evaluate in displayCurrency by overriding settings.primary_currency for this call
   const ev = evaluateProject({
     project,
     scenario,
     holdings: data.stocks,
     properties: data.properties,
-    settings: data.settings,
+    settings: {
+      ...data.settings,
+      primary_currency: displayCurrency as typeof data.settings.primary_currency,
+    },
   });
 
   return (
