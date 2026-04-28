@@ -105,22 +105,32 @@ export default function HomePage() {
           </CardHeader>
           <CardContent>
             <p className="text-3xl font-semibold tabular-nums">
-              {formatMoney(today, displayCurrency)}
+              {formatMoney(today, displayCurrency)}{" "}
+              <span className="text-base font-medium text-muted-foreground">{displayCurrency}</span>
             </p>
             {(() => {
-              // Secondary = the *other* of USD/AUD, so it always swaps when the
-              // selector changes. For other display currencies, fall back to USD.
-              const secondary =
-                displayCurrency === "USD"
-                  ? "AUD"
-                  : displayCurrency === "AUD"
-                    ? "USD"
-                    : "USD";
+              // Secondary = whatever the user picked in Settings. If the
+              // current display IS that currency, swap to the primary.
+              const settingsPrimary = data.settings.primary_currency;
+              const settingsSecondary = data.settings.secondary_currency;
+              const secondary = displayCurrency === settingsSecondary
+                ? settingsPrimary
+                : settingsSecondary;
               if (secondary === displayCurrency) return null;
+              const rates = data.settings.fx_rates ?? {};
+              const haveRates = Boolean(rates[displayCurrency]) && Boolean(rates[secondary]);
               const inSecondary = convert(today, displayCurrency, secondary, data.settings);
+              if (!haveRates) {
+                return (
+                  <p className="text-sm text-amber-700 mt-1">
+                    Set FX rate for <b>{displayCurrency}</b> and <b>{secondary}</b> in Settings to see the {secondary} equivalent.
+                  </p>
+                );
+              }
               return (
-                <p className="text-sm text-muted-foreground tabular-nums mt-1">
-                  ≈ {formatMoney(inSecondary, secondary)}
+                <p className="text-base text-foreground/80 tabular-nums mt-1">
+                  ≈ {formatMoney(inSecondary, secondary)}{" "}
+                  <span className="text-sm font-medium text-muted-foreground">{secondary}</span>
                 </p>
               );
             })()}
