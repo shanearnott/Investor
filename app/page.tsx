@@ -100,14 +100,31 @@ export default function HomePage() {
           <CardHeader>
             <CardTitle>Vested net worth today</CardTitle>
             <CardDescription>
-              Liquid + vested-but-pre-trigger equity + property equity, in {displayCurrency}
+              Liquid + vested-but-pre-trigger equity + property equity
             </CardDescription>
           </CardHeader>
           <CardContent>
             <p className="text-3xl font-semibold tabular-nums">
               {formatMoney(today, displayCurrency)}
             </p>
-            <p className="text-xs text-muted-foreground mt-1">
+            {(() => {
+              // Secondary = the *other* of USD/AUD, so it always swaps when the
+              // selector changes. For other display currencies, fall back to USD.
+              const secondary =
+                displayCurrency === "USD"
+                  ? "AUD"
+                  : displayCurrency === "AUD"
+                    ? "USD"
+                    : "USD";
+              if (secondary === displayCurrency) return null;
+              const inSecondary = convert(today, displayCurrency, secondary, data.settings);
+              return (
+                <p className="text-sm text-muted-foreground tabular-nums mt-1">
+                  ≈ {formatMoney(inSecondary, secondary)}
+                </p>
+              );
+            })()}
+            <p className="text-xs text-muted-foreground mt-2">
               See <Link href="/projections" className="underline">Projections</Link> for the full picture.
             </p>
           </CardContent>
@@ -123,12 +140,6 @@ export default function HomePage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3 text-sm">
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-              <Stat label="Equity vesting" value={formatMoney(next12.totalVestingValue, displayCurrency)} sub={`${formatNumber(next12.totalVestingShares)} shares across ${next12.vestingEvents.length} event${next12.vestingEvents.length === 1 ? "" : "s"}`} />
-              <Stat label="Property growth" value={formatMoney(next12.totalPropertyGain, displayCurrency)} sub={`across ${next12.propertyGains.length} propert${next12.propertyGains.length === 1 ? "y" : "ies"}`} />
-              <Stat label="Combined" value={formatMoney(next12.totalVestingValue + next12.totalPropertyGain, displayCurrency)} />
-            </div>
-
             {next12.vestingEvents.length > 0 ? (
               <div>
                 <p className="text-xs font-medium text-muted-foreground mb-1">Vesting events</p>
@@ -193,16 +204,6 @@ export default function HomePage() {
           </p>
         </CardContent>
       </Card>
-    </div>
-  );
-}
-
-function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
-  return (
-    <div className="rounded-md border p-2">
-      <div className="text-[11px] text-muted-foreground">{label}</div>
-      <div className="text-sm font-semibold tabular-nums">{value}</div>
-      {sub ? <div className="text-[10px] text-muted-foreground">{sub}</div> : null}
     </div>
   );
 }
