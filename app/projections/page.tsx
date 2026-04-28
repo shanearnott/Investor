@@ -308,26 +308,15 @@ export default function ProjectionsPage() {
             </CardContent>
           </Card>
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            <PieCard
-              title={`Realised wealth today (${ccy})`}
-              subtitle={`What you'd have if you liquidated everything accessible right now. Total: ${formatMoney(realisedTotal, ccy)}`}
-              data={realisedPie}
-              ccy={ccy}
-              empty="Nothing realised yet — your equity is all pre-trigger or unvested."
-            />
-            <PieCard
-              title={`Coming over ${chosen[0]?.horizon_years ?? 0}y · ${chosen[0]?.name} (${ccy})`}
-              subtitle={`Locked vesting + price/value growth between now and the horizon. Total: ${formatMoney(comingTotal, ccy)}`}
-              data={comingPie}
-              ccy={ccy}
-              empty="No future gains projected by this scenario."
-            />
-          </div>
-
-          <p className="text-[11px] text-muted-foreground">
-            <b>Realised today</b> = vested shares past any second trigger × current price + property equity. <b>Coming</b> = the gap between an asset&apos;s value at the horizon (in the chosen scenario) and what&apos;s realised today. So &quot;Coming&quot; for an RSU includes shares that will vest, shares that will pass their second trigger, and price growth on all of them.
-          </p>
+          <NestedAllocationCard
+            ccy={ccy}
+            horizonYears={chosen[0]?.horizon_years ?? 0}
+            scenarioName={chosen[0]?.name ?? "—"}
+            realised={realisedPie}
+            coming={comingPie}
+            realisedTotal={realisedTotal}
+            comingTotal={comingTotal}
+          />
         </>
       ) : null}
 
@@ -350,50 +339,115 @@ function Kpi({ label, value, sub }: { label: string; value: string; sub?: string
   );
 }
 
-function PieCard({
-  title,
-  subtitle,
-  data,
+type Slice = { name: string; value: number };
+
+function NestedAllocationCard({
   ccy,
-  empty,
+  horizonYears,
+  scenarioName,
+  realised,
+  coming,
+  realisedTotal,
+  comingTotal,
 }: {
-  title: string;
-  subtitle?: string;
-  data: { name: string; value: number }[];
   ccy: string;
-  empty: string;
+  horizonYears: number;
+  scenarioName: string;
+  realised: Slice[];
+  coming: Slice[];
+  realisedTotal: number;
+  comingTotal: number;
 }) {
+  // Master asset list — union of both rings, so colours match across rings
+  const allAssets = Array.from(new Set([...realised.map((r) => r.name), ...coming.map((c) => c.name)]));
+  const colorByAsset = Object.fromEntries(
+    allAssets.map((a, i) => [a, PIE_COLORS[i % PIE_COLORS.length]]),
+  );
+
+  // Align both arrays to the master list so slice positions correspond
+  const realisedRing = allAssets.map((a) => ({
+    name: a,
+    value: realised.find((r) => r.name === a)?.value ?? 0,
+    fill: colorByAsset[a],
+  }));
+  const comingRing = allAssets.map((a) => ({
+    name: a,
+    value: coming.find((c) => c.name === a)?.value ?? 0,
+    fill: colorByAsset[a],
+  }));
+
+  const empty = realisedTotal === 0 && comingTotal === 0;
+
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-sm">{title}</CardTitle>
-        {subtitle ? <CardDescription className="text-[11px]">{subtitle}</CardDescription> : null}
+        <CardTitle className="text-sm">
+          Wealth allocation — today vs +{horizonYears}y · {scenarioName} ({ccy})
+        </CardTitle>
+        <CardDescription className="text-[11px]">
+          <span className="inline-flex items-center gap-1">
+            <span className="inline-block h-2 w-3 rounded-sm bg-foreground/60" /> Inner thin ring
+          </span>{" "}
+          = realised today ({formatMoney(realisedTotal, ccy)}).{" "}
+          <span className="inline-flex items-center gap-1">
+            <span className="inline-block h-3 w-4 rounded-sm bg-foreground/60" /> Outer thick ring
+          </span>{" "}
+          = coming over the horizon ({formatMoney(comingTotal, ccy)}). Same colour = same asset across both rings.
+        </CardDescription>
       </CardHeader>
       <CardContent>
-        {data.length === 0 ? (
-          <p className="py-8 text-center text-xs text-muted-foreground">{empty}</p>
+        {empty ? (
+          <p className="py-8 text-center text-xs text-muted-foreground">
+            Nothing realised today and no future gains projected. Add holdings or pick a different scenario.
+          </p>
         ) : (
-          <div className="h-[260px] w-full">
+          <div className="h-[340px] w-full">
             <ResponsiveContainer>
               <PieChart>
                 <Pie
-                  data={data}
+                  data={realisedRing}
                   dataKey="value"
                   nameKey="name"
-                  innerRadius={50}
-                  outerRadius={90}
-                  label={(e: { percent?: number }) => `${(((e.percent ?? 0) * 100)).toFixed(0)}%`}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={48}
+                  outerRadius={72}
+                  startAngle={90}
+                  endAngle={-270}
+                  isAnimationActive={false}
                 >
-                  {data.map((_, i) => (
-                    <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
+                  {realisedRing.map((s, i) => (
+                    <Cell key={`r-${i}`} fill={s.fill} stroke="#fff" strokeWidth={1} />
                   ))}
                 </Pie>
-                <Tooltip formatter={(v: number) => formatMoney(v, ccy)} />
-                <Legend wrapperStyle={{ fontSize: 11 }} />
+                <Pie
+                  data={comingRing}
+                  dataKey="value"
+                  nameKey="name"
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={82}
+                  outerRadius={130}
+                  startAngle={90}
+                  endAngle={-270}
+                  isAnimationActive={false}
+                  label={(e: { percent?: number; name?: string }) =>
+                    (e.percent ?? 0) > 0.06 ? `${e.name}` : ""
+                  }
+                >
+                  {comingRing.map((s, i) => (
+                    <Cell key={`c-${i}`} fill={s.fill} stroke="#fff" strokeWidth={1} />
+                  ))}
+                </Pie>
+                <Tooltip formatter={(value: number) => formatMoney(value, ccy)} />
               </PieChart>
             </ResponsiveContainer>
           </div>
         )}
+        <p className="mt-2 text-[11px] text-muted-foreground">
+          <b>Realised today</b> per asset = vested shares past any second trigger × current price, plus property equity.{" "}
+          <b>Coming</b> per asset = the gap between the asset&apos;s value at horizon (in this scenario) and what&apos;s realised today, so it bundles future vesting, post-trigger unlocks, and price growth.
+        </p>
       </CardContent>
     </Card>
   );
