@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.python-version
+
+# Streamlit
+.streamlit/
+
+# Local data — keep schema (seed/) but ignore user data and caches
+data/stocks.json
+data/properties.json
+data/scenarios.json
+data/projects.json
+data/settings.json
+data/cache/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
