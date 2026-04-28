@@ -1,67 +1,48 @@
 # Investor
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fshanearnott%2FInvestor&project-name=investor&repository-name=investor)
-
 Personal investment tracker, scenario projections, and project evaluation. Mobile-first PWA — installable on iOS and Android home screens.
-
-> Click the **Deploy with Vercel** button above → sign in to Vercel → click **Deploy**. Done. The app boots in demo mode out of the box, no OAuth setup needed.
 
 - **Track** stocks (incl. RSU vesting schedules and double-trigger second-trigger dates) and properties
 - **Project** net worth across scenarios with line + stacked-area "sand" charts and allocation pies
 - **Evaluate** investment projects (e.g. buy a house + furniture + car) — checks whether your chosen funding sources cover the cost net of tax in a given scenario
-- **Storage**: your data lives in your own Google Drive (folder `Investor App`)
-- **Auth**: Sign in with Google
-- **Demo mode**: full app, fake data, stored in browser localStorage — no Google setup needed
+- **Storage**: browser localStorage (per-device). Drive sync planned as a follow-up.
+- **Demo mode**: full app, populated fake data, no setup needed.
 
 ## Stack
 
-Next.js 15 · React 19 · TypeScript · Tailwind · Recharts · Auth.js v5 · Google Drive REST · Zod · PWA.
+Next.js 15 (static export) · React 19 · TypeScript · Tailwind · Recharts · Zod · PWA. **No server, no SSR**, ships as static HTML/JS — runs on GitHub Pages or any static host.
+
+## Live URL
+
+After GitHub Pages is enabled (see below), the app is served at:
+
+> **https://shanearnott.github.io/Investor/**
+
+## Deploy to GitHub Pages — one-time setup
+
+The repo includes a workflow at `.github/workflows/deploy-pages.yml` that builds and deploys on every push to `main`. **You only need to enable Pages once:**
+
+1. Go to https://github.com/shanearnott/Investor/settings/pages
+2. Under **Build and deployment** → **Source**, select **GitHub Actions**.
+3. Push (or re-run) any commit on `main`. Watch progress at https://github.com/shanearnott/Investor/actions.
+4. When the workflow finishes (~2 min), the URL above is live.
+
+That's it. No environment variables, no OAuth setup.
+
+To install on your phone: iOS Safari → **Share → Add to Home Screen**. Android Chrome → menu → **Install app**.
 
 ## Run locally
 
 ```bash
 npm install
-cp .env.example .env.local   # fill in or leave blank to use demo mode only
-npm run dev                   # http://localhost:3000
+npm run dev      # http://localhost:3000
 ```
 
-If `.env.local` is blank, the app boots in demo mode (no sign-in possible). Click **Try with demo data** on the home page.
+To build the static export and inspect the output:
 
-## Deploy to Vercel — demo mode (zero env vars)
-
-Click the **Deploy with Vercel** button at the top, sign in to Vercel, click **Deploy**. That's it. No environment variables, no OAuth setup.
-
-Open the resulting URL on your phone → tap **Try with demo data** → explore. Data is stored in your browser's localStorage. To install on your phone: iOS Safari → **Share → Add to Home Screen**. Android Chrome → menu → **Install app**.
-
-> ⚠️ Note: in demo mode without `AUTH_SECRET` set, the app uses an insecure built-in fallback for cookie signing. That's fine because no one signs in (so cookies hold nothing sensitive). When you enable Google sign-in below, **set a real `AUTH_SECRET`** in Vercel env vars.
-
-## Enable Google sign-in + Drive sync (optional, one-time)
-
-You create your own Google Cloud OAuth client so the app can sign you in to your own Google account. The app only ever sees files it creates in your Drive (it uses the `drive.file` scope, not full-Drive access).
-
-1. Go to https://console.cloud.google.com/apis/credentials
-2. **Create credentials** → **OAuth client ID** → **Web application**
-3. Add **Authorized redirect URIs**:
-   - `https://<your-vercel-domain>/api/auth/callback/google`
-   - `http://localhost:3000/api/auth/callback/google` (for local dev)
-4. Under **OAuth consent screen**:
-   - Add scope `https://www.googleapis.com/auth/drive.file`
-   - Add yourself as a **test user** (or publish the app — it stays restricted-scope)
-5. In Vercel project → **Settings → Environment Variables**, add:
-   - `AUTH_GOOGLE_ID` = your client ID
-   - `AUTH_GOOGLE_SECRET` = your client secret
-6. Redeploy.
-
-After redeploying, a **Sign in** button appears. Signing in creates a folder `Investor App` in your Drive and saves five JSON files there.
-
-## How storage works
-
-| Mode | Backend | Where data lives |
-|------|---------|------------------|
-| Signed in | Google Drive (`drive.file` scope) | `My Drive/Investor App/{stocks,properties,scenarios,projects,settings}.json` |
-| Demo mode | Browser localStorage | Your browser only |
-
-When you sign in, the app reads existing files from your Drive (or shows an empty state if none). Writes are atomic per-collection.
+```bash
+npm run build    # outputs to ./out/
+```
 
 ## Tax model — caveats
 
@@ -72,16 +53,15 @@ Supported jurisdictions: California, Australia, UAE, UK, Singapore, Canada, Germ
 ## Property growth data
 
 - **Australia**: bundled suburb seed dataset (`data/aus_suburb_growth.json`) sourced from public Domain quarterly reports (5y CAGR, all dwellings). Refresh by editing the JSON file.
-- **United States**: manual entry per property (Zillow ZHVI integration left as a follow-up — would need a serverless route to fetch the public CSV).
+- **United States**: manual entry per property (Zillow ZHVI integration could be added as a static dataset later).
 - **Manual override** per property always wins.
 - **Per-scenario override** — each scenario can override growth rates per property.
 
-## PWA / install on phone
+## Roadmap
 
-- iOS Safari: tap **Share** → **Add to Home Screen**.
-- Android Chrome: tap menu → **Install app** / **Add to Home Screen**.
-
-The app runs full-screen, has its own icon, and remembers your sign-in.
+- [x] Static export to GitHub Pages
+- [ ] Client-side Google sign-in (Google Identity Services) + Drive sync, all in the browser, no server
+- [ ] Bundled US ZIP-level growth seed dataset
 
 ## Disclaimer
 

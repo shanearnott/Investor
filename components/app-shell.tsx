@@ -2,21 +2,16 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { signIn, signOut, useSession } from "next-auth/react";
 import {
   BarChart3,
   Briefcase,
   Building2,
   Home,
   LineChart,
-  LogIn,
-  LogOut,
   Settings,
 } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
 import { useData } from "@/components/data-provider";
-import { usePublicConfig } from "@/lib/public-config";
 import { cn } from "@/lib/utils";
 
 const navItems = [
@@ -30,9 +25,7 @@ const navItems = [
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const { data: session, status } = useSession();
-  const { isDemo, error } = useData();
-  const { googleAuthEnabled } = usePublicConfig();
+  const { error } = useData();
 
   return (
     <div className="flex min-h-dvh flex-col">
@@ -41,29 +34,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <span className="text-xl">📈</span>
           <span>Investor</span>
         </Link>
-        <div className="flex items-center gap-2">
-          {isDemo ? (
-            <span className="hidden sm:inline-flex items-center rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800">
-              Demo mode
-            </span>
-          ) : null}
-          {status === "authenticated" ? (
-            <>
-              <span className="hidden sm:inline text-xs text-muted-foreground">
-                {session?.user?.email}
-              </span>
-              <Button variant="outline" size="sm" onClick={() => signOut()}>
-                <LogOut className="h-4 w-4" />
-                <span className="hidden sm:inline">Sign out</span>
-              </Button>
-            </>
-          ) : googleAuthEnabled ? (
-            <Button size="sm" onClick={() => signIn("google")}>
-              <LogIn className="h-4 w-4" />
-              <span className="hidden sm:inline">Sign in</span>
-            </Button>
-          ) : null}
-        </div>
+        <span className="inline-flex items-center rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800">
+          Demo mode
+        </span>
       </header>
       {error ? (
         <div className="border-b bg-destructive/10 px-4 py-2 text-sm text-destructive">{error}</div>

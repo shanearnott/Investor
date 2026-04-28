@@ -1,19 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { signIn, useSession } from "next-auth/react";
 
 import { useData } from "@/components/data-provider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatMoney } from "@/lib/utils";
 import { currentAllocationBreakdown } from "@/lib/projections";
-import { usePublicConfig } from "@/lib/public-config";
 
 export default function HomePage() {
-  const { status } = useSession();
-  const { data, isDemo, loadDemo, loading } = useData();
-  const { googleAuthEnabled } = usePublicConfig();
+  const { data, loadDemo, loading } = useData();
 
   const stocksCount = data.stocks.length;
   const propertiesCount = data.properties.length;
@@ -43,20 +39,11 @@ export default function HomePage() {
           <CardHeader>
             <CardTitle>Get started</CardTitle>
             <CardDescription>
-              {status === "authenticated"
-                ? "Your Drive is empty. Add your first holding or load demo data to explore."
-                : googleAuthEnabled
-                  ? "Sign in with Google to save your data to your Drive, or try the demo."
-                  : "Try the demo to explore the app, or add your own data — it'll be saved in your browser."}
+              Try the demo to explore the app, or add your own data — it&apos;ll be saved in your browser.
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-wrap gap-2">
-            {status !== "authenticated" && googleAuthEnabled ? (
-              <Button onClick={() => signIn("google")}>Sign in with Google</Button>
-            ) : null}
-            <Button variant={googleAuthEnabled ? "outline" : "default"} onClick={loadDemo}>
-              Try with demo data
-            </Button>
+            <Button onClick={loadDemo}>Try with demo data</Button>
             <Link href="/investments">
               <Button variant="ghost">Add manually</Button>
             </Link>
@@ -122,17 +109,13 @@ export default function HomePage() {
             <b>Scenarios</b> → save bear/base/bull cases with per-asset growth and IPO-date overrides.
           </p>
           <p>
-            <b>Projections</b> → net worth over time (line + stacked-area "sand" chart) and allocation pies.
+            <b>Projections</b> → net worth over time (line + stacked-area &quot;sand&quot; chart) and allocation pies.
           </p>
           <p>
             <b>Projects</b> → model investment projects (e.g. buy a house). The app figures out whether your chosen funding sources cover the cost net of tax in a given scenario.
           </p>
           <p className="pt-2 text-xs text-muted-foreground">
-            {isDemo
-              ? googleAuthEnabled
-                ? "Demo data is stored locally in your browser. Sign in with Google to save to your Drive."
-                : "Data is stored locally in your browser. Google sign-in is not configured on this deployment, so syncing to Drive is unavailable."
-              : "Your data is stored in your own Google Drive (Investor App folder)."}
+            Data is stored locally in your browser (localStorage). Drive sync coming next.
           </p>
         </CardContent>
       </Card>

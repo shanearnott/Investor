@@ -4,17 +4,22 @@ import "./globals.css";
 import { AppShell } from "@/components/app-shell";
 import { Providers } from "@/components/providers";
 import { ServiceWorkerRegister } from "@/components/sw-register";
-import { GOOGLE_AUTH_ENABLED } from "@/lib/auth";
+
+const basePath = process.env.GH_PAGES === "1" ? "/Investor" : "";
 
 export const metadata: Metadata = {
   title: "Investor",
   description: "Personal investment tracker, scenario projections, project evaluation",
-  manifest: "/manifest.json",
+  manifest: `${basePath}/manifest.json`,
   applicationName: "Investor",
   appleWebApp: {
     capable: true,
     title: "Investor",
     statusBarStyle: "default",
+  },
+  icons: {
+    icon: [{ url: `${basePath}/icon.svg`, type: "image/svg+xml" }],
+    apple: [{ url: `${basePath}/icon-192.png` }],
   },
 };
 
@@ -29,15 +34,11 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <head>
-        <link rel="icon" href="/icon.svg" type="image/svg+xml" />
-        <link rel="apple-touch-icon" href="/icon-192.png" />
-      </head>
       <body>
-        <Providers config={{ googleAuthEnabled: GOOGLE_AUTH_ENABLED }}>
+        <Providers>
           <AppShell>{children}</AppShell>
         </Providers>
-        <ServiceWorkerRegister />
+        <ServiceWorkerRegister basePath={basePath} />
       </body>
     </html>
   );

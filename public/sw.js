@@ -1,14 +1,17 @@
 /* Lightweight service worker for PWA-installability and basic offline shell.
- * We don't aggressively cache app routes (data depends on Drive/auth) — the goal
- * is just to satisfy the installability criteria and serve the manifest/icons.
+ * Paths are relative to the SW's location, which sits under the app's basePath
+ * on GitHub Pages (e.g. /Investor/sw.js with scope /Investor/).
  */
-const VERSION = "v1";
+const VERSION = "v2";
 const STATIC = `investor-static-${VERSION}`;
-const PRECACHE = ["/manifest.json", "/icon.svg"];
+const PRECACHE = ["manifest.json", "icon.svg"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(STATIC).then((cache) => cache.addAll(PRECACHE)).catch(() => {}),
+    caches
+      .open(STATIC)
+      .then((cache) => cache.addAll(PRECACHE.map((p) => new URL(p, self.registration.scope).href)))
+      .catch(() => {}),
   );
   self.skipWaiting();
 });
@@ -25,10 +28,7 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return;
-  const url = new URL(req.url);
-  if (PRECACHE.includes(url.pathname)) {
-    event.respondWith(
-      caches.match(req).then((cached) => cached || fetch(req)),
-    );
-  }
+  event.respondWith(
+    caches.match(req).then((cached) => cached || fetch(req).catch(() => cached)),
+  );
 });
