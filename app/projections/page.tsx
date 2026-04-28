@@ -341,6 +341,11 @@ function Kpi({ label, value, sub }: { label: string; value: string; sub?: string
 
 type Slice = { name: string; value: number };
 
+// Two distinct color families. Inner ring uses the first shade of each;
+// outer ring picks subsequent shades for each asset within that family.
+const TODAY_COLORS = ["#15803d", "#16a34a", "#22c55e", "#4ade80", "#86efac", "#bbf7d0", "#dcfce7"];
+const COMING_COLORS = ["#075985", "#0284c7", "#0ea5e9", "#38bdf8", "#7dd3fc", "#bae6fd", "#dbeafe"];
+
 function NestedAllocationCard({
   ccy,
   horizonYears,
@@ -358,25 +363,41 @@ function NestedAllocationCard({
   realisedTotal: number;
   comingTotal: number;
 }) {
-  // Master asset list — union of both rings, so colours match across rings
-  const allAssets = Array.from(new Set([...realised.map((r) => r.name), ...coming.map((c) => c.name)]));
-  const colorByAsset = Object.fromEntries(
-    allAssets.map((a, i) => [a, PIE_COLORS[i % PIE_COLORS.length]]),
-  );
+  const grandTotal = realisedTotal + comingTotal;
+  const empty = grandTotal === 0;
 
-  // Align both arrays to the master list so slice positions correspond
-  const realisedRing = allAssets.map((a) => ({
-    name: a,
-    value: realised.find((r) => r.name === a)?.value ?? 0,
-    fill: colorByAsset[a],
-  }));
-  const comingRing = allAssets.map((a) => ({
-    name: a,
-    value: coming.find((c) => c.name === a)?.value ?? 0,
-    fill: colorByAsset[a],
-  }));
+  // Sort each section by descending value for readable slice order
+  const todaySorted = [...realised].filter((s) => s.value > 0).sort((a, b) => b.value - a.value);
+  const comingSorted = [...coming].filter((s) => s.value > 0).sort((a, b) => b.value - a.value);
 
-  const empty = realisedTotal === 0 && comingTotal === 0;
+  // INNER ring: the headline split — only two slices.
+  // Both pies' values must sum to grandTotal so arcs align between rings.
+  const innerData = [
+    { name: "Realised today", value: realisedTotal, fill: TODAY_COLORS[0] },
+    { name: `Coming +${horizonYears}y`, value: comingTotal, fill: COMING_COLORS[0] },
+  ].filter((d) => d.value > 0);
+
+  // OUTER ring: today's assets first (so their arcs sit under the today
+  // inner slice), then coming's assets — each tagged with its bucket so
+  // tooltip/legend can show "ACME (today)" vs "ACME (coming)".
+  type OuterSlice = { name: string; value: number; fill: string; bucket: "today" | "coming" };
+  const outerData: OuterSlice[] = [
+    ...todaySorted.map((s, i) => ({
+      name: s.name,
+      value: s.value,
+      fill: TODAY_COLORS[(i + 1) % TODAY_COLORS.length],
+      bucket: "today" as const,
+    })),
+    ...comingSorted.map((s, i) => ({
+      name: s.name,
+      value: s.value,
+      fill: COMING_COLORS[(i + 1) % COMING_COLORS.length],
+      bucket: "coming" as const,
+    })),
+  ];
+
+  const realisedPct = grandTotal > 0 ? (realisedTotal / grandTotal) * 100 : 0;
+  const comingPct = grandTotal > 0 ? (comingTotal / grandTotal) * 100 : 0;
 
   return (
     <Card>
@@ -386,13 +407,15 @@ function NestedAllocationCard({
         </CardTitle>
         <CardDescription className="text-[11px]">
           <span className="inline-flex items-center gap-1">
-            <span className="inline-block h-2 w-3 rounded-sm bg-foreground/60" /> Inner thin ring
+            <span className="inline-block h-3 w-3 rounded-sm" style={{ background: TODAY_COLORS[0] }} />
+            <b>Realised today</b> {realisedPct.toFixed(0)}%
           </span>{" "}
-          = realised today ({formatMoney(realisedTotal, ccy)}).{" "}
+          ·{" "}
           <span className="inline-flex items-center gap-1">
-            <span className="inline-block h-3 w-4 rounded-sm bg-foreground/60" /> Outer thick ring
-          </span>{" "}
-          = coming over the horizon ({formatMoney(comingTotal, ccy)}). Same colour = same asset across both rings.
+            <span className="inline-block h-3 w-3 rounded-sm" style={{ background: COMING_COLORS[0] }} />
+            <b>Coming over {horizonYears}y</b> {comingPct.toFixed(0)}%
+          </span>
+          {" "}— the inner ring is the headline split; the outer ring breaks each side down by asset.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -401,42 +424,46 @@ function NestedAllocationCard({
             Nothing realised today and no future gains projected. Add holdings or pick a different scenario.
           </p>
         ) : (
-          <div className="h-[340px] w-full">
+          <div className="h-[360px] w-full">
             <ResponsiveContainer>
               <PieChart>
                 <Pie
-                  data={realisedRing}
+                  data={innerData}
                   dataKey="value"
                   nameKey="name"
                   cx="50%"
                   cy="50%"
-                  innerRadius={48}
-                  outerRadius={72}
-                  startAngle={90}
-                  endAngle={-270}
-                  isAnimationActive={false}
-                >
-                  {realisedRing.map((s, i) => (
-                    <Cell key={`r-${i}`} fill={s.fill} stroke="#fff" strokeWidth={1} />
-                  ))}
-                </Pie>
-                <Pie
-                  data={comingRing}
-                  dataKey="value"
-                  nameKey="name"
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={82}
-                  outerRadius={130}
+                  innerRadius={0}
+                  outerRadius={70}
                   startAngle={90}
                   endAngle={-270}
                   isAnimationActive={false}
                   label={(e: { percent?: number; name?: string }) =>
-                    (e.percent ?? 0) > 0.06 ? `${e.name}` : ""
+                    (e.percent ?? 0) >= 0.05 ? `${e.name} ${(((e.percent ?? 0) * 100)).toFixed(0)}%` : ""
+                  }
+                  labelLine={false}
+                >
+                  {innerData.map((s, i) => (
+                    <Cell key={`i-${i}`} fill={s.fill} stroke="#fff" strokeWidth={2} />
+                  ))}
+                </Pie>
+                <Pie
+                  data={outerData}
+                  dataKey="value"
+                  nameKey="name"
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={80}
+                  outerRadius={140}
+                  startAngle={90}
+                  endAngle={-270}
+                  isAnimationActive={false}
+                  label={(e: { percent?: number; name?: string }) =>
+                    (e.percent ?? 0) > 0.04 ? `${e.name}` : ""
                   }
                 >
-                  {comingRing.map((s, i) => (
-                    <Cell key={`c-${i}`} fill={s.fill} stroke="#fff" strokeWidth={1} />
+                  {outerData.map((s, i) => (
+                    <Cell key={`o-${i}`} fill={s.fill} stroke="#fff" strokeWidth={1} />
                   ))}
                 </Pie>
                 <Tooltip formatter={(value: number) => formatMoney(value, ccy)} />
