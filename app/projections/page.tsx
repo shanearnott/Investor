@@ -346,6 +346,31 @@ type Slice = { name: string; value: number };
 const TODAY_COLORS = ["#15803d", "#16a34a", "#22c55e", "#4ade80", "#86efac", "#bbf7d0", "#dcfce7"];
 const COMING_COLORS = ["#075985", "#0284c7", "#0ea5e9", "#38bdf8", "#7dd3fc", "#bae6fd", "#dbeafe"];
 
+/** Custom label that draws name + bold percentage in the centre of each
+ *  inner-pie slice, in white so it reads on the saturated parent fills. */
+function renderInnerLabel(props: {
+  cx?: number; cy?: number; midAngle?: number; innerRadius?: number; outerRadius?: number;
+  percent?: number; name?: string;
+}) {
+  const { cx = 0, cy = 0, midAngle = 0, innerRadius = 0, outerRadius = 0, percent = 0, name = "" } = props;
+  if (percent < 0.04) return null; // too small to label cleanly
+  const RADIAN = Math.PI / 180;
+  // Place in the middle of the slice's radial extent
+  const r = innerRadius + (outerRadius - innerRadius) * 0.55;
+  const x = cx + r * Math.cos(-midAngle * RADIAN);
+  const y = cy + r * Math.sin(-midAngle * RADIAN);
+  return (
+    <g style={{ pointerEvents: "none" }}>
+      <text x={x} y={y - 8} textAnchor="middle" dominantBaseline="central" fill="#fff" fontSize={11} fontWeight={600}>
+        {name}
+      </text>
+      <text x={x} y={y + 9} textAnchor="middle" dominantBaseline="central" fill="#fff" fontSize={18} fontWeight={800}>
+        {`${(percent * 100).toFixed(0)}%`}
+      </text>
+    </g>
+  );
+}
+
 function NestedAllocationCard({
   ccy,
   horizonYears,
@@ -438,9 +463,7 @@ function NestedAllocationCard({
                   startAngle={90}
                   endAngle={-270}
                   isAnimationActive={false}
-                  label={(e: { percent?: number; name?: string }) =>
-                    (e.percent ?? 0) >= 0.05 ? `${e.name} ${(((e.percent ?? 0) * 100)).toFixed(0)}%` : ""
-                  }
+                  label={renderInnerLabel}
                   labelLine={false}
                 >
                   {innerData.map((s, i) => (
