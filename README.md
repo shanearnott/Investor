@@ -1,63 +1,81 @@
 # Investor
 
-Personal investment tracker · scenario projections · investment project evaluation.
+Personal investment tracker, scenario projections, and project evaluation. Mobile-first PWA — installable on iOS and Android home screens.
 
-A local Streamlit app that:
-- tracks **stocks** (incl. RSU vesting schedules and double-trigger / second-trigger dates) and **properties**
-- projects **net worth over time** under saved scenarios (line + stacked-area "sand" charts, allocation pies)
-- evaluates **investment projects** (e.g. buy a house + furniture + car) — checking whether your chosen funding sources cover the cost **after tax** at the target date in a chosen scenario
+- **Track** stocks (incl. RSU vesting schedules and double-trigger second-trigger dates) and properties
+- **Project** net worth across scenarios with line + stacked-area "sand" charts and allocation pies
+- **Evaluate** investment projects (e.g. buy a house + furniture + car) — checks whether your chosen funding sources cover the cost net of tax in a given scenario
+- **Storage**: your data lives in your own Google Drive (folder `Investor App`)
+- **Auth**: Sign in with Google
+- **Demo mode**: full app, fake data, stored in browser localStorage — no Google setup needed
 
-All data is saved as JSON under `data/`.
+## Stack
 
-## Quick start
+Next.js 15 · React 19 · TypeScript · Tailwind · Recharts · Auth.js v5 · Google Drive REST · Zod · PWA.
+
+## Run locally
 
 ```bash
-pip install -r requirements.txt
-streamlit run app.py
+npm install
+cp .env.example .env.local   # fill in or leave blank to use demo mode only
+npm run dev                   # http://localhost:3000
 ```
 
-Then open the link Streamlit prints (usually http://localhost:8501).
+If `.env.local` is blank, the app boots in demo mode (no sign-in possible). Click **Try with demo data** on the home page.
 
-## Pages
+## Deploy to Vercel
 
-1. **Investments** — add/edit stocks (with vesting schedules, second-trigger date) and properties (suburb, postcode, mortgage). Auto-resolves annual growth from Zillow ZHVI (US ZIP) or the bundled AUS suburb seed dataset; manual override always available.
-2. **Scenarios** — define future scenarios with default + per-asset growth overrides, IPO/second-trigger date overrides, and inflation. Save and reuse.
-3. **Projections** — net worth over time (line, stacked-area "sand"), per-asset breakdown, current-vs-future allocation pies, real-value view.
-4. **Projects** — model a multi-item project with funding sources (stock liquidation / property sale / cash). Evaluates against any scenario, computes tax per the holding's jurisdiction, reports surplus or shortfall.
-5. **Settings** — primary/secondary currency, FX rates, tax overrides per jurisdiction, refresh growth-rate caches.
+1. Push this repo to GitHub.
+2. In Vercel, **Import Project** → select the repo.
+3. **Environment variables** (Production + Preview):
+   - `AUTH_SECRET` — generate with `openssl rand -base64 32`
+   - `AUTH_GOOGLE_ID` and `AUTH_GOOGLE_SECRET` — see Google setup below
+4. Deploy.
 
-## Tax model
+## Google OAuth setup (one-time)
 
-Defaults are **indicative top-marginal estimates** per jurisdiction (California, Australia, UAE, UK, Singapore, Canada, Germany, NZ, Hong Kong, Ireland, US-Federal-only). Override any field on the Settings page. **Not tax advice** — verify with a qualified tax adviser before acting on any number this app produces.
+You create your own Google Cloud OAuth client so the app can sign you in to your own Google account. The app only ever sees files it creates in your Drive (it uses the `drive.file` scope, not full-Drive access).
 
-Stock sale tax model:
-- gain = (sale price − cost basis) × shares
-- if jurisdiction has a CGT discount (AUS 50%, CAN 50%) and held ≥ threshold: gain × (1 − discount) × ordinary rate
-- else: gain × (long-term rate if held ≥ threshold else short-term rate)
+1. Go to https://console.cloud.google.com/apis/credentials
+2. **Create credentials** → **OAuth client ID** → **Web application**
+3. Add **Authorized redirect URIs**:
+   - `https://<your-vercel-domain>/api/auth/callback/google`
+   - `http://localhost:3000/api/auth/callback/google` (for local dev)
+4. Under **OAuth consent screen**:
+   - Add scope `https://www.googleapis.com/auth/drive.file`
+   - Add yourself as a **test user** (or publish the app — it stays restricted-scope)
+5. Copy the Client ID and Client Secret into Vercel env vars.
 
-Property sale tax model:
-- gain = sale price − cost basis
-- primary-residence exemption available (toggle per jurisdiction)
-- otherwise: discount applied if jurisdiction supports it; else gain × property CGT rate
+That's it. After signing in, the app creates a folder `Investor App` in your Drive and saves five JSON files there.
 
-## Growth-rate sources
+## How storage works
 
-- **US**: Zillow ZHVI ZIP-level CSV (free public). Cached under `data/cache/`. Refresh via Settings.
-- **AUS**: Bundled seed dataset in `data/seed/aus_suburb_growth.json` — populated from public Domain quarterly reports (5y CAGR, all dwellings). Refresh manually by editing the JSON or extending the provider.
-- **Fallback**: per-property manual `annual_growth_pct`.
-- **Per-scenario override**: each scenario can override growth rates per property.
+| Mode | Backend | Where data lives |
+|------|---------|------------------|
+| Signed in | Google Drive (`drive.file` scope) | `My Drive/Investor App/{stocks,properties,scenarios,projects,settings}.json` |
+| Demo mode | Browser localStorage | Your browser only |
 
-## Data files
+When you sign in, the app reads existing files from your Drive (or shows an empty state if none). Writes are atomic per-collection.
 
-- `data/stocks.json`
-- `data/properties.json`
-- `data/scenarios.json`
-- `data/projects.json`
-- `data/settings.json`
-- `data/cache/zillow_zhvi_zip.csv` (downloaded on refresh)
-- `data/seed/aus_suburb_growth.json` (bundled)
+## Tax model — caveats
 
-You can override the data directory with `INVESTOR_DATA_DIR=/path/to/dir streamlit run app.py`.
+Defaults are **indicative top-marginal estimates** per jurisdiction. Override any field on the **Settings** page. **Not tax advice** — verify with a qualified tax adviser before acting on any number this app produces.
+
+Supported jurisdictions: California, Australia, UAE, UK, Singapore, Canada, Germany, New Zealand, Hong Kong, Ireland, US-Federal-Only.
+
+## Property growth data
+
+- **Australia**: bundled suburb seed dataset (`data/aus_suburb_growth.json`) sourced from public Domain quarterly reports (5y CAGR, all dwellings). Refresh by editing the JSON file.
+- **United States**: manual entry per property (Zillow ZHVI integration left as a follow-up — would need a serverless route to fetch the public CSV).
+- **Manual override** per property always wins.
+- **Per-scenario override** — each scenario can override growth rates per property.
+
+## PWA / install on phone
+
+- iOS Safari: tap **Share** → **Add to Home Screen**.
+- Android Chrome: tap menu → **Install app** / **Add to Home Screen**.
+
+The app runs full-screen, has its own icon, and remembers your sign-in.
 
 ## Disclaimer
 

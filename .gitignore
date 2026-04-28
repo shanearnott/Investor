@@ -1,23 +1,22 @@
-# Python
-__pycache__/
-*.py[cod]
-*.egg-info/
-.venv/
-venv/
-.python-version
+# Dependencies
+node_modules/
+.pnpm-store/
 
-# Streamlit
-.streamlit/
+# Build output
+.next/
+out/
+.turbo/
+dist/
 
-# Local data — keep schema (seed/) but ignore user data and caches
-data/stocks.json
-data/properties.json
-data/scenarios.json
-data/projects.json
-data/settings.json
-data/cache/
+# Env (NEVER commit secrets)
+.env
+.env.local
+.env.development.local
+.env.production.local
 
-# Editors / OS
+# Misc
+.DS_Store
 .vscode/
 .idea/
-.DS_Store
+*.log
+tsconfig.tsbuildinfo
