@@ -346,25 +346,49 @@ type Slice = { name: string; value: number };
 const TODAY_COLORS = ["#15803d", "#16a34a", "#22c55e", "#4ade80", "#86efac", "#bbf7d0", "#dcfce7"];
 const COMING_COLORS = ["#075985", "#0284c7", "#0ea5e9", "#38bdf8", "#7dd3fc", "#bae6fd", "#dbeafe"];
 
-/** Custom label that draws name + bold percentage in the centre of each
- *  inner-pie slice, in white so it reads on the saturated parent fills. */
+/** Custom label that writes name + a big bold % in the middle of each inner
+ *  pie slice. White fill with a thin dark stroke (paint-order:stroke) keeps
+ *  it legible on any background colour. */
 function renderInnerLabel(props: {
   cx?: number; cy?: number; midAngle?: number; innerRadius?: number; outerRadius?: number;
   percent?: number; name?: string;
 }) {
   const { cx = 0, cy = 0, midAngle = 0, innerRadius = 0, outerRadius = 0, percent = 0, name = "" } = props;
-  if (percent < 0.04) return null; // too small to label cleanly
+  if (percent < 0.03) return null;
   const RADIAN = Math.PI / 180;
-  // Place in the middle of the slice's radial extent
   const r = innerRadius + (outerRadius - innerRadius) * 0.55;
   const x = cx + r * Math.cos(-midAngle * RADIAN);
   const y = cy + r * Math.sin(-midAngle * RADIAN);
+  const textStyle: React.CSSProperties = {
+    paintOrder: "stroke",
+    stroke: "rgba(0,0,0,0.45)",
+    strokeWidth: 3,
+    strokeLinejoin: "round",
+  };
   return (
     <g style={{ pointerEvents: "none" }}>
-      <text x={x} y={y - 8} textAnchor="middle" dominantBaseline="central" fill="#fff" fontSize={11} fontWeight={600}>
+      <text
+        x={x}
+        y={y - 12}
+        textAnchor="middle"
+        dominantBaseline="central"
+        fill="#fff"
+        fontSize={13}
+        fontWeight={700}
+        style={textStyle}
+      >
         {name}
       </text>
-      <text x={x} y={y + 9} textAnchor="middle" dominantBaseline="central" fill="#fff" fontSize={18} fontWeight={800}>
+      <text
+        x={x}
+        y={y + 12}
+        textAnchor="middle"
+        dominantBaseline="central"
+        fill="#fff"
+        fontSize={26}
+        fontWeight={900}
+        style={textStyle}
+      >
         {`${(percent * 100).toFixed(0)}%`}
       </text>
     </g>
