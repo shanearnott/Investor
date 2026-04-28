@@ -29,8 +29,8 @@ export default function HomePage() {
   const todayPrimary = Object.values(allocation).reduce((s, v) => s + v, 0);
   const today = convert(todayPrimary, data.settings.primary_currency, displayCurrency, data.settings);
 
-  // Next 3 months: equity tranches that will vest, plus expected property growth
-  const next3 = nextThreeMonthsOutlook({
+  // Next 12 months: equity tranches that will vest, plus expected property growth
+  const next12 = nextTwelveMonthsOutlook({
     holdings: data.stocks,
     properties: data.properties,
     settings: data.settings,
@@ -114,26 +114,26 @@ export default function HomePage() {
         </Card>
       ) : null}
 
-      {next3.hasAny ? (
+      {next12.hasAny ? (
         <Card>
           <CardHeader>
-            <CardTitle>Next 3 months</CardTitle>
+            <CardTitle>Next 12 months</CardTitle>
             <CardDescription>
-              Vesting events and projected property growth between now and {next3.endLabel}
+              Vesting events and projected property growth between now and {next12.endLabel}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3 text-sm">
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-              <Stat label="Equity vesting" value={formatMoney(next3.totalVestingValue, displayCurrency)} sub={`${formatNumber(next3.totalVestingShares)} shares across ${next3.vestingEvents.length} event${next3.vestingEvents.length === 1 ? "" : "s"}`} />
-              <Stat label="Property growth" value={formatMoney(next3.totalPropertyGain, displayCurrency)} sub={`across ${next3.propertyGains.length} propert${next3.propertyGains.length === 1 ? "y" : "ies"}`} />
-              <Stat label="Combined" value={formatMoney(next3.totalVestingValue + next3.totalPropertyGain, displayCurrency)} />
+              <Stat label="Equity vesting" value={formatMoney(next12.totalVestingValue, displayCurrency)} sub={`${formatNumber(next12.totalVestingShares)} shares across ${next12.vestingEvents.length} event${next12.vestingEvents.length === 1 ? "" : "s"}`} />
+              <Stat label="Property growth" value={formatMoney(next12.totalPropertyGain, displayCurrency)} sub={`across ${next12.propertyGains.length} propert${next12.propertyGains.length === 1 ? "y" : "ies"}`} />
+              <Stat label="Combined" value={formatMoney(next12.totalVestingValue + next12.totalPropertyGain, displayCurrency)} />
             </div>
 
-            {next3.vestingEvents.length > 0 ? (
+            {next12.vestingEvents.length > 0 ? (
               <div>
                 <p className="text-xs font-medium text-muted-foreground mb-1">Vesting events</p>
                 <ul className="text-xs space-y-1">
-                  {next3.vestingEvents.map((e, i) => (
+                  {next12.vestingEvents.map((e, i) => (
                     <li key={i} className="flex justify-between gap-2 border-b pb-1 last:border-0">
                       <span>
                         <b>{e.date}</b> · {e.ticker}
@@ -148,11 +148,11 @@ export default function HomePage() {
               </div>
             ) : null}
 
-            {next3.propertyGains.length > 0 ? (
+            {next12.propertyGains.length > 0 ? (
               <div>
                 <p className="text-xs font-medium text-muted-foreground mb-1">Property growth</p>
                 <ul className="text-xs space-y-1">
-                  {next3.propertyGains.map((p, i) => (
+                  {next12.propertyGains.map((p, i) => (
                     <li key={i} className="flex justify-between gap-2 border-b pb-1 last:border-0">
                       <span>{p.name} <span className="text-muted-foreground">({p.growthPct.toFixed(1)}%/yr)</span></span>
                       <span className="tabular-nums">+{formatMoney(p.gain, displayCurrency)}</span>
@@ -162,7 +162,7 @@ export default function HomePage() {
               </div>
             ) : null}
 
-            {next3.preTriggerNote ? (
+            {next12.preTriggerNote ? (
               <p className="text-[11px] text-muted-foreground">
                 Pre-trigger means those vests don&apos;t become liquid until the second trigger (e.g. IPO) — they accrue but you can&apos;t sell.
               </p>
@@ -220,7 +220,7 @@ type PropertyGain = {
   growthPct: number;
 };
 
-function nextThreeMonthsOutlook(args: {
+function nextTwelveMonthsOutlook(args: {
   holdings: StockHolding[];
   properties: Property[];
   settings: ReturnType<typeof useData>["data"]["settings"];
@@ -236,7 +236,7 @@ function nextThreeMonthsOutlook(args: {
   preTriggerNote: boolean;
 } {
   const today = new Date();
-  const end = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 3, today.getUTCDate()));
+  const end = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 12, today.getUTCDate()));
   const endLabel = end.toISOString().slice(0, 10);
 
   const events: VestingEvent[] = [];
@@ -278,7 +278,7 @@ function nextThreeMonthsOutlook(args: {
     const annualPct = provider.rate;
     // 3-month gain on current value, compounded monthly
     const monthly = Math.pow(1 + annualPct / 100, 1 / 12) - 1;
-    const projected = p.current_value * Math.pow(1 + monthly, 3);
+    const projected = p.current_value * Math.pow(1 + monthly, 12);
     const gainNative = projected - p.current_value;
     const gainDisplay = convert(gainNative, p.currency, args.displayCurrency, args.settings);
     if (gainDisplay > 0) {
