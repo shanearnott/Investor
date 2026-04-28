@@ -242,6 +242,9 @@ function StockForm({
       vesting_schedule: prev.vesting_schedule.filter((_, i) => i !== idx),
     }));
 
+  const replaceSchedule = (tranches: VestingTranche[]) =>
+    setD((prev) => ({ ...prev, vesting_schedule: tranches }));
+
   const submit = async () => {
     setError(null);
     const parsed = StockHoldingSchema.safeParse({
@@ -306,8 +309,14 @@ function StockForm({
               <Plus className="h-3 w-3" /> Add tranche
             </Button>
           </div>
+
+          <VestingScheduleGenerator
+            empty={d.vesting_schedule.length === 0}
+            onGenerate={replaceSchedule}
+          />
+
           {d.vesting_schedule.length === 0 ? (
-            <p className="text-xs text-muted-foreground">No tranches.</p>
+            <p className="text-xs text-muted-foreground">No tranches yet — generate above or add manually.</p>
           ) : (
             <div className="space-y-1">
               {d.vesting_schedule.map((t, idx) => (
@@ -531,6 +540,122 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
       <Label>{label}</Label>
       {children}
       {hint ? <p className="text-[11px] text-muted-foreground">{hint}</p> : null}
+    </div>
+  );
+}
+
+/**
+ * Helper to generate a vesting schedule from a few inputs:
+ * total shares, start date (first vest = end of cliff), full vest duration
+ * in years, and the period (monthly/quarterly/yearly). Splits total evenly
+ * across the resulting number of periods. If total isn't divisible, the
+ * leftover whole shares are added to the final tranche so the sum matches
+ * exactly.
+ */
+function VestingScheduleGenerator({
+  empty,
+  onGenerate,
+}: {
+  empty: boolean;
+  onGenerate: (tranches: VestingTranche[]) => void;
+}) {
+  const [open, setOpen] = useState<boolean>(empty);
+  const [total, setTotal] = useState<number>(0);
+  const [startDate, setStartDate] = useState<string>(todayISO());
+  const [years, setYears] = useState<number>(4);
+  const [period, setPeriod] = useState<"monthly" | "quarterly" | "yearly">("quarterly");
+  const [error, setError] = useState<string | null>(null);
+
+  const periodsPerYear = { monthly: 12, quarterly: 4, yearly: 1 }[period];
+  const totalPeriods = Math.max(1, Math.round(years * periodsPerYear));
+  const monthsStep = 12 / periodsPerYear;
+  const previewPerTranche = total > 0 ? Math.floor(total / totalPeriods) : 0;
+  const previewLastTranche = total > 0 ? previewPerTranche + (total - previewPerTranche * totalPeriods) : 0;
+
+  const generate = () => {
+    setError(null);
+    if (!total || total <= 0) {
+      setError("Enter a total share count.");
+      return;
+    }
+    const start = new Date(startDate + "T00:00:00Z");
+    if (isNaN(start.getTime())) {
+      setError("Invalid start date.");
+      return;
+    }
+    const tranches: VestingTranche[] = [];
+    const baseShares = Math.floor(total / totalPeriods);
+    const remainder = total - baseShares * totalPeriods;
+    for (let i = 0; i < totalPeriods; i++) {
+      const d = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + i * monthsStep, start.getUTCDate()));
+      const shares = i === totalPeriods - 1 ? baseShares + remainder : baseShares;
+      tranches.push({ vest_date: d.toISOString().slice(0, 10), shares });
+    }
+    onGenerate(tranches);
+    setOpen(false);
+  };
+
+  if (!open) {
+    return (
+      <Button size="sm" variant="ghost" onClick={() => setOpen(true)}>
+        ⚙ Generate from total + dates…
+      </Button>
+    );
+  }
+
+  return (
+    <div className="rounded-md border bg-secondary/40 p-3 space-y-2">
+      <div className="flex items-center justify-between">
+        <Label className="text-xs">Generate schedule</Label>
+        <button type="button" className="text-xs text-muted-foreground hover:underline" onClick={() => setOpen(false)}>
+          hide
+        </button>
+      </div>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <Field label="Total shares" hint="Sum across all tranches">
+          <Input
+            type="number"
+            step="1"
+            min={0}
+            value={total || ""}
+            placeholder="e.g. 4000"
+            onChange={(e) => setTotal(Number(e.target.value) || 0)}
+          />
+        </Field>
+        <Field label="Start date" hint="First tranche vests on this date (end of cliff)">
+          <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+        </Field>
+        <Field label="Years to fully vest">
+          <Input
+            type="number"
+            step="0.25"
+            min={0.25}
+            value={years}
+            onChange={(e) => setYears(Number(e.target.value) || 0)}
+          />
+        </Field>
+        <Field label="Period">
+          <Select value={period} onChange={(e) => setPeriod(e.target.value as typeof period)}>
+            <option value="monthly">monthly</option>
+            <option value="quarterly">quarterly</option>
+            <option value="yearly">yearly</option>
+          </Select>
+        </Field>
+      </div>
+      <p className="text-[11px] text-muted-foreground">
+        Will create <b>{totalPeriods}</b> tranches of <b>{formatNumber(previewPerTranche)}</b> shares each
+        {previewLastTranche !== previewPerTranche ? <> (last tranche: <b>{formatNumber(previewLastTranche)}</b>)</> : null}
+        , every {monthsStep === 1 ? "month" : monthsStep === 3 ? "3 months" : "12 months"}.
+      </p>
+      {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      <div className="flex justify-end gap-2">
+        <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>
+          Cancel
+        </Button>
+        <Button size="sm" onClick={generate}>
+          Generate (replaces current schedule)
+        </Button>
+      </div>
     </div>
   );
 }

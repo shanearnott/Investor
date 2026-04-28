@@ -2,8 +2,6 @@
 
 import { useMemo, useState } from "react";
 import {
-  Area,
-  AreaChart,
   CartesianGrid,
   Cell,
   Legend,
@@ -34,13 +32,6 @@ const PIE_COLORS = [
   "#1e3a8a", "#0e7490", "#0f766e", "#65a30d", "#ca8a04",
   "#c2410c", "#b91c1c", "#9333ea", "#7c3aed", "#0369a1",
 ];
-
-const SAND_COLORS: Record<string, string> = {
-  liquid_equity_total: "#16a34a",
-  illiquid_equity_total: "#0ea5e9",
-  unvested_equity_total: "#a3a3a3",
-  property_equity_total: "#f59e0b",
-};
 
 function fallbackScenario(): Scenario {
   return ScenarioSchema.parse({
@@ -182,14 +173,6 @@ export default function ProjectionsPage() {
     });
   }, [chosen, seriesByScenario]);
 
-  const sandData = (chosen[0] ? seriesByScenario[chosen[0].id] : []).map((r) => ({
-    date: r.date,
-    Liquid: Math.round(r.liquid_equity_total),
-    "Pre-trigger": Math.round(r.illiquid_equity_total),
-    Unvested: Math.round(r.unvested_equity_total),
-    Property: Math.round(r.property_equity_total),
-  }));
-
   const realisedPie = realisedTodayByAsset({
     holdings: data.stocks, properties: data.properties, settings, ccy,
   });
@@ -279,30 +262,6 @@ export default function ProjectionsPage() {
                       />
                     ))}
                   </LineChart>
-                </ResponsiveContainer>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Composition over time — {chosen[0]?.name} ({ccy})</CardTitle>
-              <CardDescription>Liquid · pre-trigger vested · unvested · property equity</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="h-[320px] w-full">
-                <ResponsiveContainer>
-                  <AreaChart data={sandData} margin={{ top: 10, right: 16, left: 0, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                    <XAxis dataKey="date" tick={{ fontSize: 11 }} minTickGap={50} />
-                    <YAxis tick={{ fontSize: 11 }} tickFormatter={(v: number) => formatNumber(v / 1000) + "k"} />
-                    <Tooltip formatter={(v: number) => formatMoney(v, ccy)} labelFormatter={(l) => `As of ${l}`} />
-                    <Legend />
-                    <Area type="monotone" dataKey="Liquid" stackId="1" stroke={SAND_COLORS.liquid_equity_total} fill={SAND_COLORS.liquid_equity_total} fillOpacity={0.7} />
-                    <Area type="monotone" dataKey="Pre-trigger" stackId="1" stroke={SAND_COLORS.illiquid_equity_total} fill={SAND_COLORS.illiquid_equity_total} fillOpacity={0.7} />
-                    <Area type="monotone" dataKey="Unvested" stackId="1" stroke={SAND_COLORS.unvested_equity_total} fill={SAND_COLORS.unvested_equity_total} fillOpacity={0.7} />
-                    <Area type="monotone" dataKey="Property" stackId="1" stroke={SAND_COLORS.property_equity_total} fill={SAND_COLORS.property_equity_total} fillOpacity={0.7} />
-                  </AreaChart>
                 </ResponsiveContainer>
               </div>
             </CardContent>
