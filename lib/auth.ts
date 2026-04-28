@@ -40,8 +40,26 @@ const providers = GOOGLE_AUTH_ENABLED
     ]
   : [];
 
+/**
+ * AUTH_SECRET fallback. Real deployments should set AUTH_SECRET, but for
+ * demo-only deploys (no Google OAuth, no real sessions to protect) we let the
+ * app boot without one rather than crashing. The cookie this signs holds
+ * nothing sensitive — sign-in is impossible without AUTH_GOOGLE_ID anyway.
+ */
+const AUTH_SECRET_FALLBACK =
+  "investor-demo-fallback-set-AUTH_SECRET-in-production-environments";
+const resolvedSecret = process.env.AUTH_SECRET || AUTH_SECRET_FALLBACK;
+
+if (!process.env.AUTH_SECRET && process.env.NODE_ENV === "production") {
+  // eslint-disable-next-line no-console
+  console.warn(
+    "[auth] AUTH_SECRET not set — using insecure fallback. Set AUTH_SECRET to a random 32-byte value in production.",
+  );
+}
+
 export const { handlers, signIn, signOut, auth } = NextAuth({
   trustHost: true,
+  secret: resolvedSecret,
   providers,
   session: { strategy: "jwt" },
   callbacks: {

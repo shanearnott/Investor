@@ -1,6 +1,10 @@
 # Investor
 
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fshanearnott%2FInvestor&project-name=investor&repository-name=investor)
+
 Personal investment tracker, scenario projections, and project evaluation. Mobile-first PWA — installable on iOS and Android home screens.
+
+> Click the **Deploy with Vercel** button above → sign in to Vercel → click **Deploy**. Done. The app boots in demo mode out of the box, no OAuth setup needed.
 
 - **Track** stocks (incl. RSU vesting schedules and double-trigger second-trigger dates) and properties
 - **Project** net worth across scenarios with line + stacked-area "sand" charts and allocation pies
@@ -23,17 +27,13 @@ npm run dev                   # http://localhost:3000
 
 If `.env.local` is blank, the app boots in demo mode (no sign-in possible). Click **Try with demo data** on the home page.
 
-## Deploy to Vercel — demo mode (zero OAuth setup)
+## Deploy to Vercel — demo mode (zero env vars)
 
-1. Push this repo to GitHub.
-2. https://vercel.com/new → **Import Project** → select the repo, branch `claude/investment-tracker-app-Kl3nB`.
-3. Under **Environment Variables**, add **just one**:
-   - `AUTH_SECRET` — generate with `openssl rand -base64 32` (or any random string)
-4. Click **Deploy**.
+Click the **Deploy with Vercel** button at the top, sign in to Vercel, click **Deploy**. That's it. No environment variables, no OAuth setup.
 
-Open the resulting URL on your phone, tap **Try with demo data**, and explore. Data is stored in your browser's localStorage. No Google account or OAuth setup required.
+Open the resulting URL on your phone → tap **Try with demo data** → explore. Data is stored in your browser's localStorage. To install on your phone: iOS Safari → **Share → Add to Home Screen**. Android Chrome → menu → **Install app**.
 
-To install on your phone: iOS Safari → **Share → Add to Home Screen**. Android Chrome → menu → **Install app**.
+> ⚠️ Note: in demo mode without `AUTH_SECRET` set, the app uses an insecure built-in fallback for cookie signing. That's fine because no one signs in (so cookies hold nothing sensitive). When you enable Google sign-in below, **set a real `AUTH_SECRET`** in Vercel env vars.
 
 ## Enable Google sign-in + Drive sync (optional, one-time)
 
