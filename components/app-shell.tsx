@@ -16,6 +16,7 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { useData } from "@/components/data-provider";
+import { usePublicConfig } from "@/lib/public-config";
 import { cn } from "@/lib/utils";
 
 const navItems = [
@@ -31,6 +32,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { data: session, status } = useSession();
   const { isDemo, error } = useData();
+  const { googleAuthEnabled } = usePublicConfig();
 
   return (
     <div className="flex min-h-dvh flex-col">
@@ -55,12 +57,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <span className="hidden sm:inline">Sign out</span>
               </Button>
             </>
-          ) : (
+          ) : googleAuthEnabled ? (
             <Button size="sm" onClick={() => signIn("google")}>
               <LogIn className="h-4 w-4" />
               <span className="hidden sm:inline">Sign in</span>
             </Button>
-          )}
+          ) : null}
         </div>
       </header>
       {error ? (

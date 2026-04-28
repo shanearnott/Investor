@@ -23,16 +23,19 @@ npm run dev                   # http://localhost:3000
 
 If `.env.local` is blank, the app boots in demo mode (no sign-in possible). Click **Try with demo data** on the home page.
 
-## Deploy to Vercel
+## Deploy to Vercel — demo mode (zero OAuth setup)
 
 1. Push this repo to GitHub.
-2. In Vercel, **Import Project** → select the repo.
-3. **Environment variables** (Production + Preview):
-   - `AUTH_SECRET` — generate with `openssl rand -base64 32`
-   - `AUTH_GOOGLE_ID` and `AUTH_GOOGLE_SECRET` — see Google setup below
-4. Deploy.
+2. https://vercel.com/new → **Import Project** → select the repo, branch `claude/investment-tracker-app-Kl3nB`.
+3. Under **Environment Variables**, add **just one**:
+   - `AUTH_SECRET` — generate with `openssl rand -base64 32` (or any random string)
+4. Click **Deploy**.
 
-## Google OAuth setup (one-time)
+Open the resulting URL on your phone, tap **Try with demo data**, and explore. Data is stored in your browser's localStorage. No Google account or OAuth setup required.
+
+To install on your phone: iOS Safari → **Share → Add to Home Screen**. Android Chrome → menu → **Install app**.
+
+## Enable Google sign-in + Drive sync (optional, one-time)
 
 You create your own Google Cloud OAuth client so the app can sign you in to your own Google account. The app only ever sees files it creates in your Drive (it uses the `drive.file` scope, not full-Drive access).
 
@@ -44,9 +47,12 @@ You create your own Google Cloud OAuth client so the app can sign you in to your
 4. Under **OAuth consent screen**:
    - Add scope `https://www.googleapis.com/auth/drive.file`
    - Add yourself as a **test user** (or publish the app — it stays restricted-scope)
-5. Copy the Client ID and Client Secret into Vercel env vars.
+5. In Vercel project → **Settings → Environment Variables**, add:
+   - `AUTH_GOOGLE_ID` = your client ID
+   - `AUTH_GOOGLE_SECRET` = your client secret
+6. Redeploy.
 
-That's it. After signing in, the app creates a folder `Investor App` in your Drive and saves five JSON files there.
+After redeploying, a **Sign in** button appears. Signing in creates a folder `Investor App` in your Drive and saves five JSON files there.
 
 ## How storage works
 

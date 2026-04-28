@@ -8,10 +8,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatMoney } from "@/lib/utils";
 import { currentAllocationBreakdown } from "@/lib/projections";
+import { usePublicConfig } from "@/lib/public-config";
 
 export default function HomePage() {
   const { status } = useSession();
   const { data, isDemo, loadDemo, loading } = useData();
+  const { googleAuthEnabled } = usePublicConfig();
 
   const stocksCount = data.stocks.length;
   const propertiesCount = data.properties.length;
@@ -43,14 +45,16 @@ export default function HomePage() {
             <CardDescription>
               {status === "authenticated"
                 ? "Your Drive is empty. Add your first holding or load demo data to explore."
-                : "Sign in with Google to save your data to your Drive, or try the demo."}
+                : googleAuthEnabled
+                  ? "Sign in with Google to save your data to your Drive, or try the demo."
+                  : "Try the demo to explore the app, or add your own data — it'll be saved in your browser."}
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-wrap gap-2">
-            {status !== "authenticated" ? (
+            {status !== "authenticated" && googleAuthEnabled ? (
               <Button onClick={() => signIn("google")}>Sign in with Google</Button>
             ) : null}
-            <Button variant="outline" onClick={loadDemo}>
+            <Button variant={googleAuthEnabled ? "outline" : "default"} onClick={loadDemo}>
               Try with demo data
             </Button>
             <Link href="/investments">
@@ -125,7 +129,9 @@ export default function HomePage() {
           </p>
           <p className="pt-2 text-xs text-muted-foreground">
             {isDemo
-              ? "Demo data is stored locally in your browser. Sign in with Google to save to your Drive."
+              ? googleAuthEnabled
+                ? "Demo data is stored locally in your browser. Sign in with Google to save to your Drive."
+                : "Data is stored locally in your browser. Google sign-in is not configured on this deployment, so syncing to Drive is unavailable."
               : "Your data is stored in your own Google Drive (Investor App folder)."}
           </p>
         </CardContent>

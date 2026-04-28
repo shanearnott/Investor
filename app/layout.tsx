@@ -4,6 +4,7 @@ import "./globals.css";
 import { AppShell } from "@/components/app-shell";
 import { Providers } from "@/components/providers";
 import { ServiceWorkerRegister } from "@/components/sw-register";
+import { GOOGLE_AUTH_ENABLED } from "@/lib/auth";
 
 export const metadata: Metadata = {
   title: "Investor",
@@ -33,7 +34,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="apple-touch-icon" href="/icon-192.png" />
       </head>
       <body>
-        <Providers>
+        <Providers config={{ googleAuthEnabled: GOOGLE_AUTH_ENABLED }}>
           <AppShell>{children}</AppShell>
         </Providers>
         <ServiceWorkerRegister />

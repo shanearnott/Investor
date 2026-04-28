@@ -16,19 +16,33 @@ import Google from "next-auth/providers/google";
 export const DRIVE_SCOPE =
   "openid email profile https://www.googleapis.com/auth/drive.file";
 
+/**
+ * Google sign-in is enabled only when both AUTH_GOOGLE_ID and AUTH_GOOGLE_SECRET
+ * are set. If they're missing, the app boots in demo-only mode (no providers,
+ * no sign-in button, data lives in localStorage). This lets you deploy without
+ * any OAuth setup — just set AUTH_SECRET.
+ */
+export const GOOGLE_AUTH_ENABLED = Boolean(
+  process.env.AUTH_GOOGLE_ID && process.env.AUTH_GOOGLE_SECRET,
+);
+
+const providers = GOOGLE_AUTH_ENABLED
+  ? [
+      Google({
+        authorization: {
+          params: {
+            scope: DRIVE_SCOPE,
+            prompt: "consent",
+            access_type: "offline",
+          },
+        },
+      }),
+    ]
+  : [];
+
 export const { handlers, signIn, signOut, auth } = NextAuth({
   trustHost: true,
-  providers: [
-    Google({
-      authorization: {
-        params: {
-          scope: DRIVE_SCOPE,
-          prompt: "consent",
-          access_type: "offline",
-        },
-      },
-    }),
-  ],
+  providers,
   session: { strategy: "jwt" },
   callbacks: {
     async jwt({ token, account }) {
