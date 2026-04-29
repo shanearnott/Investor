@@ -137,6 +137,9 @@ export const SettingsSchema = z.object({
   }),
   default_jurisdiction: z.enum(SUPPORTED_JURISDICTIONS).default("California"),
   tax_overrides: z.record(z.string(), z.record(z.string(), z.union([z.number(), z.boolean()]))).default({}),
+  /** Google OAuth Web Client ID. If set, the Settings page exposes Drive
+   *  sync controls. Stored in Settings so it persists across reloads. */
+  google_oauth_client_id: z.string().default(""),
 });
 export type Settings = z.infer<typeof SettingsSchema>;
 

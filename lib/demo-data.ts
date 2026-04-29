@@ -163,6 +163,7 @@ export function buildDemoData(): CollectionsMap {
       },
       default_jurisdiction: "California",
       tax_overrides: {},
+      google_oauth_client_id: "",
     },
   };
 }

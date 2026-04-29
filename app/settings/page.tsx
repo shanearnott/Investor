@@ -1,13 +1,30 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Cloud, CloudOff, Download, Plus, Trash2, Upload } from "lucide-react";
 
 import { useData } from "@/components/data-provider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Label, Select } from "@/components/ui/input";
-import { Settings, SettingsSchema, SUPPORTED_CURRENCIES, SUPPORTED_JURISDICTIONS } from "@/lib/models";
+import {
+  type InvestmentProject,
+  type Property,
+  type Scenario,
+  Settings,
+  SettingsSchema,
+  type StockHolding,
+  SUPPORTED_CURRENCIES,
+  SUPPORTED_JURISDICTIONS,
+} from "@/lib/models";
+import {
+  DRIVE_FILE_NAME,
+  getAuthorisedEmail,
+  readFromDrive,
+  requestAccessToken,
+  revokeAccessToken,
+  writeToDrive,
+} from "@/lib/drive-client";
 import { DEFAULTS as TAX_DEFAULTS, getRules } from "@/lib/tax";
 
 const OVERRIDE_FIELDS: { key: keyof typeof TAX_DEFAULTS["California"]; label: string; kind: "number" | "bool" }[] = [
@@ -23,7 +40,7 @@ const OVERRIDE_FIELDS: { key: keyof typeof TAX_DEFAULTS["California"]; label: st
 ];
 
 export default function SettingsPage() {
-  const { data, setSettings, isDemo, loadDemo, resetLocal } = useData();
+  const { data, setSettings, loadDemo, resetLocal } = useData();
   const [s, setS] = useState<Settings>(data.settings);
   const [jurisToEdit, setJurisToEdit] = useState<string>("California");
   const [savedNote, setSavedNote] = useState<string | null>(null);
@@ -180,18 +197,16 @@ export default function SettingsPage() {
         <CardHeader>
           <CardTitle>Demo & data</CardTitle>
         </CardHeader>
-        <CardContent className="flex flex-wrap gap-2">
-          <Button variant="outline" onClick={loadDemo}>Load demo data</Button>
-          <Button variant="ghost" onClick={resetLocal}>Clear local (demo) data</Button>
-          {isDemo ? (
+        <CardContent className="space-y-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" onClick={loadDemo}>Load demo data</Button>
+            <Button variant="ghost" onClick={resetLocal}>Clear local (demo) data</Button>
             <span className="text-xs text-muted-foreground self-center">
-              Currently in demo mode (data in browser localStorage).
+              Local data lives in your browser&apos;s localStorage. Use Google Drive below to back up or sync across devices.
             </span>
-          ) : (
-            <span className="text-xs text-muted-foreground self-center">
-              Signed in: data is saved to your Drive.
-            </span>
-          )}
+          </div>
+
+          <DriveSyncSection settings={s} update={update} />
         </CardContent>
       </Card>
 
@@ -240,4 +255,189 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
       {hint ? <p className="text-[11px] text-muted-foreground">{hint}</p> : null}
     </div>
   );
+}
+
+type DriveBundle = {
+  version: 1;
+  exported_at: string;
+  collections: {
+    stocks: StockHolding[];
+    properties: Property[];
+    scenarios: Scenario[];
+    projects: InvestmentProject[];
+    settings: Settings;
+  };
+};
+
+function DriveSyncSection({
+  settings,
+  update,
+}: {
+  settings: Settings;
+  update: <K extends keyof Settings>(k: K, v: Settings[K]) => void;
+}) {
+  const {
+    data,
+    setStocks,
+    setProperties,
+    setScenarios,
+    setProjects,
+    setSettings,
+  } = useData();
+
+  const [token, setToken] = useState<string | null>(null);
+  const [email, setEmail] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const clientId = settings.google_oauth_client_id?.trim() ?? "";
+  const canConnect = clientId.length > 0;
+
+  const handleConnect = async () => {
+    setErr(null); setNote(null);
+    if (!canConnect) {
+      setErr("Paste your Google OAuth Client ID first.");
+      return;
+    }
+    setBusy("connect");
+    try {
+      const t = await requestAccessToken(clientId);
+      setToken(t);
+      const e = await getAuthorisedEmail(t);
+      setEmail(e);
+      setNote("Connected to Drive.");
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handleDisconnect = async () => {
+    setErr(null); setNote(null);
+    if (token) await revokeAccessToken(token);
+    setToken(null);
+    setEmail(null);
+    setNote("Disconnected.");
+  };
+
+  const handleSyncToDrive = async () => {
+    setErr(null); setNote(null);
+    if (!token) { setErr("Connect to Drive first."); return; }
+    setBusy("up");
+    try {
+      const bundle: DriveBundle = {
+        version: 1,
+        exported_at: new Date().toISOString(),
+        collections: {
+          stocks: data.stocks,
+          properties: data.properties,
+          scenarios: data.scenarios,
+          projects: data.projects,
+          settings: data.settings,
+        },
+      };
+      await writeToDrive(token, bundle);
+      setNote(`Saved to Drive · ${DRIVE_FILE_NAME}`);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handleRestoreFromDrive = async () => {
+    setErr(null); setNote(null);
+    if (!token) { setErr("Connect to Drive first."); return; }
+    setBusy("down");
+    try {
+      const raw = await readFromDrive(token);
+      if (!raw) {
+        setErr(`No ${DRIVE_FILE_NAME} found in your Drive yet. Run "Sync to Drive" first.`);
+        return;
+      }
+      const parsed = parseDriveBundle(raw);
+      if (!parsed) {
+        setErr("File found but it doesn't look like an Investor backup.");
+        return;
+      }
+      // Apply collections; persistence happens inside each setter.
+      await Promise.all([
+        setStocks(parsed.collections.stocks ?? []),
+        setProperties(parsed.collections.properties ?? []),
+        setScenarios(parsed.collections.scenarios ?? []),
+        setProjects(parsed.collections.projects ?? []),
+        setSettings(parsed.collections.settings ?? data.settings),
+      ]);
+      setNote("Restored from Drive.");
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="rounded-md border bg-secondary/30 p-3 space-y-3">
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <p className="text-sm font-medium">Google Drive sync</p>
+          <p className="text-[11px] text-muted-foreground">
+            Saves a single <code>{DRIVE_FILE_NAME}</code> to your own Drive (drive.file scope — the app can&apos;t see anything else). Optional.
+          </p>
+        </div>
+        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-medium ${token ? "bg-emerald-100 text-emerald-800" : "bg-muted text-muted-foreground"}`}>
+          {token ? <><Cloud className="h-3 w-3" /> Connected{email ? ` · ${email}` : ""}</> : <><CloudOff className="h-3 w-3" /> Not connected</>}
+        </span>
+      </div>
+
+      <Field label="Google OAuth Client ID" hint="Create one in Google Cloud Console (Web application). Authorize this site's URL as a JavaScript origin. Save settings before connecting.">
+        <Input
+          value={settings.google_oauth_client_id ?? ""}
+          onChange={(e) => update("google_oauth_client_id", e.target.value)}
+          placeholder="123456789-abc.apps.googleusercontent.com"
+        />
+      </Field>
+
+      <div className="flex flex-wrap gap-2">
+        {token ? (
+          <Button size="sm" variant="outline" onClick={handleDisconnect} disabled={!!busy}>
+            <CloudOff className="h-3 w-3" /> Disconnect
+          </Button>
+        ) : (
+          <Button size="sm" onClick={handleConnect} disabled={!canConnect || !!busy}>
+            <Cloud className="h-3 w-3" /> {busy === "connect" ? "Connecting…" : "Connect Drive"}
+          </Button>
+        )}
+        <Button size="sm" variant="outline" onClick={handleSyncToDrive} disabled={!token || !!busy}>
+          <Upload className="h-3 w-3" /> {busy === "up" ? "Saving…" : "Sync to Drive"}
+        </Button>
+        <Button size="sm" variant="outline" onClick={handleRestoreFromDrive} disabled={!token || !!busy}>
+          <Download className="h-3 w-3" /> {busy === "down" ? "Restoring…" : "Restore from Drive"}
+        </Button>
+      </div>
+
+      {note ? <p className="text-xs text-emerald-700">{note}</p> : null}
+      {err ? <p className="text-xs text-destructive">{err}</p> : null}
+
+      <details className="text-[11px] text-muted-foreground">
+        <summary className="cursor-pointer">How to get a Client ID</summary>
+        <ol className="list-decimal pl-4 space-y-1 pt-1">
+          <li>Open <a className="underline" href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noreferrer">Google Cloud Console → Credentials</a> in a new tab.</li>
+          <li>Create credentials → OAuth client ID → <b>Web application</b>.</li>
+          <li>Under <b>Authorised JavaScript origins</b>, add this site&apos;s base URL (e.g. https://shanearnott.github.io). No redirect URI is needed for popup auth.</li>
+          <li>OAuth consent screen → add scope <code>.../auth/drive.file</code> and add yourself as a test user (or publish).</li>
+          <li>Copy the Client ID and paste it above. Click Save settings, then Connect Drive.</li>
+        </ol>
+      </details>
+    </div>
+  );
+}
+
+function parseDriveBundle(raw: unknown): DriveBundle | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as { version?: number; collections?: unknown };
+  if (r.version !== 1 || !r.collections || typeof r.collections !== "object") return null;
+  return r as DriveBundle;
 }

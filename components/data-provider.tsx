@@ -88,7 +88,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     setLoading(true);
     setError(null);
     try {
-      const [stocks, properties, scenarios, projects, settings] = await Promise.all([
+      const [stocks, properties, scenariosRaw, projects, settings] = await Promise.all([
         loadCollection("stocks", [] as StockHolding[]),
         loadCollection("properties", [] as Property[]),
         loadCollection("scenarios", [] as Scenario[]),
@@ -96,10 +96,26 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         loadCollection("settings", DEFAULT_SETTINGS as Settings),
       ]);
       if (ticket !== inflightLoad.current) return;
+
+      // One-time migration: existing demo scenarios shipped with horizon_years=10
+      // before the default was changed to 5. Clamp anything > 5 down to 5 so
+      // the user sees the new default they explicitly asked for. Marked with a
+      // version flag so it doesn't repeat on subsequent loads.
+      const MIG_KEY = "investor:migration:v1";
+      let scenarios = scenariosRaw ?? [];
+      if (typeof window !== "undefined" && !window.localStorage.getItem(MIG_KEY)) {
+        const before = JSON.stringify(scenarios);
+        scenarios = scenarios.map((s) => (s.horizon_years > 5 ? { ...s, horizon_years: 5 } : s));
+        if (JSON.stringify(scenarios) !== before) {
+          await saveCollection("scenarios", scenarios);
+        }
+        window.localStorage.setItem(MIG_KEY, "1");
+      }
+
       setData({
         stocks: stocks ?? [],
         properties: properties ?? [],
-        scenarios: scenarios ?? [],
+        scenarios,
         projects: projects ?? [],
         settings: settings ?? DEFAULT_SETTINGS,
       });
