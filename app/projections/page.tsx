@@ -33,14 +33,16 @@ const PIE_COLORS = [
   "#c2410c", "#b91c1c", "#9333ea", "#7c3aed", "#0369a1",
 ];
 
-/** Compact axis labels: 1.2B / 85M / 125k / 750. Avoids the misleading
- *  "85,000k" you get from naively dividing by 1k for everything. */
+/** Compact axis labels using Intl: 850 → "850", 12k → "12K", 1.2M, 85M, 1.2B.
+ *  Switches K → M at 1,000,000 and M → B at 1,000,000,000, exactly as
+ *  asked. Trailing zeros are trimmed (e.g. "85M", not "85.0M"). */
+const compactFormatter = new Intl.NumberFormat(undefined, {
+  notation: "compact",
+  maximumFractionDigits: 1,
+  minimumFractionDigits: 0,
+});
 function compactNumber(v: number): string {
-  const abs = Math.abs(v);
-  if (abs >= 1_000_000_000) return formatNumber(v / 1_000_000_000, 1) + "B";
-  if (abs >= 1_000_000) return formatNumber(v / 1_000_000, 1) + "M";
-  if (abs >= 1_000) return formatNumber(v / 1_000, 0) + "k";
-  return formatNumber(v, 0);
+  return compactFormatter.format(v);
 }
 
 function fallbackScenario(): Scenario {
