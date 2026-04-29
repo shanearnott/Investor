@@ -105,8 +105,7 @@ export default function HomePage() {
           </CardHeader>
           <CardContent>
             <p className="text-3xl font-semibold tabular-nums">
-              {formatMoney(today, displayCurrency)}{" "}
-              <span className="text-base font-medium text-muted-foreground">{displayCurrency}</span>
+              {formatMoney(today, displayCurrency)}
             </p>
             {(() => {
               // Secondary = whatever the user picked in Settings. If the
@@ -129,8 +128,7 @@ export default function HomePage() {
               }
               return (
                 <p className="text-base text-foreground/80 tabular-nums mt-1">
-                  ≈ {formatMoney(inSecondary, secondary)}{" "}
-                  <span className="text-sm font-medium text-muted-foreground">{secondary}</span>
+                  ≈ {formatMoney(inSecondary, secondary)}
                 </p>
               );
             })()}

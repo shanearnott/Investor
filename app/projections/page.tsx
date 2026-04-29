@@ -309,13 +309,12 @@ function Kpi({
       <CardHeader className="pb-2">
         <CardDescription className="text-[11px]">{label}</CardDescription>
         <CardTitle className="text-lg sm:text-xl tabular-nums">
-          {formatMoney(valueNum, ccy)}{" "}
-          <span className="text-[10px] font-medium text-muted-foreground">{ccy}</span>
+          {formatMoney(valueNum, ccy)}
         </CardTitle>
       </CardHeader>
       {inSecondary !== null ? (
         <CardContent className="pt-0 text-[11px] text-foreground/70 tabular-nums">
-          ≈ {formatMoney(inSecondary, secondary)} {secondary}
+          ≈ {formatMoney(inSecondary, secondary)}
         </CardContent>
       ) : null}
     </Card>
