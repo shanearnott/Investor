@@ -33,6 +33,16 @@ const PIE_COLORS = [
   "#c2410c", "#b91c1c", "#9333ea", "#7c3aed", "#0369a1",
 ];
 
+/** Compact axis labels: 1.2B / 85M / 125k / 750. Avoids the misleading
+ *  "85,000k" you get from naively dividing by 1k for everything. */
+function compactNumber(v: number): string {
+  const abs = Math.abs(v);
+  if (abs >= 1_000_000_000) return formatNumber(v / 1_000_000_000, 1) + "B";
+  if (abs >= 1_000_000) return formatNumber(v / 1_000_000, 1) + "M";
+  if (abs >= 1_000) return formatNumber(v / 1_000, 0) + "k";
+  return formatNumber(v, 0);
+}
+
 function fallbackScenario(): Scenario {
   return ScenarioSchema.parse({
     id: "fallback",
@@ -231,7 +241,7 @@ export default function ProjectionsPage() {
                   <LineChart data={lineData} margin={{ top: 10, right: 16, left: 0, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                     <XAxis dataKey="date" tick={{ fontSize: 11 }} minTickGap={50} />
-                    <YAxis tick={{ fontSize: 11 }} tickFormatter={(v: number) => formatNumber(v / 1000) + "k"} />
+                    <YAxis tick={{ fontSize: 11 }} tickFormatter={compactNumber} />
                     <Tooltip
                       formatter={(v: number) => formatMoney(v, ccy)}
                       labelFormatter={(l) => `As of ${l}`}
