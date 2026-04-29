@@ -37,8 +37,8 @@ function fallbackScenario(): Scenario {
   return ScenarioSchema.parse({
     id: "fallback",
     name: "Default base case",
-    description: "Auto-generated default — 8% stocks, 4% property, 10y.",
-    horizon_years: 10,
+    description: "Auto-generated default — 8% stocks, 4% property, 5y.",
+    horizon_years: 5,
     default_stock_growth_pct: 8,
     default_property_growth_pct: 4,
     stock_overrides: {},

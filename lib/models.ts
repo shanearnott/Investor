@@ -87,7 +87,7 @@ export const ScenarioSchema = z.object({
   id: z.string(),
   name: z.string().default(""),
   description: z.string().default(""),
-  horizon_years: z.number().int().min(1).max(50).default(10),
+  horizon_years: z.number().int().min(1).max(50).default(5),
   default_stock_growth_pct: z.number().default(8.0),
   default_property_growth_pct: z.number().default(4.0),
   stock_overrides: z.record(z.string(), z.object({

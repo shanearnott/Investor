@@ -95,8 +95,8 @@ export function buildDemoData(): CollectionsMap {
       {
         id: "demo-sc-base",
         name: "Base case",
-        description: "8%/yr stocks, 4%/yr property, 10y horizon, IPO at default date.",
-        horizon_years: 10,
+        description: "8%/yr stocks, 4%/yr property, 5y horizon, IPO at default date.",
+        horizon_years: 5,
         default_stock_growth_pct: 8,
         default_property_growth_pct: 4,
         stock_overrides: {},
@@ -107,7 +107,7 @@ export function buildDemoData(): CollectionsMap {
         id: "demo-sc-bull",
         name: "Bull case",
         description: "ACME doubles in 2y; property grows 7%.",
-        horizon_years: 10,
+        horizon_years: 5,
         default_stock_growth_pct: 14,
         default_property_growth_pct: 7,
         stock_overrides: {
@@ -120,7 +120,7 @@ export function buildDemoData(): CollectionsMap {
         id: "demo-sc-bear",
         name: "Bear case",
         description: "ACME flat-lines, IPO delayed 4y, property +1%.",
-        horizon_years: 10,
+        horizon_years: 5,
         default_stock_growth_pct: 2,
         default_property_growth_pct: 1,
         stock_overrides: {

@@ -38,7 +38,7 @@ function fallbackScenario(): Scenario {
   return ScenarioSchema.parse({
     id: "fallback",
     name: "Default base case",
-    horizon_years: 10,
+    horizon_years: 5,
     default_stock_growth_pct: 8,
     default_property_growth_pct: 4,
   });
