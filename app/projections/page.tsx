@@ -225,11 +225,11 @@ export default function ProjectionsPage() {
       {!noData ? (
         <>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-            <Kpi label={`Net worth (${ccy})`} value={formatMoney(totalToday, ccy)} />
-            <Kpi label="Liquid equity" value={formatMoney(liquidToday, ccy)} />
-            <Kpi label="Pre-trigger" value={formatMoney(illiquidToday, ccy)} />
-            <Kpi label="Unvested" value={formatMoney(unvestedToday, ccy)} />
-            <Kpi label="Property" value={formatMoney(propertyToday, ccy)} />
+            <Kpi label="Net worth" valueNum={totalToday} ccy={ccy} settings={settings} />
+            <Kpi label="Liquid equity" valueNum={liquidToday} ccy={ccy} settings={settings} />
+            <Kpi label="Pre-trigger" valueNum={illiquidToday} ccy={ccy} settings={settings} />
+            <Kpi label="Unvested" valueNum={unvestedToday} ccy={ccy} settings={settings} />
+            <Kpi label="Property" valueNum={propertyToday} ccy={ccy} settings={settings} />
           </div>
 
           <Card>
@@ -284,15 +284,39 @@ export default function ProjectionsPage() {
   );
 }
 
-function Kpi({ label, value, sub }: { label: string; value: string; sub?: string }) {
+function Kpi({
+  label,
+  valueNum,
+  ccy,
+  settings,
+}: {
+  label: string;
+  valueNum: number;
+  ccy: string;
+  settings: ReturnType<typeof useData>["data"]["settings"];
+}) {
+  // Mirror the home-page logic: secondary = settings' configured secondary,
+  // unless the user is already viewing in that currency (then swap to primary).
+  const secondary = ccy === settings.secondary_currency
+    ? settings.primary_currency
+    : settings.secondary_currency;
+  const rates = settings.fx_rates ?? {};
+  const haveRates = secondary !== ccy && Boolean(rates[ccy]) && Boolean(rates[secondary]);
+  const inSecondary = haveRates ? convert(valueNum, ccy, secondary, settings) : null;
+
   return (
     <Card>
       <CardHeader className="pb-2">
         <CardDescription className="text-[11px]">{label}</CardDescription>
-        <CardTitle className="text-lg sm:text-xl tabular-nums">{value}</CardTitle>
+        <CardTitle className="text-lg sm:text-xl tabular-nums">
+          {formatMoney(valueNum, ccy)}{" "}
+          <span className="text-[10px] font-medium text-muted-foreground">{ccy}</span>
+        </CardTitle>
       </CardHeader>
-      {sub ? (
-        <CardContent className="pt-0 text-[11px] text-muted-foreground">{sub}</CardContent>
+      {inSecondary !== null ? (
+        <CardContent className="pt-0 text-[11px] text-foreground/70 tabular-nums">
+          ≈ {formatMoney(inSecondary, secondary)} {secondary}
+        </CardContent>
       ) : null}
     </Card>
   );
