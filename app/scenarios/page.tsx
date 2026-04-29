@@ -102,7 +102,7 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
 
   const update = <K extends keyof Scenario>(k: K, v: Scenario[K]) => setD((p) => ({ ...p, [k]: v }));
 
-  const updateStockOv = (id: string, ov: { annual_price_growth_pct?: number; second_trigger_date_override?: string | null }) => {
+  const updateStockOv = (id: string, ov: { annual_price_growth_pct?: number }) => {
     setD((p) => ({
       ...p,
       stock_overrides: { ...p.stock_overrides, [id]: { ...p.stock_overrides[id], ...ov } },
@@ -186,31 +186,26 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
           <div className="space-y-2">
             <Label>Per-stock overrides</Label>
             <p className="text-[11px] text-muted-foreground">
-              Set a different growth % or second-trigger date for individual stocks. Leave blank to use the defaults above.
+              Set a different growth % for individual stocks. Leave at the default to inherit.
             </p>
-            <div className="hidden sm:grid grid-cols-[2fr_1fr_1fr] gap-2 px-2 text-[11px] uppercase tracking-wide text-muted-foreground">
+            <div className="hidden sm:grid grid-cols-[2fr_1fr] gap-2 px-2 text-[11px] uppercase tracking-wide text-muted-foreground">
               <span>Stock</span>
               <span>Growth (overrides default {d.default_stock_growth_pct}%/yr)</span>
-              <span>Second trigger override</span>
             </div>
             <div className="space-y-2">
               {data.stocks.map((h) => {
                 const ov = d.stock_overrides[h.id] ?? {};
                 const rate = ov.annual_price_growth_pct ?? d.default_stock_growth_pct;
-                const trig = ov.second_trigger_date_override ?? "";
                 const usingOverride = ov.annual_price_growth_pct !== undefined;
                 return (
                   <div
                     key={h.id}
-                    className="grid grid-cols-1 gap-2 rounded-md border p-2 sm:grid-cols-[2fr_1fr_1fr]"
+                    className="grid grid-cols-1 gap-2 rounded-md border p-2 sm:grid-cols-[2fr_1fr]"
                   >
                     <div className="text-sm">
                       <div className="font-medium">{h.ticker || h.company_name}</div>
                       <div className="text-[11px] text-muted-foreground">
                         current {formatMoney(h.current_share_price, h.currency, { fractionDigits: 2 })}/sh
-                        {h.equity_type === "RSU (double trigger)" && h.second_trigger_date
-                          ? ` · trigger ${h.second_trigger_date}`
-                          : ""}
                       </div>
                     </div>
                     <div>
@@ -225,18 +220,6 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
                         {usingOverride
                           ? `Overrides default ${d.default_stock_growth_pct}%/yr`
                           : `Using default ${d.default_stock_growth_pct}%/yr`}
-                      </p>
-                    </div>
-                    <div>
-                      <Input
-                        type="date"
-                        value={trig || ""}
-                        onChange={(e) => updateStockOv(h.id, { second_trigger_date_override: e.target.value || null })}
-                      />
-                      <p className="text-[10px] text-muted-foreground mt-1">
-                        {trig
-                          ? `Overrides ${h.second_trigger_date ?? "—"}`
-                          : `Using ${h.second_trigger_date ?? "(none set)"}`}
                       </p>
                     </div>
                   </div>

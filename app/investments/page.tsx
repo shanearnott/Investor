@@ -40,7 +40,6 @@ function blankStock(defaultJurisdiction: string): StockDraft {
     cost_basis_per_share: 0,
     shares_owned_outright: 0,
     vesting_schedule: [],
-    second_trigger_date: null,
     notes: "",
   });
 }
@@ -184,12 +183,6 @@ function StocksSection(props: {
                   Vested today: <b>{formatNumber(vestedSharesAt(h, today))}</b> sh · Cost basis:{" "}
                   {formatMoney(h.cost_basis_per_share, h.currency, { fractionDigits: 2 })} / sh
                 </div>
-                {h.equity_type === "RSU (double trigger)" ? (
-                  <div>
-                    Second trigger:{" "}
-                    <b>{h.second_trigger_date || "— not set —"}</b>
-                  </div>
-                ) : null}
                 {h.notes ? <div className="text-muted-foreground italic">{h.notes}</div> : null}
               </CardContent>
             </Card>
@@ -251,7 +244,6 @@ function StockForm({
       ...d,
       ticker: d.ticker.trim().toUpperCase(),
       vesting_schedule: d.vesting_schedule.filter((t) => t.shares > 0 && t.vest_date),
-      second_trigger_date: d.second_trigger_date?.trim() || null,
     });
     if (!parsed.success) {
       setError(parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "));
@@ -296,9 +288,6 @@ function StockForm({
           </Field>
           <Field label="Shares owned outright">
             <Input type="number" step="1" value={d.shares_owned_outright} onChange={(e) => update("shares_owned_outright", Number(e.target.value))} />
-          </Field>
-          <Field label="Second trigger date" hint="RSU double-trigger only">
-            <Input type="date" value={d.second_trigger_date ?? ""} onChange={(e) => update("second_trigger_date", e.target.value || null)} />
           </Field>
         </div>
 

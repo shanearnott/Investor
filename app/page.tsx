@@ -100,7 +100,7 @@ export default function HomePage() {
           <CardHeader>
             <CardTitle>Vested net worth today</CardTitle>
             <CardDescription>
-              Liquid + vested-but-pre-trigger equity + property equity
+              Vested equity + property equity
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -156,7 +156,6 @@ export default function HomePage() {
                     <li key={i} className="flex justify-between gap-2 border-b pb-1 last:border-0">
                       <span>
                         <b>{e.date}</b> · {e.ticker}
-                        {e.preTrigger ? <span className="ml-1 text-amber-700">(pre-trigger)</span> : null}
                       </span>
                       <span className="tabular-nums">
                         {formatNumber(e.shares)} sh · {formatMoney(e.value, displayCurrency)}
@@ -181,11 +180,6 @@ export default function HomePage() {
               </div>
             ) : null}
 
-            {next12.preTriggerNote ? (
-              <p className="text-[11px] text-muted-foreground">
-                Pre-trigger means those vests don&apos;t become liquid until the second trigger (e.g. IPO) — they accrue but you can&apos;t sell.
-              </p>
-            ) : null}
           </CardContent>
         </Card>
       ) : null}
@@ -196,10 +190,10 @@ export default function HomePage() {
         </CardHeader>
         <CardContent className="space-y-2 text-sm">
           <p>
-            <b>Investments</b> → add stocks (with vesting + second-trigger date for double-trigger RSUs) and properties.
+            <b>Investments</b> → add stocks (with vesting schedules) and properties.
           </p>
           <p>
-            <b>Scenarios</b> → save bear/base/bull cases with per-asset growth and IPO-date overrides.
+            <b>Scenarios</b> → save bear/base/bull cases with per-asset growth overrides.
           </p>
           <p>
             <b>Projections</b> → net worth over time (line + stacked-area &quot;sand&quot; chart) and allocation pies.
@@ -221,7 +215,6 @@ type VestingEvent = {
   ticker: string;
   shares: number;
   value: number; // in displayCurrency
-  preTrigger: boolean;
 };
 type PropertyGain = {
   name: string;
@@ -242,7 +235,6 @@ function nextTwelveMonthsOutlook(args: {
   totalPropertyGain: number;
   vestingEvents: VestingEvent[];
   propertyGains: PropertyGain[];
-  preTriggerNote: boolean;
 } {
   const today = new Date();
   const end = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 12, today.getUTCDate()));
@@ -251,25 +243,19 @@ function nextTwelveMonthsOutlook(args: {
   const events: VestingEvent[] = [];
   let totalShares = 0;
   let totalValue = 0;
-  let preTriggerSeen = false;
 
   for (const h of args.holdings) {
-    const isDouble = h.equity_type === "RSU (double trigger)";
-    const triggerDate = parseISO(h.second_trigger_date ?? null);
     for (const t of h.vesting_schedule) {
       const d = parseISO(t.vest_date);
       if (!d) continue;
       if (d <= today || d > end) continue;
       const valueNative = t.shares * h.current_share_price;
       const valueDisplay = convert(valueNative, h.currency, args.displayCurrency, args.settings);
-      const preTrigger = isDouble && triggerDate ? d < triggerDate : false;
-      if (preTrigger) preTriggerSeen = true;
       events.push({
         date: t.vest_date,
         ticker: h.ticker || h.company_name || h.id,
         shares: t.shares,
         value: valueDisplay,
-        preTrigger,
       });
       totalShares += t.shares;
       totalValue += valueDisplay;
@@ -305,6 +291,5 @@ function nextTwelveMonthsOutlook(args: {
     totalPropertyGain: totalGain,
     vestingEvents: events,
     propertyGains,
-    preTriggerNote: preTriggerSeen,
   };
 }

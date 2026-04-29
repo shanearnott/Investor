@@ -6,7 +6,6 @@
 import { convert } from "./fx";
 import { lookupGrowthRate } from "./growth";
 import {
-  parseISO,
   totalGrantedShares,
   vestedSharesAt,
   type Property,
@@ -19,11 +18,10 @@ export type ProjectionRow = {
   date: string; // ISO YYYY-MM-DD
   total: number;
   liquid_equity_total: number;
-  illiquid_equity_total: number;
   unvested_equity_total: number;
   property_equity_total: number;
   property_gross_total: number;
-  // Per-asset combined value (liquid + illiquid + unvested for stocks; equity for property)
+  // Per-asset combined value (vested + unvested for stocks; equity for property)
   perAsset: Record<string, number>;
   // Optional inflation-adjusted total
   real_total?: number;
@@ -47,14 +45,6 @@ function monthsBetween(from: Date, to: Date): number {
 
 function stockGrowthForScenario(s: Scenario, holdingId: string): number {
   return s.stock_overrides[holdingId]?.annual_price_growth_pct ?? s.default_stock_growth_pct;
-}
-
-function secondTriggerForScenario(
-  s: Scenario,
-  holdingId: string,
-  fallback: string | null | undefined,
-): string | null {
-  return s.stock_overrides[holdingId]?.second_trigger_date_override || fallback || null;
 }
 
 function propertyGrowthForScenario(
@@ -84,20 +74,8 @@ export function projectStockValueAt(
   const granted = totalGrantedShares(h);
   const unvested = Math.max(0, granted - vested);
 
-  const triggerISO = secondTriggerForScenario(scenario, h.id, h.second_trigger_date);
-  const isDouble = h.equity_type === "RSU (double trigger)";
-  let secondPassed = true;
-  if (isDouble && triggerISO) {
-    const tdate = parseISO(triggerISO);
-    if (tdate) secondPassed = asOf >= tdate;
-  }
-
-  const liquidShares = isDouble && !secondPassed ? 0 : vested;
-  const illiquidShares = isDouble && !secondPassed ? vested : 0;
-
   return {
-    liquid: convert(liquidShares * projectedPrice, h.currency, primaryCcy, settings),
-    illiquid_vested: convert(illiquidShares * projectedPrice, h.currency, primaryCcy, settings),
+    liquid: convert(vested * projectedPrice, h.currency, primaryCcy, settings),
     unvested: convert(unvested * projectedPrice, h.currency, primaryCcy, settings),
     shares_vested: vested,
     shares_unvested: unvested,
@@ -156,14 +134,13 @@ export function buildNetWorthSeries(args: {
   for (let i = 0; i <= totalMonths; i += step) {
     const asOf = addMonths(startMonth, i);
     const perAsset: Record<string, number> = {};
-    let liquid = 0, illiquid = 0, unvested = 0, propEq = 0, propGross = 0;
+    let liquid = 0, unvested = 0, propEq = 0, propGross = 0;
 
     for (const h of holdings) {
       const v = projectStockValueAt(h, scenario, asOf, settings.primary_currency, settings);
       const label = `stock:${h.ticker || h.company_name || h.id}`;
-      perAsset[label] = v.liquid + v.illiquid_vested + v.unvested;
+      perAsset[label] = v.liquid + v.unvested;
       liquid += v.liquid;
-      illiquid += v.illiquid_vested;
       unvested += v.unvested;
     }
     for (const p of properties) {
@@ -174,12 +151,11 @@ export function buildNetWorthSeries(args: {
       propGross += v.gross;
     }
 
-    const total = liquid + illiquid + unvested + propEq;
+    const total = liquid + unvested + propEq;
     const row: ProjectionRow = {
       date: asOf.toISOString().slice(0, 10),
       total,
       liquid_equity_total: liquid,
-      illiquid_equity_total: illiquid,
       unvested_equity_total: unvested,
       property_equity_total: propEq,
       property_gross_total: propGross,
@@ -213,7 +189,7 @@ export function currentAllocationBreakdown(args: {
   const out: Record<string, number> = {};
   for (const h of args.holdings) {
     const v = projectStockValueAt(h, snapshot, today, args.settings.primary_currency, args.settings);
-    const cur = v.liquid + v.illiquid_vested;
+    const cur = v.liquid;
     if (cur > 0) {
       const key = `${h.ticker || h.company_name} (vested)`;
       out[key] = (out[key] ?? 0) + cur;
@@ -241,7 +217,7 @@ export function futureAllocationBreakdown(args: {
   const out: Record<string, number> = {};
   for (const h of args.holdings) {
     const v = projectStockValueAt(h, args.scenario, asOf, args.settings.primary_currency, args.settings);
-    const total = v.liquid + v.illiquid_vested + v.unvested;
+    const total = v.liquid + v.unvested;
     if (total > 0) out[h.ticker || h.company_name || h.id] = total;
   }
   for (const p of args.properties) {

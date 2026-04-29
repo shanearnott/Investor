@@ -102,23 +102,18 @@ export function evaluateProject(args: {
       const v = projectStockValueAt(h, scenario, target, primary, settings);
       const projectedNative = v.projected_price;
 
+      // Vested shares ARE liquid — no separate trigger logic anymore.
       const vested = vestedSharesAt(h, target);
-      const triggerISO =
-        scenario.stock_overrides[h.id]?.second_trigger_date_override || h.second_trigger_date;
-      const isDouble = h.equity_type === "RSU (double trigger)";
-      let secondPassed = true;
-      if (isDouble && triggerISO) {
-        const td = parseISO(triggerISO);
-        if (td) secondPassed = target >= td;
-      }
-      const liquidAvail = isDouble && !secondPassed ? 0 : vested;
+      const liquidAvail = vested;
       const sharesActually = Math.min(sharesRequested, liquidAvail);
 
       const costBasis = h.cost_basis_per_share > 0 ? h.cost_basis_per_share : h.current_share_price;
       const holdingPeriod = Math.max(0, (target.getTime() - Date.now()) / (1000 * 60 * 60 * 24 * 365.25));
 
+      // Tax follows the PROJECT's jurisdiction, not the holding's — the project
+      // is the entity being executed in a particular country.
       const tx = stockSaleTax({
-        jurisdiction: h.jurisdiction,
+        jurisdiction: project.jurisdiction,
         sale_price_per_share: projectedNative,
         cost_basis_per_share: costBasis,
         shares: sharesActually,
@@ -172,7 +167,9 @@ export function evaluateProject(args: {
       const mortgageNative = p.mortgage_balance * fraction;
 
       const tx = propertySaleTax({
-        jurisdiction: p.jurisdiction,
+        // Project's jurisdiction (not the property's) — same reasoning as
+        // for stocks: tax is owed where the funding event happens.
+        jurisdiction: project.jurisdiction,
         sale_price: salePriceNative,
         cost_basis: costBasisNative,
         holding_period_years: holdingPeriod,

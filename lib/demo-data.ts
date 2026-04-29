@@ -1,7 +1,7 @@
 /**
  * Demo dataset — used when no user is signed in.
- * Designed to exercise both flavours: US California equity (double-trigger RSU) +
- * AUS Sydney property + a few scenarios + a sample project.
+ * Mixes US California RSUs + a public-stock holding with AUS Sydney + SF
+ * properties, plus a few scenarios and a sample project.
  */
 
 import { newId, type CollectionsMap } from "./models";
@@ -30,15 +30,14 @@ export function buildDemoData(): CollectionsMap {
         id: stockId,
         ticker: "ACME",
         company_name: "Acme Robotics Inc",
-        equity_type: "RSU (double trigger)",
+        equity_type: "RSU",
         currency: "USD",
         jurisdiction: "California",
         current_share_price: 48.5,
         cost_basis_per_share: 22.0,
         shares_owned_outright: 1500,
         vesting_schedule: vesting,
-        second_trigger_date: isoDateOffset(2, 0), // IPO ~2 years out
-        notes: "Demo: pre-IPO double-trigger RSUs.",
+        notes: "Demo: RSUs vesting on the schedule below.",
       },
       {
         id: "demo-stock-msft",
@@ -51,7 +50,6 @@ export function buildDemoData(): CollectionsMap {
         cost_basis_per_share: 280.0,
         shares_owned_outright: 200,
         vesting_schedule: [],
-        second_trigger_date: null,
         notes: "Demo: public-stock holding, long-term cap gains eligible.",
       },
     ],
@@ -119,14 +117,13 @@ export function buildDemoData(): CollectionsMap {
       {
         id: "demo-sc-bear",
         name: "Bear case",
-        description: "ACME flat-lines, IPO delayed 4y, property +1%.",
+        description: "ACME flat-lines, property +1%.",
         horizon_years: 5,
         default_stock_growth_pct: 2,
         default_property_growth_pct: 1,
         stock_overrides: {
           [stockId]: {
             annual_price_growth_pct: -5,
-            second_trigger_date_override: isoDateOffset(4, 0),
           },
         },
         property_overrides: {},
@@ -140,6 +137,7 @@ export function buildDemoData(): CollectionsMap {
         description: "Demo project: deposit + furniture + car",
         target_date: isoDateOffset(3, 0),
         currency: "AUD",
+        jurisdiction: "Australia",
         items: [
           { name: "House deposit (20%)", cost: 600_000, currency: "AUD", notes: "" },
           { name: "Stamp duty + fees", cost: 80_000, currency: "AUD", notes: "" },

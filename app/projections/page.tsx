@@ -20,7 +20,7 @@ import { useData } from "@/components/data-provider";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label, Select } from "@/components/ui/input";
 import { convert } from "@/lib/fx";
-import { Property, Scenario, ScenarioSchema, StockHolding, propertyEquity, vestedSharesAt, parseISO } from "@/lib/models";
+import { Property, Scenario, ScenarioSchema, StockHolding, propertyEquity, vestedSharesAt } from "@/lib/models";
 import {
   buildNetWorthSeries,
   projectPropertyValueAt,
@@ -57,15 +57,9 @@ function realisedTodayByAsset(args: {
   const out: { name: string; value: number }[] = [];
   const today = new Date();
   for (const h of args.holdings) {
-    // Only count shares that are vested AND past second trigger if applicable
+    // Vested shares are realised. No second-trigger logic.
     const vested = vestedSharesAt(h, today);
-    const isDouble = h.equity_type === "RSU (double trigger)";
-    let liquid = vested;
-    if (isDouble && h.second_trigger_date) {
-      const tdate = parseISO(h.second_trigger_date);
-      if (tdate && today < tdate) liquid = 0;
-    }
-    const valNative = liquid * h.current_share_price;
+    const valNative = vested * h.current_share_price;
     const v = convert(valNative, h.currency, args.ccy, args.settings);
     if (v > 0) out.push({ name: h.ticker || h.company_name || h.id, value: Math.round(v) });
   }
@@ -93,20 +87,14 @@ function comingByAsset(args: {
   horizon.setUTCFullYear(horizon.getUTCFullYear() + args.scenario.horizon_years);
 
   for (const h of args.holdings) {
-    // Today realised (in target ccy)
+    // Today realised (vested × current price), in target currency
     const vestedToday = vestedSharesAt(h, today);
-    const isDouble = h.equity_type === "RSU (double trigger)";
-    let liquidToday = vestedToday;
-    if (isDouble && h.second_trigger_date) {
-      const tdate = parseISO(h.second_trigger_date);
-      if (tdate && today < tdate) liquidToday = 0;
-    }
-    const realisedNative = liquidToday * h.current_share_price;
+    const realisedNative = vestedToday * h.current_share_price;
     const realised = convert(realisedNative, h.currency, args.ccy, args.settings);
 
-    // Horizon total value (all granted shares × projected price)
+    // Horizon total = all granted shares × projected price
     const v = projectStockValueAt(h, args.scenario, horizon, args.ccy, args.settings);
-    const horizonTotal = v.liquid + v.illiquid_vested + v.unvested;
+    const horizonTotal = v.liquid + v.unvested;
 
     const coming = horizonTotal - realised;
     if (coming > 0) out.push({ name: h.ticker || h.company_name || h.id, value: Math.round(coming) });
@@ -155,7 +143,6 @@ export default function ProjectionsPage() {
   const todayRow = firstSeries[0];
   const totalToday = todayRow?.total ?? 0;
   const liquidToday = todayRow?.liquid_equity_total ?? 0;
-  const illiquidToday = todayRow?.illiquid_equity_total ?? 0;
   const unvestedToday = todayRow?.unvested_equity_total ?? 0;
   const propertyToday = todayRow?.property_equity_total ?? 0;
 
@@ -224,10 +211,9 @@ export default function ProjectionsPage() {
 
       {!noData ? (
         <>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <Kpi label="Net worth" valueNum={totalToday} ccy={ccy} settings={settings} />
-            <Kpi label="Liquid equity" valueNum={liquidToday} ccy={ccy} settings={settings} />
-            <Kpi label="Pre-trigger" valueNum={illiquidToday} ccy={ccy} settings={settings} />
+            <Kpi label="Vested equity" valueNum={liquidToday} ccy={ccy} settings={settings} />
             <Kpi label="Unvested" valueNum={unvestedToday} ccy={ccy} settings={settings} />
             <Kpi label="Property" valueNum={propertyToday} ccy={ccy} settings={settings} />
           </div>

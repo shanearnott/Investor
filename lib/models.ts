@@ -25,8 +25,7 @@ export const SUPPORTED_JURISDICTIONS = [
 
 export const EQUITY_TYPES = [
   "Common Stock",
-  "RSU (single trigger)",
-  "RSU (double trigger)",
+  "RSU",
   "ESPP",
   "Stock Options",
 ] as const;
@@ -59,7 +58,6 @@ export const StockHoldingSchema = z.object({
   cost_basis_per_share: z.number().nonnegative().default(0),
   shares_owned_outright: z.number().nonnegative().default(0),
   vesting_schedule: z.array(VestingTrancheSchema).default([]),
-  second_trigger_date: isoDate,
   notes: z.string().default(""),
 });
 export type StockHolding = z.infer<typeof StockHoldingSchema>;
@@ -92,7 +90,6 @@ export const ScenarioSchema = z.object({
   default_property_growth_pct: z.number().default(4.0),
   stock_overrides: z.record(z.string(), z.object({
     annual_price_growth_pct: z.number().optional(),
-    second_trigger_date_override: z.string().optional().nullable(),
   })).default({}),
   property_overrides: z.record(z.string(), z.object({
     annual_growth_pct: z.number().optional(),
@@ -122,6 +119,10 @@ export const InvestmentProjectSchema = z.object({
   description: z.string().default(""),
   target_date: isoDate,
   currency: z.enum(SUPPORTED_CURRENCIES),
+  /** Tax jurisdiction the project is executed in. All liquidations funding
+   *  this project are taxed under this jurisdiction's rules, not the
+   *  underlying asset's. */
+  jurisdiction: z.enum(SUPPORTED_JURISDICTIONS).default("California"),
   items: z.array(ProjectItemSchema).default([]),
   funding: z.array(FundingSourceSchema).default([]),
   scenario_id: z.string().nullable().optional(),
@@ -175,14 +176,6 @@ export function vestedSharesAt(h: StockHolding, asOf: Date): number {
     if (d && d <= asOf) v += t.shares;
   }
   return v;
-}
-
-export function liquidSharesAt(h: StockHolding, asOf: Date, secondTriggerOverride?: string | null): number {
-  if (h.equity_type === "RSU (double trigger)") {
-    const trigger = parseISO(secondTriggerOverride || h.second_trigger_date || null);
-    if (trigger && asOf < trigger) return 0;
-  }
-  return vestedSharesAt(h, asOf);
 }
 
 export function propertyEquity(p: Property): number {

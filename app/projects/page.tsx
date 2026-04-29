@@ -17,17 +17,19 @@ import {
   Scenario,
   ScenarioSchema,
   SUPPORTED_CURRENCIES,
+  SUPPORTED_JURISDICTIONS,
 } from "@/lib/models";
 import { evaluateProject } from "@/lib/projects-engine";
 import { formatMoney } from "@/lib/utils";
 
-function blank(primary: string): InvestmentProject {
+function blank(primary: string, defaultJurisdiction: string): InvestmentProject {
   return InvestmentProjectSchema.parse({
     id: newId(),
     name: "",
     description: "",
     target_date: null,
     currency: primary,
+    jurisdiction: defaultJurisdiction,
     items: [],
     funding: [],
     scenario_id: null,
@@ -66,7 +68,7 @@ export default function ProjectsPage() {
         <h1 className="text-xl font-semibold">Projects</h1>
         <div className="flex items-center gap-3">
           <CurrencySelector />
-          <Button onClick={() => setEditing(blank(data.settings.primary_currency))}>
+          <Button onClick={() => setEditing(blank(data.settings.primary_currency, data.settings.default_jurisdiction))}>
             <Plus className="h-4 w-4" /> Add project
           </Button>
         </div>
@@ -138,7 +140,7 @@ function ProjectCard({
         <div>
           <CardTitle className="text-base">{project.name || "(unnamed)"}</CardTitle>
           <CardDescription>
-            target {project.target_date || "—"} · {project.items.length} item(s) · {project.funding.length} funding source(s)
+            target {project.target_date || "—"} · jurisdiction {project.jurisdiction} · {project.items.length} item(s) · {project.funding.length} funding source(s)
           </CardDescription>
         </div>
         <div className="flex gap-1">
@@ -311,6 +313,11 @@ function ProjectForm({
               {SUPPORTED_CURRENCIES.map((c) => <option key={c}>{c}</option>)}
             </Select>
           </Field>
+          <Field label="Tax jurisdiction" hint="Where the project is being executed. All liquidations to fund this project are taxed under this jurisdiction's rules.">
+            <Select value={d.jurisdiction} onChange={(e) => update("jurisdiction", e.target.value as InvestmentProject["jurisdiction"])}>
+              {SUPPORTED_JURISDICTIONS.map((j) => <option key={j}>{j}</option>)}
+            </Select>
+          </Field>
           <Field label="Default scenario">
             <Select
               value={d.scenario_id ?? scenarios[0]?.id ?? ""}
@@ -403,11 +410,12 @@ function ProjectForm({
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <div className="space-y-1">
       <Label>{label}</Label>
       {children}
+      {hint ? <p className="text-[11px] text-muted-foreground">{hint}</p> : null}
     </div>
   );
 }
