@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   CartesianGrid,
   Cell,
@@ -18,7 +18,7 @@ import {
 import { CurrencySelector } from "@/components/currency-selector";
 import { useData } from "@/components/data-provider";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Label, Select } from "@/components/ui/input";
+import { Label } from "@/components/ui/input";
 import { convert } from "@/lib/fx";
 import { Property, Scenario, ScenarioSchema, StockHolding, propertyEquity, vestedSharesAt } from "@/lib/models";
 import {
@@ -126,7 +126,19 @@ export default function ProjectionsPage() {
   const settings = data.settings;
   const scenarios = data.scenarios.length ? data.scenarios : [fallbackScenario()];
 
-  const [selectedIds, setSelectedIds] = useState<string[]>([scenarios[0]?.id]);
+  const [selectedIds, setSelectedIds] = useState<string[]>(() => scenarios.map((s) => s.id));
+  // If scenarios change after load (e.g. data hydrates), select any newly-added ones too
+  useEffect(() => {
+    setSelectedIds((prev) => {
+      const known = new Set(prev);
+      const allIds = scenarios.map((s) => s.id);
+      const everSelected = allIds.every((id) => known.has(id));
+      // Only auto-add if previously everything was selected — don't fight a deliberate
+      // user de-selection.
+      if (everSelected || prev.length === 0) return allIds;
+      return prev;
+    });
+  }, [scenarios]);
   const chosen = scenarios.filter((s) => selectedIds.includes(s.id));
 
   // Build series in displayCurrency (so all chart axes/tooltips match the selector)
@@ -187,29 +199,44 @@ export default function ProjectionsPage() {
 
   const noData = data.stocks.length === 0 && data.properties.length === 0;
 
+  const toggleScenario = (id: string) =>
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  const allSelected = selectedIds.length === scenarios.length;
+
   return (
     <div className="mx-auto max-w-5xl space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-xl font-semibold">Projections</h1>
-        <div className="flex flex-wrap items-center gap-3">
+      {/* Sticky toolbar — stays visible as the user scrolls the page */}
+      <div className="sticky top-[44px] sm:top-[52px] z-20 -mx-3 sm:-mx-6 px-3 sm:px-6 py-2 bg-background/95 backdrop-blur border-b">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h1 className="text-xl font-semibold">Projections</h1>
           <CurrencySelector />
-          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
-            <Label className="text-xs">Scenarios</Label>
-            <Select
-              multiple
-              className="h-auto min-h-10"
-              value={selectedIds}
-              onChange={(e) =>
-                setSelectedIds(Array.from(e.target.selectedOptions, (o) => o.value))
-              }
-            >
-              {scenarios.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </Select>
-          </div>
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-1">
+          <Label className="text-xs text-muted-foreground mr-1">Scenarios</Label>
+          <button
+            type="button"
+            onClick={() => setSelectedIds(allSelected ? [] : scenarios.map((s) => s.id))}
+            className="rounded-full border px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:bg-accent"
+          >
+            {allSelected ? "Clear" : "All"}
+          </button>
+          {scenarios.map((s) => {
+            const on = selectedIds.includes(s.id);
+            return (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => toggleScenario(s.id)}
+                className={
+                  on
+                    ? "rounded-full border border-primary bg-primary text-primary-foreground px-2.5 py-1 text-[11px] font-medium"
+                    : "rounded-full border px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:bg-accent"
+                }
+              >
+                {s.name}
+              </button>
+            );
+          })}
         </div>
       </div>
 
