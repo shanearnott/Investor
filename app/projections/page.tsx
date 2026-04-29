@@ -381,8 +381,8 @@ function NestedAllocationCard({
   // INNER ring: the headline split — only two slices.
   // Both pies' values must sum to grandTotal so arcs align between rings.
   const innerData = [
-    { name: "Realised today", value: realisedTotal, fill: TODAY_COLORS[0] },
-    { name: `Coming +${horizonYears}y`, value: comingTotal, fill: COMING_COLORS[0] },
+    { name: "Today", value: realisedTotal, fill: TODAY_COLORS[0] },
+    { name: "Coming", value: comingTotal, fill: COMING_COLORS[0] },
   ].filter((d) => d.value > 0);
 
   // OUTER ring: today's assets first (so their arcs sit under the today
@@ -416,12 +416,12 @@ function NestedAllocationCard({
         <CardDescription className="text-[11px]">
           <span className="inline-flex items-center gap-1">
             <span className="inline-block h-3 w-3 rounded-sm" style={{ background: TODAY_COLORS[0] }} />
-            <b>Realised today</b> {realisedPct.toFixed(0)}%
+            <b>Today</b> {realisedPct.toFixed(0)}%
           </span>{" "}
           ·{" "}
           <span className="inline-flex items-center gap-1">
             <span className="inline-block h-3 w-3 rounded-sm" style={{ background: COMING_COLORS[0] }} />
-            <b>Coming over {horizonYears}y</b> {comingPct.toFixed(0)}%
+            <b>Coming ({horizonYears}y)</b> {comingPct.toFixed(0)}%
           </span>
           {" "}— the inner ring is the headline split; the outer ring breaks each side down by asset.
         </CardDescription>
@@ -478,7 +478,7 @@ function NestedAllocationCard({
           </div>
         )}
         <p className="mt-2 text-[11px] text-muted-foreground">
-          <b>Realised today</b> per asset = vested shares past any second trigger × current price, plus property equity.{" "}
+          <b>Today</b> per asset = vested shares past any second trigger × current price, plus property equity.{" "}
           <b>Coming</b> per asset = the gap between the asset&apos;s value at horizon (in this scenario) and what&apos;s realised today, so it bundles future vesting, post-trigger unlocks, and price growth.
         </p>
       </CardContent>
