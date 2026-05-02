@@ -48,6 +48,18 @@ function compactNumber(v: number): string {
   return compactFormatter.format(v);
 }
 
+const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** YYYY-MM-DD → "Mmm-YY" (e.g. "2026-05-01" → "May-26"). Falls back to
+ *  the raw input if it doesn't match the expected ISO shape. */
+function formatMmmYY(iso: string): string {
+  const m = /^(\d{4})-(\d{2})-\d{2}$/.exec(iso);
+  if (!m) return iso;
+  const monthIdx = Number(m[2]) - 1;
+  const yy = m[1].slice(2);
+  if (monthIdx < 0 || monthIdx > 11) return iso;
+  return `${MONTH_SHORT[monthIdx]}-${yy}`;
+}
+
 function fallbackScenario(): Scenario {
   return ScenarioSchema.parse({
     id: "fallback",
@@ -320,7 +332,12 @@ export default function ProjectionsPage() {
                 <ResponsiveContainer>
                   <LineChart data={lineData} margin={{ top: 10, right: 16, left: 0, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                    <XAxis dataKey="date" tick={{ fontSize: 11 }} minTickGap={50} />
+                    <XAxis
+                      dataKey="date"
+                      tick={{ fontSize: 11 }}
+                      minTickGap={50}
+                      tickFormatter={formatMmmYY}
+                    />
                     <YAxis tick={{ fontSize: 11 }} tickFormatter={compactNumber} />
                     <Tooltip
                       content={(props) => (
@@ -460,7 +477,7 @@ function LesserOfTooltip({
   if (rows.length === 0) return null;
   return (
     <div className="rounded-md border bg-background/95 px-2 py-1 text-xs shadow">
-      <p className="font-medium mb-0.5">As of {label}</p>
+      <p className="font-medium mb-0.5">As of {label ? formatMmmYY(label) : ""}</p>
       {rows.map((r) => (
         <p key={r.name} className="tabular-nums">
           <span
