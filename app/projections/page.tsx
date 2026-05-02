@@ -28,7 +28,7 @@ import {
 } from "@/lib/projections";
 import { formatMoney, formatNumber } from "@/lib/utils";
 
-const HORIZON_OPTIONS = [5, 10, 15, 20] as const;
+const HORIZON_OPTIONS = [2.5, 5, 10, 15, 20] as const;
 type HorizonYears = (typeof HORIZON_OPTIONS)[number];
 
 const PIE_COLORS = [
@@ -110,7 +110,7 @@ function comingByAsset(args: {
 }): Slice[] {
   const out: Slice[] = [];
   const horizon = new Date();
-  horizon.setUTCFullYear(horizon.getUTCFullYear() + args.horizonYears);
+  horizon.setUTCMonth(horizon.getUTCMonth() + Math.round(args.horizonYears * 12));
   const settingsForCcy: typeof args.settings = {
     ...args.settings,
     primary_currency: args.ccy as typeof args.settings.primary_currency,
