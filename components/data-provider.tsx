@@ -31,6 +31,8 @@ import {
 type DataContextValue = {
   loading: boolean;
   error: string | null;
+  /** True when no Drive account is connected — data is local-only / unsynced.
+   *  Header shows "Demo mode" in this state. */
   isDemo: boolean;
   data: CollectionsMap;
   setStocks: (next: StockHolding[]) => Promise<void>;
@@ -44,9 +46,18 @@ type DataContextValue = {
   /** Currency used to render all monetary values across charts/figures. */
   displayCurrency: string;
   setDisplayCurrency: (ccy: string) => void;
+  /** Google Drive auth state — null when not connected. Token lives in
+   *  sessionStorage so it survives reload within a tab; email is the
+   *  authorised account's address. */
+  driveToken: string | null;
+  driveEmail: string | null;
+  setDriveAuth: (token: string, email: string | null) => void;
+  clearDriveAuth: () => void;
 };
 
 const DISPLAY_CCY_KEY = "investor:displayCurrency";
+const DRIVE_TOKEN_KEY = "investor:driveToken";
+const DRIVE_EMAIL_KEY = "investor:driveEmail";
 
 const Ctx = createContext<DataContextValue | null>(null);
 
@@ -67,18 +78,45 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const [displayCurrency, setDisplayCurrencyState] = useState<string>(
     DEFAULT_SETTINGS.primary_currency,
   );
+  const [driveToken, setDriveTokenState] = useState<string | null>(null);
+  const [driveEmail, setDriveEmailState] = useState<string | null>(null);
 
-  // Hydrate persisted display-currency choice
+  // Hydrate persisted display-currency choice + Drive auth (sessionStorage so
+  // a reload within the tab stays connected, but a new tab/browser starts
+  // fresh).
   useEffect(() => {
     if (typeof window === "undefined") return;
     const v = window.localStorage.getItem(DISPLAY_CCY_KEY);
     if (v) setDisplayCurrencyState(v);
+    const t = window.sessionStorage.getItem(DRIVE_TOKEN_KEY);
+    const e = window.sessionStorage.getItem(DRIVE_EMAIL_KEY);
+    if (t) setDriveTokenState(t);
+    if (e) setDriveEmailState(e);
   }, []);
 
   const setDisplayCurrency = useCallback((ccy: string) => {
     setDisplayCurrencyState(ccy);
     if (typeof window !== "undefined") {
       window.localStorage.setItem(DISPLAY_CCY_KEY, ccy);
+    }
+  }, []);
+
+  const setDriveAuth = useCallback((token: string, email: string | null) => {
+    setDriveTokenState(token);
+    setDriveEmailState(email);
+    if (typeof window !== "undefined") {
+      window.sessionStorage.setItem(DRIVE_TOKEN_KEY, token);
+      if (email) window.sessionStorage.setItem(DRIVE_EMAIL_KEY, email);
+      else window.sessionStorage.removeItem(DRIVE_EMAIL_KEY);
+    }
+  }, []);
+
+  const clearDriveAuth = useCallback(() => {
+    setDriveTokenState(null);
+    setDriveEmailState(null);
+    if (typeof window !== "undefined") {
+      window.sessionStorage.removeItem(DRIVE_TOKEN_KEY);
+      window.sessionStorage.removeItem(DRIVE_EMAIL_KEY);
     }
   }, []);
 
@@ -204,7 +242,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     () => ({
       loading,
       error,
-      isDemo: true,
+      isDemo: driveToken === null,
       data,
       setStocks,
       setProperties,
@@ -216,8 +254,12 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       reload,
       displayCurrency,
       setDisplayCurrency,
+      driveToken,
+      driveEmail,
+      setDriveAuth,
+      clearDriveAuth,
     }),
-    [loading, error, data, setStocks, setProperties, setScenarios, setProjects, setSettings, loadDemo, resetLocal, reload, displayCurrency, setDisplayCurrency],
+    [loading, error, data, setStocks, setProperties, setScenarios, setProjects, setSettings, loadDemo, resetLocal, reload, displayCurrency, setDisplayCurrency, driveToken, driveEmail, setDriveAuth, clearDriveAuth],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

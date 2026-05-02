@@ -6,6 +6,7 @@ import {
   BarChart3,
   Briefcase,
   Building2,
+  Cloud,
   Home,
   LineChart,
   Settings,
@@ -25,7 +26,7 @@ const navItems = [
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const { error } = useData();
+  const { error, driveEmail, isDemo } = useData();
 
   return (
     <div className="flex min-h-dvh flex-col">
@@ -34,9 +35,24 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <span className="text-xl">📈</span>
           <span>Investor</span>
         </Link>
-        <span className="inline-flex items-center rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800">
-          Demo mode
-        </span>
+        {isDemo ? (
+          <Link
+            href="/settings"
+            className="inline-flex items-center rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800 hover:bg-amber-200"
+            title="Connect Google Drive in Settings to sync across devices"
+          >
+            Demo mode
+          </Link>
+        ) : (
+          <Link
+            href="/settings"
+            className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-800 hover:bg-emerald-200 max-w-[60vw] sm:max-w-none"
+            title={driveEmail ? `Synced to Google Drive · ${driveEmail}` : "Connected to Google Drive"}
+          >
+            <Cloud className="h-3 w-3 shrink-0" />
+            <span className="truncate">{driveEmail ?? "Drive connected"}</span>
+          </Link>
+        )}
       </header>
       {error ? (
         <div className="border-b bg-destructive/10 px-4 py-2 text-sm text-destructive">{error}</div>

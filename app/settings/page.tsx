@@ -269,8 +269,6 @@ type DriveBundle = {
   };
 };
 
-const TOKEN_KEY = "investor:driveToken";
-const EMAIL_KEY = "investor:driveEmail";
 const LAST_SYNC_KEY = "investor:driveLastSync";
 
 function DriveSyncSection({
@@ -287,39 +285,27 @@ function DriveSyncSection({
     setScenarios,
     setProjects,
     setSettings,
+    driveToken: token,
+    driveEmail: email,
+    setDriveAuth,
+    clearDriveAuth,
   } = useData();
 
-  const [token, setToken] = useState<string | null>(null);
-  const [email, setEmail] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [lastSync, setLastSync] = useState<string | null>(null);
 
-  // Restore prior session's token + email + last-sync from sessionStorage so
-  // a page reload doesn't force the user to re-authenticate. Tokens still
-  // expire after ~1h server-side; if the next API call 401s we clear them.
+  // Restore last-sync timestamp from localStorage; token + email come from
+  // the shared DataProvider context (already hydrated from sessionStorage).
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const t = sessionStorage.getItem(TOKEN_KEY);
-    const e = sessionStorage.getItem(EMAIL_KEY);
     const ls = localStorage.getItem(LAST_SYNC_KEY);
-    if (t) setToken(t);
-    if (e) setEmail(e);
     if (ls) setLastSync(ls);
   }, []);
 
   const clientId = settings.google_oauth_client_id?.trim() ?? "";
   const canConnect = clientId.length > 0;
-
-  const clearSession = () => {
-    setToken(null);
-    setEmail(null);
-    if (typeof window !== "undefined") {
-      sessionStorage.removeItem(TOKEN_KEY);
-      sessionStorage.removeItem(EMAIL_KEY);
-    }
-  };
 
   const handleConnect = async () => {
     setErr(null); setNote(null);
@@ -336,12 +322,7 @@ function DriveSyncSection({
       }
       const t = await requestAccessToken(clientId);
       const e = await getAuthorisedEmail(t);
-      setToken(t);
-      setEmail(e);
-      if (typeof window !== "undefined") {
-        sessionStorage.setItem(TOKEN_KEY, t);
-        if (e) sessionStorage.setItem(EMAIL_KEY, e);
-      }
+      setDriveAuth(t, e);
       setNote("Connected to Drive.");
     } catch (e) {
       setErr((e as Error).message);
@@ -353,7 +334,7 @@ function DriveSyncSection({
   const handleDisconnect = async () => {
     setErr(null); setNote(null);
     if (token) await revokeAccessToken(token);
-    clearSession();
+    clearDriveAuth();
     setNote("Disconnected.");
   };
 
@@ -363,7 +344,7 @@ function DriveSyncSection({
   const handleAuthError = (e: unknown): boolean => {
     const msg = (e as Error).message ?? "";
     if (msg.includes(" 401") || msg.includes("Invalid Credentials")) {
-      clearSession();
+      clearDriveAuth();
       setErr("Session expired — click Connect Drive again.");
       return true;
     }
