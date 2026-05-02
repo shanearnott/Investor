@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { useMemo, useState } from "react";
+import { ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
 
 import { useData } from "@/components/data-provider";
 import { Button } from "@/components/ui/button";
@@ -579,6 +579,11 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 
 /**
  * Editor for one tranche: name, grant date, schedule generator, vest events.
+ *
+ * Collapsed view shows just the headline (name + total shares + date range)
+ * so a stock with several already-set-up tranches doesn't bury the form in a
+ * wall of vest rows. Newly added tranches start expanded; once the user
+ * generates a schedule, we auto-collapse to the summary.
  */
 function TrancheEditor({
   tranche,
@@ -598,9 +603,63 @@ function TrancheEditor({
   onRemoveEvent: (idx: number) => void;
 }) {
   const total = trancheTotalShares(tranche);
+  const [collapsed, setCollapsed] = useState<boolean>(tranche.vest_events.length > 0);
+
+  const summary = useMemo(() => {
+    if (tranche.vest_events.length === 0) return null;
+    const dates = tranche.vest_events.map((e) => e.vest_date).sort();
+    return {
+      count: tranche.vest_events.length,
+      first: dates[0],
+      last: dates[dates.length - 1],
+    };
+  }, [tranche.vest_events]);
+
+  if (collapsed) {
+    return (
+      <div className="rounded-md border bg-card/50 p-3 flex items-center justify-between gap-2">
+        <button
+          type="button"
+          className="flex flex-1 items-center gap-2 text-left"
+          onClick={() => setCollapsed(false)}
+        >
+          <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <div className="min-w-0">
+            <div className="text-sm font-medium truncate">
+              {tranche.name || "(unnamed tranche)"}
+            </div>
+            <div className="text-xs text-muted-foreground">
+              {summary ? (
+                <>{formatNumber(total)} sh · {summary.count} events · {summary.first} → {summary.last}</>
+              ) : (
+                "No vest events yet"
+              )}
+            </div>
+          </div>
+        </button>
+        <Button size="sm" variant="ghost" onClick={onDelete} title="Delete tranche">
+          <Trash2 className="h-4 w-4" />
+        </Button>
+      </div>
+    );
+  }
+
   return (
     <div className="rounded-md border bg-card/50 p-3 space-y-3">
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-[2fr_1fr_auto] sm:items-end">
+      <div className="flex items-center justify-between">
+        <button
+          type="button"
+          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+          onClick={() => setCollapsed(true)}
+        >
+          <ChevronDown className="h-4 w-4" /> Hide schedule
+        </button>
+        <Button size="sm" variant="ghost" onClick={onDelete} title="Delete tranche">
+          <Trash2 className="h-4 w-4" /> Delete
+        </Button>
+      </div>
+
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:items-end">
         <Field label="Tranche name">
           <Input
             value={tranche.name}
@@ -615,9 +674,6 @@ function TrancheEditor({
             onChange={(e) => onChange({ grant_date: e.target.value || null })}
           />
         </Field>
-        <Button size="sm" variant="ghost" onClick={onDelete} title="Delete tranche">
-          <Trash2 className="h-4 w-4" /> Delete
-        </Button>
       </div>
 
       <div className="flex items-center justify-between">
@@ -635,7 +691,10 @@ function TrancheEditor({
 
       <ScheduleGenerator
         empty={tranche.vest_events.length === 0}
-        onGenerate={onReplaceEvents}
+        onGenerate={(evs) => {
+          onReplaceEvents(evs);
+          setCollapsed(true);
+        }}
       />
 
       {tranche.vest_events.length > 0 ? (
