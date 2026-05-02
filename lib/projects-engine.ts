@@ -1,5 +1,10 @@
 /**
  * Investment-project capital-adequacy + tax engine.
+ *
+ * The user lists assets they'd be willing to use as funding (in priority
+ * order). The engine walks the list, working out the smallest amount of
+ * each asset needed to cover the project's net-of-tax cost. If the list
+ * is exhausted with cost remaining, that's the shortfall.
  */
 
 import { convert } from "./fx";
@@ -69,18 +74,31 @@ export function evaluateProject(args: {
   const propsById = new Map(properties.map((p) => [p.id, p]));
 
   const lines: FundingLineResult[] = [];
+  // How much net-of-tax funding we still need. Counts down as each source
+  // contributes; once it hits 0, later sources emit zero-use lines.
+  let remaining = totalCost;
 
   for (const fs of project.funding) {
     if (fs.kind === "cash") {
-      const net = fs.amount_or_shares;
+      // Cash is the only kind where the user must say *how much* they
+      // have — it's not derivable from any tracked asset.
+      const cashAvail = Math.max(0, fs.amount_or_shares);
+      const use = remaining > 0 ? Math.min(remaining, cashAvail) : 0;
       lines.push({
         kind: "cash",
-        asset_label: "Cash",
-        gross_proceeds: net,
+        asset_label: `Cash · ${cashAvail.toFixed(0)} ${primary} available`,
+        gross_proceeds: use,
         tax: 0,
-        net_proceeds: net,
-        detail: { note: "Cash contribution (assumed in primary currency)." },
+        net_proceeds: use,
+        detail: {
+          cash_available: cashAvail,
+          cash_used: use,
+          cash_remaining: cashAvail - use,
+          fully_used: cashAvail > 0 && use >= cashAvail,
+          note: use === 0 && remaining <= 0 ? "Not needed — project already funded." : undefined,
+        },
       });
+      remaining -= use;
       continue;
     }
 
@@ -97,26 +115,56 @@ export function evaluateProject(args: {
         });
         continue;
       }
-      const sharesRequested = fs.amount_or_shares;
 
       const v = projectStockValueAt(h, scenario, target, primary, settings);
       const projectedNative = v.projected_price;
-
-      // Vested shares ARE liquid — no separate trigger logic anymore.
-      const vested = vestedSharesAt(h, target);
-      const liquidAvail = vested;
-      const sharesActually = Math.min(sharesRequested, liquidAvail);
-
+      const liquidAvail = vestedSharesAt(h, target);
       const costBasis = h.cost_basis_per_share > 0 ? h.cost_basis_per_share : h.current_share_price;
-      const holdingPeriod = Math.max(0, (target.getTime() - Date.now()) / (1000 * 60 * 60 * 24 * 365.25));
+      const holdingPeriod = Math.max(
+        0,
+        (target.getTime() - Date.now()) / (1000 * 60 * 60 * 24 * 365.25),
+      );
 
-      // Tax follows the PROJECT's jurisdiction, not the holding's — the project
-      // is the entity being executed in a particular country.
+      if (liquidAvail <= 0 || projectedNative <= 0) {
+        lines.push({
+          kind: "stock",
+          asset_label: `${h.ticker || h.company_name}`,
+          gross_proceeds: 0,
+          tax: 0,
+          net_proceeds: 0,
+          detail: {
+            note: liquidAvail <= 0 ? "No liquid shares at target date." : "Projected price ≤ 0.",
+            shares_available: liquidAvail,
+            projected_price_native: projectedNative,
+          },
+        });
+        continue;
+      }
+
+      // Run the tax calc once for the full liquid pool — proceeds and tax
+      // are both linear in shares, so net-per-share derived from the full
+      // pool is exact for any sub-quantity.
+      const txFull = stockSaleTax({
+        jurisdiction: project.jurisdiction,
+        sale_price_per_share: projectedNative,
+        cost_basis_per_share: costBasis,
+        shares: liquidAvail,
+        holding_period_years: holdingPeriod,
+        settings,
+      });
+      const netFullPrimary = convert(txFull.net_proceeds, h.currency, primary, settings);
+      const netPerShare = netFullPrimary / liquidAvail;
+
+      let sharesNeeded = 0;
+      if (remaining > 0 && netPerShare > 0) {
+        sharesNeeded = Math.min(liquidAvail, Math.ceil(remaining / netPerShare));
+      }
+
       const tx = stockSaleTax({
         jurisdiction: project.jurisdiction,
         sale_price_per_share: projectedNative,
         cost_basis_per_share: costBasis,
-        shares: sharesActually,
+        shares: sharesNeeded,
         holding_period_years: holdingPeriod,
         settings,
       });
@@ -125,15 +173,20 @@ export function evaluateProject(args: {
       const tax_p = convert(tx.tax, h.currency, primary, settings);
       const net_p = convert(tx.net_proceeds, h.currency, primary, settings);
 
-      const label = `${h.ticker || h.company_name} — ${sharesActually.toFixed(0)} sh @ ~${projectedNative.toFixed(2)} ${h.currency}`;
+      const label = sharesNeeded > 0
+        ? `${h.ticker || h.company_name} — ${sharesNeeded.toFixed(0)} sh @ ~${projectedNative.toFixed(2)} ${h.currency}`
+        : `${h.ticker || h.company_name} — not needed`;
+
       const detail: Record<string, unknown> = { ...tx };
       detail.projected_price_native = projectedNative;
-      detail.liquid_shares_available = liquidAvail;
-      detail.shares_requested = sharesRequested;
-      detail.shares_sold = sharesActually;
-      if (sharesActually < sharesRequested) {
-        detail.warning = `Only ${liquidAvail.toFixed(0)} shares liquid at ${target.toISOString().slice(0,10)}; capped from ${sharesRequested}.`;
+      detail.shares_available = liquidAvail;
+      detail.shares_used = sharesNeeded;
+      detail.shares_remaining = liquidAvail - sharesNeeded;
+      detail.fully_used = sharesNeeded >= liquidAvail;
+      if (remaining > 0 && netPerShare > 0 && sharesNeeded === liquidAvail) {
+        detail.warning = `Required all ${liquidAvail.toFixed(0)} liquid shares — still need more funding.`;
       }
+      if (remaining <= 0) detail.note = "Not needed — project already funded.";
 
       lines.push({
         kind: "stock",
@@ -143,6 +196,7 @@ export function evaluateProject(args: {
         net_proceeds: net_p,
         detail,
       });
+      remaining -= net_p;
       continue;
     }
 
@@ -159,16 +213,49 @@ export function evaluateProject(args: {
         });
         continue;
       }
-      const fraction = Math.max(0, Math.min(1, fs.amount_or_shares));
+
       const vNative = projectPropertyValueAt(p, scenario, target, p.currency, settings);
+      const holdingPeriod = yearsBetween(p.purchase_date, target);
+
+      // Net-to-owner scales linearly with fraction sold (sale price, cost
+      // basis, and mortgage payoff all scale; the rate is flat). Compute
+      // for fully-sold then derive fraction needed.
+      const txFull = propertySaleTax({
+        jurisdiction: project.jurisdiction,
+        sale_price: vNative.gross,
+        cost_basis: p.purchase_price,
+        holding_period_years: holdingPeriod,
+        mortgage_balance: p.mortgage_balance,
+        is_primary_residence: false,
+        settings,
+      });
+      const netFullPrimary = convert(txFull.net_to_owner, p.currency, primary, settings);
+
+      if (netFullPrimary <= 0) {
+        lines.push({
+          kind: "property",
+          asset_label: `${p.name}`,
+          gross_proceeds: 0,
+          tax: 0,
+          net_proceeds: 0,
+          detail: {
+            note: "No equity at target date (mortgage ≥ projected value, or sale yields nothing after tax).",
+            projected_value_native: vNative.gross,
+          },
+        });
+        continue;
+      }
+
+      let fraction = 0;
+      if (remaining > 0) {
+        fraction = Math.min(1, remaining / netFullPrimary);
+      }
+
       const salePriceNative = vNative.gross * fraction;
       const costBasisNative = p.purchase_price * fraction;
-      const holdingPeriod = yearsBetween(p.purchase_date, target);
       const mortgageNative = p.mortgage_balance * fraction;
 
       const tx = propertySaleTax({
-        // Project's jurisdiction (not the property's) — same reasoning as
-        // for stocks: tax is owed where the funding event happens.
         jurisdiction: project.jurisdiction,
         sale_price: salePriceNative,
         cost_basis: costBasisNative,
@@ -182,8 +269,23 @@ export function evaluateProject(args: {
       const tax_p = convert(tx.tax, p.currency, primary, settings);
       const net_p = convert(tx.net_to_owner, p.currency, primary, settings);
 
-      const label = `${p.name} — sell ${(fraction * 100).toFixed(0)}% @ ~${salePriceNative.toFixed(0)} ${p.currency}`;
-      const detail: Record<string, unknown> = { ...tx, fraction_sold: fraction, holding_period_years: Number(holdingPeriod.toFixed(2)) };
+      const pctSold = fraction * 100;
+      const label = fraction > 0
+        ? `${p.name} — sell ${pctSold.toFixed(1)}% @ ~${salePriceNative.toFixed(0)} ${p.currency}`
+        : `${p.name} — not needed`;
+
+      const detail: Record<string, unknown> = {
+        ...tx,
+        fraction_used: fraction,
+        fraction_remaining: 1 - fraction,
+        fully_used: fraction >= 1,
+        holding_period_years: Number(holdingPeriod.toFixed(2)),
+      };
+      if (remaining > 0 && fraction === 1) {
+        detail.warning = `Fully selling property only yields ${netFullPrimary.toFixed(0)} ${primary} — still need more funding.`;
+      }
+      if (remaining <= 0) detail.note = "Not needed — project already funded.";
+
       lines.push({
         kind: "property",
         asset_label: label,
@@ -192,6 +294,7 @@ export function evaluateProject(args: {
         net_proceeds: net_p,
         detail,
       });
+      remaining -= net_p;
       continue;
     }
   }
@@ -213,6 +316,8 @@ export function evaluateProject(args: {
     total_tax: totalTax,
     total_net_funding: totalNet,
     surplus_or_shortfall: totalNet - totalCost,
-    is_funded: totalNet - totalCost >= 0,
+    // Allow a tiny rounding tolerance — sharesNeeded uses Math.ceil, so
+    // we can be a fraction of a share over the cost.
+    is_funded: totalNet >= totalCost - 0.01,
   };
 }

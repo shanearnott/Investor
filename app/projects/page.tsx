@@ -75,7 +75,9 @@ export default function ProjectsPage() {
       </div>
 
       <p className="text-sm text-muted-foreground">
-        Model a project (e.g. buy a house + furniture + car), pick funding sources, and see if it works after tax.
+        Model a project (e.g. buy a house + furniture + car). List the assets you&apos;d be willing to use as
+        funding — the calculator works out how much of each is required after tax, and tells you whether
+        you&apos;re short or have a surplus.
       </p>
 
       <div className="grid gap-3">
@@ -286,7 +288,13 @@ function ProjectForm({
       ...d,
       target_date: d.target_date?.trim() || null,
       items: d.items.filter((i) => i.name.trim() && i.cost > 0),
-      funding: d.funding.filter((f) => f.amount_or_shares > 0),
+      // Keep cash sources with a positive amount and stock/property
+      // sources that name an actual asset. The engine no longer needs
+      // amount_or_shares for non-cash sources — it derives shares /
+      // fraction from the cost.
+      funding: d.funding.filter((f) =>
+        f.kind === "cash" ? f.amount_or_shares > 0 : Boolean(f.asset_id),
+      ),
     });
     if (!parsed.success) {
       setError(parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "));
@@ -356,15 +364,25 @@ function ProjectForm({
             <Button size="sm" variant="outline" onClick={addFunding}><Plus className="h-3 w-3" /> Add source</Button>
           </div>
           <p className="text-[11px] text-muted-foreground">
-            stock: amount = shares to liquidate · property: amount = fraction sold (0..1) · cash: amount = primary-currency cash
+            List the assets you&apos;d be willing to use, in priority order (top of the list is drained first).
+            The calculator works out how much of each is needed — you don&apos;t pick share counts. For cash,
+            enter how much you have available; for stocks and property, the engine derives shares / fraction
+            sold to cover the project net of tax.
           </p>
           {d.funding.map((fs, idx) => (
-            <div key={idx} className="grid grid-cols-1 gap-2 rounded-md border p-2 sm:grid-cols-[1fr_2fr_1fr_auto]">
+            <div
+              key={idx}
+              className={
+                fs.kind === "cash"
+                  ? "grid grid-cols-1 gap-2 rounded-md border p-2 sm:grid-cols-[1fr_2fr_1fr_auto]"
+                  : "grid grid-cols-1 gap-2 rounded-md border p-2 sm:grid-cols-[1fr_2fr_auto]"
+              }
+            >
               <Select
                 value={fs.kind}
                 onChange={(e) => {
                   const kind = e.target.value as FundingSource["kind"];
-                  updateFunding(idx, { ...fs, kind, asset_id: null });
+                  updateFunding(idx, { ...fs, kind, asset_id: null, amount_or_shares: 0 });
                 }}
               >
                 <option value="stock">stock</option>
@@ -388,13 +406,15 @@ function ProjectForm({
                     ))
                   : null}
               </Select>
-              <Input
-                type="number"
-                step="1"
-                placeholder={fs.kind === "property" ? "Fraction (0..1)" : "Amount/shares"}
-                value={fs.amount_or_shares}
-                onChange={(e) => updateFunding(idx, { ...fs, amount_or_shares: Number(e.target.value) })}
-              />
+              {fs.kind === "cash" ? (
+                <Input
+                  type="number"
+                  step="100"
+                  placeholder={`Cash available (${data.settings.primary_currency})`}
+                  value={fs.amount_or_shares}
+                  onChange={(e) => updateFunding(idx, { ...fs, amount_or_shares: Number(e.target.value) })}
+                />
+              ) : null}
               <Button size="icon" variant="ghost" onClick={() => removeFunding(idx)}><Trash2 className="h-4 w-4" /></Button>
             </div>
           ))}
