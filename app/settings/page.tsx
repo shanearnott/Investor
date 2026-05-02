@@ -466,8 +466,9 @@ function DriveSyncSection({
           <li>Open <a className="underline" href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noreferrer">Google Cloud Console → Credentials</a> in a new tab.</li>
           <li>Create credentials → OAuth client ID → <b>Web application</b>.</li>
           <li>
-            Under <b>Authorised JavaScript origins</b>, add the URLs you&apos;ll use this app from.
-            For local dev: <code>http://localhost:3000</code>. For the live site: <code>https://shanearnott.github.io</code> (no path, no trailing slash).
+            Under <b>Authorised JavaScript origins</b>, add{" "}
+            <code>https://shanearnott.github.io</code> (no path, no trailing slash) for the live site.
+            Only add <code>http://localhost:3000</code> if you also run <code>npm run dev</code> locally.
             No redirect URI is needed for popup auth.
           </li>
           <li>OAuth consent screen → add scope <code>.../auth/drive.file</code> and add yourself as a test user (or publish).</li>
