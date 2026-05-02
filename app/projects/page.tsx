@@ -163,29 +163,40 @@ function ProjectCard({
           </Select>
         </div>
 
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-          {[
+        {(() => {
+          // Show the user's "other" configured currency as a sub-line so they
+          // always have a second reference point, regardless of which they're
+          // displaying in. Falls back to secondary if both equal display, or
+          // primary if secondary somehow matches display.
+          const subCcy = [data.settings.primary_currency, data.settings.secondary_currency]
+            .filter((c): c is string => Boolean(c) && c !== ev.primary_currency)[0];
+          const tiles = [
             { label: "Total cost", value: ev.total_cost },
             { label: "Available (net of tax)", value: ev.total_available_net },
             { label: "Drawn down", value: ev.total_net_funding },
             { label: "Tax on drawdown", value: ev.total_tax },
             { label: "Gross drawn", value: ev.total_gross },
-          ].map(({ label, value }) => (
-            <Stat
-              key={label}
-              label={label}
-              value={formatMoney(value, ev.primary_currency)}
-              sub={
-                data.settings.secondary_currency && data.settings.secondary_currency !== ev.primary_currency
-                  ? formatMoney(
-                      convert(value, ev.primary_currency, data.settings.secondary_currency, data.settings),
-                      data.settings.secondary_currency,
-                    )
-                  : undefined
-              }
-            />
-          ))}
-        </div>
+          ];
+          return (
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+              {tiles.map(({ label, value }) => (
+                <Stat
+                  key={label}
+                  label={label}
+                  value={formatMoney(value, ev.primary_currency)}
+                  sub={
+                    subCcy
+                      ? formatMoney(
+                          convert(value, ev.primary_currency, subCcy, data.settings),
+                          subCcy,
+                        )
+                      : undefined
+                  }
+                />
+              ))}
+            </div>
+          );
+        })()}
 
         {ev.is_funded ? (
           <p className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
