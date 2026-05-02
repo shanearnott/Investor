@@ -323,8 +323,14 @@ export default function ProjectionsPage() {
                     <XAxis dataKey="date" tick={{ fontSize: 11 }} minTickGap={50} />
                     <YAxis tick={{ fontSize: 11 }} tickFormatter={compactNumber} />
                     <Tooltip
-                      formatter={(v: number) => formatMoney(v, ccy)}
-                      labelFormatter={(l) => `As of ${l}`}
+                      content={(props) => (
+                        <LesserOfTooltip
+                          active={props.active}
+                          payload={props.payload as TooltipPayloadEntry[] | undefined}
+                          label={props.label as string | undefined}
+                          ccy={ccy}
+                        />
+                      )}
                     />
                     <Legend />
                     {chosen.map((s, i) => {
@@ -412,6 +418,61 @@ function Kpi({
 }
 
 type Slice = { name: string; value: number; kind: "stock" | "property" };
+
+type TooltipPayloadEntry = {
+  dataKey?: string | number;
+  value?: number;
+  color?: string;
+};
+
+/** Tooltip for the net-worth line chart. Each scenario emits two series —
+ *  total and "{name} vested" — but we collapse them to a single row showing
+ *  whichever value is lower (always the vested figure under normal data,
+ *  but min() keeps it correct if that ever flips). */
+function LesserOfTooltip({
+  active,
+  payload,
+  label,
+  ccy,
+}: {
+  active?: boolean;
+  payload?: TooltipPayloadEntry[];
+  label?: string;
+  ccy: string;
+}) {
+  if (!active || !payload?.length) return null;
+  const byScenario = new Map<string, { total?: number; vested?: number; color: string }>();
+  for (const p of payload) {
+    const key = String(p.dataKey ?? "");
+    if (!key) continue;
+    const isVested = key.endsWith(" vested");
+    const sc = isVested ? key.slice(0, -" vested".length) : key;
+    const cur = byScenario.get(sc) ?? { color: p.color ?? "#000" };
+    if (isVested) cur.vested = p.value;
+    else cur.total = p.value;
+    byScenario.set(sc, cur);
+  }
+  const rows = [...byScenario.entries()].flatMap(([name, v]) => {
+    const candidates = [v.total, v.vested].filter((x): x is number => typeof x === "number");
+    if (candidates.length === 0) return [];
+    return [{ name, value: Math.min(...candidates), color: v.color }];
+  });
+  if (rows.length === 0) return null;
+  return (
+    <div className="rounded-md border bg-background/95 px-2 py-1 text-xs shadow">
+      <p className="font-medium mb-0.5">As of {label}</p>
+      {rows.map((r) => (
+        <p key={r.name} className="tabular-nums">
+          <span
+            className="mr-1 inline-block h-2 w-2 rounded-sm align-middle"
+            style={{ background: r.color }}
+          />
+          {r.name}: {formatMoney(r.value, ccy)}
+        </p>
+      ))}
+    </div>
+  );
+}
 
 // Two distinct color families. Inner ring uses the first shade of each;
 // outer ring picks subsequent shades for each asset within that family.
