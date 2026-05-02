@@ -19,6 +19,7 @@ import {
   SUPPORTED_CURRENCIES,
   SUPPORTED_JURISDICTIONS,
 } from "@/lib/models";
+import { convert } from "@/lib/fx";
 import { evaluateProject } from "@/lib/projects-engine";
 import { formatMoney } from "@/lib/utils";
 
@@ -163,11 +164,27 @@ function ProjectCard({
         </div>
 
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-          <Stat label="Total cost" value={formatMoney(ev.total_cost, ev.primary_currency)} />
-          <Stat label="Available (net of tax)" value={formatMoney(ev.total_available_net, ev.primary_currency)} />
-          <Stat label="Drawn down" value={formatMoney(ev.total_net_funding, ev.primary_currency)} />
-          <Stat label="Tax on drawdown" value={formatMoney(ev.total_tax, ev.primary_currency)} />
-          <Stat label="Gross drawn" value={formatMoney(ev.total_gross, ev.primary_currency)} />
+          {[
+            { label: "Total cost", value: ev.total_cost },
+            { label: "Available (net of tax)", value: ev.total_available_net },
+            { label: "Drawn down", value: ev.total_net_funding },
+            { label: "Tax on drawdown", value: ev.total_tax },
+            { label: "Gross drawn", value: ev.total_gross },
+          ].map(({ label, value }) => (
+            <Stat
+              key={label}
+              label={label}
+              value={formatMoney(value, ev.primary_currency)}
+              sub={
+                data.settings.secondary_currency && data.settings.secondary_currency !== ev.primary_currency
+                  ? formatMoney(
+                      convert(value, ev.primary_currency, data.settings.secondary_currency, data.settings),
+                      data.settings.secondary_currency,
+                    )
+                  : undefined
+              }
+            />
+          ))}
         </div>
 
         {ev.is_funded ? (
@@ -238,11 +255,12 @@ function ProjectCard({
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
     <div className="rounded-md border p-2">
       <div className="text-[11px] text-muted-foreground">{label}</div>
       <div className="text-sm font-semibold tabular-nums">{value}</div>
+      {sub ? <div className="text-[10px] text-muted-foreground tabular-nums">{sub}</div> : null}
     </div>
   );
 }
