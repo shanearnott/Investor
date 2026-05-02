@@ -7,6 +7,7 @@ import {
   Briefcase,
   Building2,
   Cloud,
+  CloudOff,
   Home,
   LineChart,
   Settings,
@@ -26,7 +27,16 @@ const navItems = [
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const { error, driveEmail, isDemo } = useData();
+  const { data, error, driveEmail, isDemo } = useData();
+  // "Demo mode" should only appear when there's literally no user data —
+  // having local data without Drive is "local only", not a demo. The Drive
+  // green badge always wins when connected.
+  const hasUserData =
+    data.stocks.length > 0 ||
+    data.properties.length > 0 ||
+    data.scenarios.length > 0 ||
+    data.projects.length > 0;
+  const showDemoBadge = isDemo && !hasUserData;
 
   return (
     <div className="flex min-h-dvh flex-col">
@@ -35,7 +45,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <span className="text-xl">📈</span>
           <span>Investor</span>
         </Link>
-        {isDemo ? (
+        {!isDemo ? (
+          <Link
+            href="/settings"
+            className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-800 hover:bg-emerald-200 max-w-[60vw] sm:max-w-none"
+            title={driveEmail ? `Synced to Google Drive · ${driveEmail}` : "Connected to Google Drive"}
+          >
+            <Cloud className="h-3 w-3 shrink-0" />
+            <span className="truncate">{driveEmail ?? "Drive connected"}</span>
+          </Link>
+        ) : showDemoBadge ? (
           <Link
             href="/settings"
             className="inline-flex items-center rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800 hover:bg-amber-200"
@@ -46,11 +65,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         ) : (
           <Link
             href="/settings"
-            className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-800 hover:bg-emerald-200 max-w-[60vw] sm:max-w-none"
-            title={driveEmail ? `Synced to Google Drive · ${driveEmail}` : "Connected to Google Drive"}
+            className="inline-flex items-center gap-1.5 rounded-full bg-secondary px-2.5 py-1 text-xs font-medium text-muted-foreground hover:bg-accent"
+            title="Local only — connect Google Drive in Settings to sync across devices"
           >
-            <Cloud className="h-3 w-3 shrink-0" />
-            <span className="truncate">{driveEmail ?? "Drive connected"}</span>
+            <CloudOff className="h-3 w-3 shrink-0" />
+            <span>Local only</span>
           </Link>
         )}
       </header>
