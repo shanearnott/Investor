@@ -1,19 +1,25 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 
 import { CurrencySelector } from "@/components/currency-selector";
 import { useData } from "@/components/data-provider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Select } from "@/components/ui/input";
 import { convert } from "@/lib/fx";
 import { lookupGrowthRate } from "@/lib/growth";
 import { formatMoney, formatNumber } from "@/lib/utils";
 import { currentAllocationBreakdown } from "@/lib/projections";
 import { parseISO, type Property, type StockHolding } from "@/lib/models";
 
+const LOOKAHEAD_OPTIONS = [3, 6, 9, 12, 18, 24] as const;
+type LookaheadMonths = (typeof LOOKAHEAD_OPTIONS)[number];
+
 export default function HomePage() {
   const { data, loadDemo, loading, displayCurrency } = useData();
+  const [lookaheadMonths, setLookaheadMonths] = useState<LookaheadMonths>(6);
 
   const stocksCount = data.stocks.length;
   const propertiesCount = data.properties.length;
@@ -29,12 +35,14 @@ export default function HomePage() {
   const todayPrimary = Object.values(allocation).reduce((s, v) => s + v, 0);
   const today = convert(todayPrimary, data.settings.primary_currency, displayCurrency, data.settings);
 
-  // Next 12 months: equity tranches that will vest, plus expected property growth
-  const next12 = nextTwelveMonthsOutlook({
+  // Look-ahead window: equity tranches that will vest, plus expected property
+  // growth between now and N months from now (user-selectable).
+  const lookahead = computeLookahead({
     holdings: data.stocks,
     properties: data.properties,
     settings: data.settings,
     displayCurrency,
+    months: lookaheadMonths,
   });
 
   const showWelcome = !loading && stocksCount === 0 && propertiesCount === 0;
@@ -139,50 +147,71 @@ export default function HomePage() {
         </Card>
       ) : null}
 
-      {next12.hasAny ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>Next 12 months</CardTitle>
-            <CardDescription>
-              Vesting events and projected property growth between now and {next12.endLabel}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3 text-sm">
-            {next12.vestingEvents.length > 0 ? (
-              <div>
-                <p className="text-xs font-medium text-muted-foreground mb-1">Vesting events</p>
-                <ul className="text-xs space-y-1">
-                  {next12.vestingEvents.map((e, i) => (
-                    <li key={i} className="flex justify-between gap-2 border-b pb-1 last:border-0">
-                      <span>
-                        <b>{e.date}</b> · {e.ticker}
-                      </span>
-                      <span className="tabular-nums">
-                        {formatNumber(e.shares)} sh · {formatMoney(e.value, displayCurrency)}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
+      <Card>
+        <CardHeader>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <CardTitle>Next {lookaheadMonths} months</CardTitle>
+              <CardDescription>
+                Vesting events and projected property growth between now and {lookahead.endLabel}
+              </CardDescription>
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-[11px] text-muted-foreground">Look ahead</label>
+              <Select
+                value={String(lookaheadMonths)}
+                onChange={(e) => setLookaheadMonths(Number(e.target.value) as LookaheadMonths)}
+                className="h-8 w-[110px] text-xs"
+              >
+                {LOOKAHEAD_OPTIONS.map((m) => (
+                  <option key={m} value={m}>{m} months</option>
+                ))}
+              </Select>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-3 text-sm">
+          {lookahead.hasAny ? (
+            <>
+              {lookahead.vestingEvents.length > 0 ? (
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground mb-1">Vesting events</p>
+                  <ul className="text-xs space-y-1">
+                    {lookahead.vestingEvents.map((e, i) => (
+                      <li key={i} className="flex justify-between gap-2 border-b pb-1 last:border-0">
+                        <span>
+                          <b>{e.date}</b> · {e.ticker}
+                        </span>
+                        <span className="tabular-nums">
+                          {formatNumber(e.shares)} sh · {formatMoney(e.value, displayCurrency)}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
 
-            {next12.propertyGains.length > 0 ? (
-              <div>
-                <p className="text-xs font-medium text-muted-foreground mb-1">Property growth</p>
-                <ul className="text-xs space-y-1">
-                  {next12.propertyGains.map((p, i) => (
-                    <li key={i} className="flex justify-between gap-2 border-b pb-1 last:border-0">
-                      <span>{p.name} <span className="text-muted-foreground">({p.growthPct.toFixed(1)}%/yr)</span></span>
-                      <span className="tabular-nums">+{formatMoney(p.gain, displayCurrency)}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-
-          </CardContent>
-        </Card>
-      ) : null}
+              {lookahead.propertyGains.length > 0 ? (
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground mb-1">Property growth</p>
+                  <ul className="text-xs space-y-1">
+                    {lookahead.propertyGains.map((p, i) => (
+                      <li key={i} className="flex justify-between gap-2 border-b pb-1 last:border-0">
+                        <span>{p.name} <span className="text-muted-foreground">({p.growthPct.toFixed(1)}%/yr)</span></span>
+                        <span className="tabular-nums">+{formatMoney(p.gain, displayCurrency)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              Nothing vesting and no property gains projected over the next {lookaheadMonths} months.
+            </p>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
@@ -222,11 +251,12 @@ type PropertyGain = {
   growthPct: number;
 };
 
-function nextTwelveMonthsOutlook(args: {
+function computeLookahead(args: {
   holdings: StockHolding[];
   properties: Property[];
   settings: ReturnType<typeof useData>["data"]["settings"];
   displayCurrency: string;
+  months: number;
 }): {
   hasAny: boolean;
   endLabel: string;
@@ -237,7 +267,7 @@ function nextTwelveMonthsOutlook(args: {
   propertyGains: PropertyGain[];
 } {
   const today = new Date();
-  const end = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 12, today.getUTCDate()));
+  const end = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + args.months, today.getUTCDate()));
   const endLabel = end.toISOString().slice(0, 10);
 
   const events: VestingEvent[] = [];
@@ -273,9 +303,8 @@ function nextTwelveMonthsOutlook(args: {
       fallback_pct: p.annual_growth_pct,
     });
     const annualPct = provider.rate;
-    // 3-month gain on current value, compounded monthly
     const monthly = Math.pow(1 + annualPct / 100, 1 / 12) - 1;
-    const projected = p.current_value * Math.pow(1 + monthly, 12);
+    const projected = p.current_value * Math.pow(1 + monthly, args.months);
     const gainNative = projected - p.current_value;
     const gainDisplay = convert(gainNative, p.currency, args.displayCurrency, args.settings);
     if (gainDisplay > 0) {
