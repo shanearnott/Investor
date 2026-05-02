@@ -211,6 +211,11 @@ export function evaluateProject(args: {
       detail.shares_used = sharesNeeded;
       detail.shares_remaining = liquidAvail - sharesNeeded;
       detail.fully_used = sharesNeeded >= liquidAvail;
+      const sharePctUsed = liquidAvail > 0 ? (sharesNeeded / liquidAvail) * 100 : 0;
+      detail.share_usage_pct = sharePctUsed;
+      if (sharesNeeded > 0) {
+        detail.usage_note = `${sharePctUsed.toFixed(1)}% of ${fmt0.format(liquidAvail)} available shares used`;
+      }
       if (isRsu) {
         detail.tax_model = `RSU income tax @ ${(rsuRate * 100).toFixed(0)}% (scenario)`;
       }

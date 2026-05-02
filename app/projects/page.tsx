@@ -193,15 +193,23 @@ function ProjectCard({
               </tr>
             </thead>
             <tbody>
-              {ev.funding_lines.map((l, i) => (
-                <tr key={i} className="border-b last:border-0">
-                  <td className="py-1 pr-2">{l.asset_label}</td>
-                  <td className="py-1 pr-2 tabular-nums">{formatMoney(l.gross_proceeds, ev.primary_currency)}</td>
-                  <td className="py-1 pr-2 tabular-nums">{formatMoney(l.tax, ev.primary_currency)}</td>
-                  <td className="py-1 pr-2 tabular-nums">{formatMoney(l.net_proceeds, ev.primary_currency)}</td>
-                  <td className="py-1 pr-2 text-amber-700">{(l.detail.warning as string) || (l.detail.error as string) || ""}</td>
-                </tr>
-              ))}
+              {ev.funding_lines.map((l, i) => {
+                const warning = (l.detail.warning as string) || (l.detail.error as string) || "";
+                const usage = (l.detail.usage_note as string) || "";
+                return (
+                  <tr key={i} className="border-b last:border-0">
+                    <td className="py-1 pr-2">{l.asset_label}</td>
+                    <td className="py-1 pr-2 tabular-nums">{formatMoney(l.gross_proceeds, ev.primary_currency)}</td>
+                    <td className="py-1 pr-2 tabular-nums">{formatMoney(l.tax, ev.primary_currency)}</td>
+                    <td className="py-1 pr-2 tabular-nums">{formatMoney(l.net_proceeds, ev.primary_currency)}</td>
+                    <td className="py-1 pr-2">
+                      {warning ? <span className="text-amber-700">{warning}</span> : null}
+                      {warning && usage ? <span className="text-muted-foreground"> · </span> : null}
+                      {usage ? <span className="text-muted-foreground">{usage}</span> : null}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </details>
