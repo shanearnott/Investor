@@ -18,9 +18,9 @@ import {
 import { CurrencySelector } from "@/components/currency-selector";
 import { useData } from "@/components/data-provider";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Label } from "@/components/ui/input";
+import { Input, Label } from "@/components/ui/input";
 import { convert } from "@/lib/fx";
-import { Property, Scenario, ScenarioSchema, StockHolding, propertyEquity, vestedSharesAt } from "@/lib/models";
+import { Property, Scenario, ScenarioSchema, StockHolding } from "@/lib/models";
 import {
   buildNetWorthSeries,
   projectPropertyValueAt,
@@ -59,64 +59,71 @@ function fallbackScenario(): Scenario {
   });
 }
 
-/** Realised wealth today, by asset, in target currency. */
-function realisedTodayByAsset(args: {
+/** Realised wealth at a given date, by asset, in target currency.
+ *  "Realised" = vested shares × projected price (or equity for property),
+ *  i.e. what would actually be in your hands on that date under the scenario.
+ *  When asOf is today, projection is a no-op and this collapses to the live
+ *  snapshot. */
+function realisedAtDateByAsset(args: {
   holdings: StockHolding[];
   properties: Property[];
+  scenario: Scenario;
   settings: ReturnType<typeof useData>["data"]["settings"];
+  asOf: Date;
   ccy: string;
-}): { name: string; value: number }[] {
-  const out: { name: string; value: number }[] = [];
-  const today = new Date();
+}): Slice[] {
+  const out: Slice[] = [];
+  const settingsForCcy: typeof args.settings = {
+    ...args.settings,
+    primary_currency: args.ccy as typeof args.settings.primary_currency,
+  };
   for (const h of args.holdings) {
-    // Vested shares are realised. No second-trigger logic.
-    const vested = vestedSharesAt(h, today);
-    const valNative = vested * h.current_share_price;
-    const v = convert(valNative, h.currency, args.ccy, args.settings);
-    if (v > 0) out.push({ name: h.ticker || h.company_name || h.id, value: Math.round(v) });
+    const v = projectStockValueAt(h, args.scenario, args.asOf, args.ccy, settingsForCcy);
+    if (v.liquid > 0) {
+      out.push({ name: h.ticker || h.company_name || h.id, value: Math.round(v.liquid), kind: "stock" });
+    }
   }
   for (const p of args.properties) {
-    const valNative = propertyEquity(p);
-    const v = convert(valNative, p.currency, args.ccy, args.settings);
-    if (v > 0) out.push({ name: `${p.name} (property)`, value: Math.round(v) });
+    const v = projectPropertyValueAt(p, args.scenario, args.asOf, args.ccy, settingsForCcy);
+    if (v.equity > 0) {
+      out.push({ name: `${p.name} (property)`, value: Math.round(v.equity), kind: "property" });
+    }
   }
   return out;
 }
 
-/** Wealth coming over the horizon, by asset, in target currency.
- *  = (asset value at horizon, including unvested + future growth) − (realised today).
+/** Wealth coming between asOf and horizon, by asset, in target currency.
+ *  = (asset value at horizon, including unvested + future growth) − (realised at asOf).
+ *  Negative values are clamped to 0 (e.g. if asOf > horizon).
  */
 function comingByAsset(args: {
   holdings: StockHolding[];
   properties: Property[];
   scenario: Scenario;
   settings: ReturnType<typeof useData>["data"]["settings"];
+  asOf: Date;
   ccy: string;
-}): { name: string; value: number }[] {
-  const out: { name: string; value: number }[] = [];
-  const today = new Date();
+}): Slice[] {
+  const out: Slice[] = [];
   const horizon = new Date();
   horizon.setUTCFullYear(horizon.getUTCFullYear() + args.scenario.horizon_years);
+  const settingsForCcy: typeof args.settings = {
+    ...args.settings,
+    primary_currency: args.ccy as typeof args.settings.primary_currency,
+  };
 
   for (const h of args.holdings) {
-    // Today realised (vested × current price), in target currency
-    const vestedToday = vestedSharesAt(h, today);
-    const realisedNative = vestedToday * h.current_share_price;
-    const realised = convert(realisedNative, h.currency, args.ccy, args.settings);
-
-    // Horizon total = all granted shares × projected price
-    const v = projectStockValueAt(h, args.scenario, horizon, args.ccy, args.settings);
+    const realisedNow = projectStockValueAt(h, args.scenario, args.asOf, args.ccy, settingsForCcy).liquid;
+    const v = projectStockValueAt(h, args.scenario, horizon, args.ccy, settingsForCcy);
     const horizonTotal = v.liquid + v.unvested;
-
-    const coming = horizonTotal - realised;
-    if (coming > 0) out.push({ name: h.ticker || h.company_name || h.id, value: Math.round(coming) });
+    const coming = Math.max(0, horizonTotal - realisedNow);
+    if (coming > 0) out.push({ name: h.ticker || h.company_name || h.id, value: Math.round(coming), kind: "stock" });
   }
   for (const p of args.properties) {
-    const realisedNative = propertyEquity(p);
-    const realised = convert(realisedNative, p.currency, args.ccy, args.settings);
-    const v = projectPropertyValueAt(p, args.scenario, horizon, args.ccy, args.settings);
-    const coming = v.equity - realised;
-    if (coming > 0) out.push({ name: `${p.name} (property)`, value: Math.round(coming) });
+    const realisedNow = projectPropertyValueAt(p, args.scenario, args.asOf, args.ccy, settingsForCcy).equity;
+    const v = projectPropertyValueAt(p, args.scenario, horizon, args.ccy, settingsForCcy);
+    const coming = Math.max(0, v.equity - realisedNow);
+    if (coming > 0) out.push({ name: `${p.name} (property)`, value: Math.round(coming), kind: "property" });
   }
   return out;
 }
@@ -170,6 +177,10 @@ export default function ProjectionsPage() {
   const unvestedToday = todayRow?.unvested_equity_total ?? 0;
   const propertyToday = todayRow?.property_equity_total ?? 0;
 
+  // For each scenario the chart shows two lines: total (smooth, vested + unvested
+  // + property — only changes with price) and "{name} vested" (vested + property
+  // only — visibly steps up at every vest event so the user can see vesting
+  // actually showing up).
   const lineData = useMemo(() => {
     const dates = new Set<string>();
     for (const sc of chosen) (seriesByScenario[sc.id] ?? []).forEach((r) => dates.add(r.date));
@@ -178,24 +189,40 @@ export default function ProjectionsPage() {
       const row: Record<string, number | string> = { date };
       for (const sc of chosen) {
         const r = (seriesByScenario[sc.id] ?? []).find((x) => x.date === date);
-        if (r) row[sc.name] = Math.round(r.total);
+        if (r) {
+          row[sc.name] = Math.round(r.total);
+          row[`${sc.name} vested`] = Math.round(r.liquid_equity_total + r.property_equity_total);
+        }
       }
       return row;
     });
   }, [chosen, seriesByScenario]);
 
-  const realisedPie = realisedTodayByAsset({
-    holdings: data.stocks, properties: data.properties, settings, ccy,
-  });
-  const comingPie = chosen[0]
-    ? comingByAsset({
+  // As-of date for the wealth-allocation pie chart. YYYY-MM is enough — pin
+  // to the 1st of the chosen month. Defaults to today; user can slide it
+  // forward to see "what would the realised vs coming split look like in 2y?"
+  const todayMonthISO = new Date().toISOString().slice(0, 7);
+  const [asOfMonth, setAsOfMonth] = useState<string>(todayMonthISO);
+  const asOfDate = useMemo(() => {
+    const [y, m] = asOfMonth.split("-").map(Number);
+    if (!y || !m) return new Date();
+    return new Date(Date.UTC(y, m - 1, 1));
+  }, [asOfMonth]);
+  const isToday = asOfMonth === todayMonthISO;
+
+  const pieScenario = chosen[0];
+  const realisedPie: Slice[] = pieScenario
+    ? realisedAtDateByAsset({
         holdings: data.stocks, properties: data.properties,
-        scenario: chosen[0], settings, ccy,
+        scenario: pieScenario, settings, asOf: asOfDate, ccy,
       })
     : [];
-
-  const realisedTotal = realisedPie.reduce((s, x) => s + x.value, 0);
-  const comingTotal = comingPie.reduce((s, x) => s + x.value, 0);
+  const comingPie: Slice[] = pieScenario
+    ? comingByAsset({
+        holdings: data.stocks, properties: data.properties,
+        scenario: pieScenario, settings, asOf: asOfDate, ccy,
+      })
+    : [];
 
   const noData = data.stocks.length === 0 && data.properties.length === 0;
 
@@ -261,7 +288,7 @@ export default function ProjectionsPage() {
             <CardHeader>
               <CardTitle>Net worth over time ({ccy})</CardTitle>
               <CardDescription>
-                {chosen.map((s) => s.name).join(" · ") || "—"}
+                Solid line = total (vested + unvested + property). Dashed line = vested + property only — steps up as shares vest. {chosen.map((s) => s.name).join(" · ") || "—"}
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -276,16 +303,28 @@ export default function ProjectionsPage() {
                       labelFormatter={(l) => `As of ${l}`}
                     />
                     <Legend />
-                    {chosen.map((s, i) => (
-                      <Line
-                        key={s.id}
-                        type="monotone"
-                        dataKey={s.name}
-                        stroke={PIE_COLORS[i % PIE_COLORS.length]}
-                        strokeWidth={2}
-                        dot={false}
-                      />
-                    ))}
+                    {chosen.map((s, i) => {
+                      const colour = PIE_COLORS[i % PIE_COLORS.length];
+                      return [
+                        <Line
+                          key={`${s.id}-total`}
+                          type="monotone"
+                          dataKey={s.name}
+                          stroke={colour}
+                          strokeWidth={2}
+                          dot={false}
+                        />,
+                        <Line
+                          key={`${s.id}-vested`}
+                          type="monotone"
+                          dataKey={`${s.name} vested`}
+                          stroke={colour}
+                          strokeWidth={2}
+                          strokeDasharray="4 3"
+                          dot={false}
+                        />,
+                      ];
+                    })}
                   </LineChart>
                 </ResponsiveContainer>
               </div>
@@ -298,8 +337,10 @@ export default function ProjectionsPage() {
             scenarioName={chosen[0]?.name ?? "—"}
             realised={realisedPie}
             coming={comingPie}
-            realisedTotal={realisedTotal}
-            comingTotal={comingTotal}
+            asOfMonth={asOfMonth}
+            setAsOfMonth={setAsOfMonth}
+            isToday={isToday}
+            todayMonthISO={todayMonthISO}
           />
         </>
       ) : null}
@@ -346,7 +387,7 @@ function Kpi({
   );
 }
 
-type Slice = { name: string; value: number };
+type Slice = { name: string; value: number; kind: "stock" | "property" };
 
 // Two distinct color families. Inner ring uses the first shade of each;
 // outer ring picks subsequent shades for each asset within that family.
@@ -408,28 +449,46 @@ function NestedAllocationCard({
   scenarioName,
   realised,
   coming,
-  realisedTotal,
-  comingTotal,
+  asOfMonth,
+  setAsOfMonth,
+  isToday,
+  todayMonthISO,
 }: {
   ccy: string;
   horizonYears: number;
   scenarioName: string;
   realised: Slice[];
   coming: Slice[];
-  realisedTotal: number;
-  comingTotal: number;
+  asOfMonth: string;
+  setAsOfMonth: (v: string) => void;
+  isToday: boolean;
+  todayMonthISO: string;
 }) {
+  // Asset-type filters. Both on by default — toggling lets the user see the
+  // pie restricted to just stocks or just property.
+  const [showStocks, setShowStocks] = useState(true);
+  const [showProperty, setShowProperty] = useState(true);
+
+  const passes = (s: Slice) =>
+    (s.kind === "stock" && showStocks) || (s.kind === "property" && showProperty);
+
+  const realisedFiltered = realised.filter(passes);
+  const comingFiltered = coming.filter(passes);
+  const realisedTotal = realisedFiltered.reduce((s, x) => s + x.value, 0);
+  const comingTotal = comingFiltered.reduce((s, x) => s + x.value, 0);
   const grandTotal = realisedTotal + comingTotal;
   const empty = grandTotal === 0;
 
   // Sort each section by descending value for readable slice order
-  const todaySorted = [...realised].filter((s) => s.value > 0).sort((a, b) => b.value - a.value);
-  const comingSorted = [...coming].filter((s) => s.value > 0).sort((a, b) => b.value - a.value);
+  const todaySorted = [...realisedFiltered].filter((s) => s.value > 0).sort((a, b) => b.value - a.value);
+  const comingSorted = [...comingFiltered].filter((s) => s.value > 0).sort((a, b) => b.value - a.value);
+
+  const todayLabel = isToday ? "Today" : asOfMonth;
 
   // INNER ring: the headline split — only two slices.
   // Both pies' values must sum to grandTotal so arcs align between rings.
   const innerData = [
-    { name: "Today", value: realisedTotal, fill: TODAY_COLORS[0] },
+    { name: todayLabel, value: realisedTotal, fill: TODAY_COLORS[0] },
     { name: "Coming", value: comingTotal, fill: COMING_COLORS[0] },
   ].filter((d) => d.value > 0);
 
@@ -457,22 +516,69 @@ function NestedAllocationCard({
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="text-sm">
-          Wealth allocation — today vs +{horizonYears}y · {scenarioName} ({ccy})
-        </CardTitle>
-        <CardDescription className="text-[11px]">
-          <span className="inline-flex items-center gap-1">
-            <span className="inline-block h-3 w-3 rounded-sm" style={{ background: TODAY_COLORS[0] }} />
-            <b>Today</b> {realisedPct.toFixed(0)}%
-          </span>{" "}
-          ·{" "}
-          <span className="inline-flex items-center gap-1">
-            <span className="inline-block h-3 w-3 rounded-sm" style={{ background: COMING_COLORS[0] }} />
-            <b>Coming ({horizonYears}y)</b> {comingPct.toFixed(0)}%
-          </span>
-          {" "}— the inner ring is the headline split; the outer ring breaks each side down by asset.
-        </CardDescription>
+      <CardHeader className="space-y-2">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <CardTitle className="text-sm">
+              Wealth allocation — {todayLabel} vs +{horizonYears}y · {scenarioName} ({ccy})
+            </CardTitle>
+            <CardDescription className="text-[11px]">
+              <span className="inline-flex items-center gap-1">
+                <span className="inline-block h-3 w-3 rounded-sm" style={{ background: TODAY_COLORS[0] }} />
+                <b>{todayLabel}</b> {realisedPct.toFixed(0)}%
+              </span>{" "}
+              ·{" "}
+              <span className="inline-flex items-center gap-1">
+                <span className="inline-block h-3 w-3 rounded-sm" style={{ background: COMING_COLORS[0] }} />
+                <b>Coming ({horizonYears}y)</b> {comingPct.toFixed(0)}%
+              </span>
+              {" "}— inner ring is the headline split; outer breaks each side down by asset.
+            </CardDescription>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Label className="text-[11px] text-muted-foreground">As-of</Label>
+            <Input
+              type="month"
+              value={asOfMonth}
+              onChange={(e) => setAsOfMonth(e.target.value)}
+              className="h-8 w-[140px] text-xs"
+            />
+            {!isToday ? (
+              <button
+                type="button"
+                onClick={() => setAsOfMonth(todayMonthISO)}
+                className="rounded-full border px-2 py-0.5 text-[10px] text-muted-foreground hover:bg-accent"
+              >
+                Reset to today
+              </button>
+            ) : null}
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-1">
+          <Label className="text-[11px] text-muted-foreground mr-1">Include</Label>
+          <button
+            type="button"
+            onClick={() => setShowStocks((v) => !v)}
+            className={
+              showStocks
+                ? "rounded-full border border-primary bg-primary text-primary-foreground px-2.5 py-1 text-[11px] font-medium"
+                : "rounded-full border px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:bg-accent"
+            }
+          >
+            Stocks
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowProperty((v) => !v)}
+            className={
+              showProperty
+                ? "rounded-full border border-primary bg-primary text-primary-foreground px-2.5 py-1 text-[11px] font-medium"
+                : "rounded-full border px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:bg-accent"
+            }
+          >
+            Property
+          </button>
+        </div>
       </CardHeader>
       <CardContent>
         {empty ? (

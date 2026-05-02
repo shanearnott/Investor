@@ -43,8 +43,17 @@ function monthsBetween(from: Date, to: Date): number {
   return (to.getUTCFullYear() - from.getUTCFullYear()) * 12 + (to.getUTCMonth() - from.getUTCMonth());
 }
 
-function stockGrowthForScenario(s: Scenario, holdingId: string): number {
-  return s.stock_overrides[holdingId]?.annual_price_growth_pct ?? s.default_stock_growth_pct;
+function stockGrowthForScenario(
+  s: Scenario,
+  holding: Pick<StockHolding, "id" | "current_share_price">,
+): number {
+  const ov = s.stock_overrides[holding.id];
+  // Target price wins if set: derive the annual rate that takes the current
+  // price to the target over the scenario's horizon.
+  if (ov?.target_share_price !== undefined && ov.target_share_price > 0 && holding.current_share_price > 0 && s.horizon_years > 0) {
+    return (Math.pow(ov.target_share_price / holding.current_share_price, 1 / s.horizon_years) - 1) * 100;
+  }
+  return ov?.annual_price_growth_pct ?? s.default_stock_growth_pct;
 }
 
 function propertyGrowthForScenario(
@@ -66,7 +75,7 @@ export function projectStockValueAt(
 ) {
   const today = new Date();
   const monthsForward = Math.max(0, monthsBetween(today, asOf));
-  const growthPct = stockGrowthForScenario(scenario, h.id);
+  const growthPct = stockGrowthForScenario(scenario, h);
   const monthlyGrowth = Math.pow(1 + growthPct / 100, 1 / 12) - 1;
   const projectedPrice = h.current_share_price * Math.pow(1 + monthlyGrowth, monthsForward);
 

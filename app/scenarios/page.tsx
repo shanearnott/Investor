@@ -102,11 +102,22 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
 
   const update = <K extends keyof Scenario>(k: K, v: Scenario[K]) => setD((p) => ({ ...p, [k]: v }));
 
-  const updateStockOv = (id: string, ov: { annual_price_growth_pct?: number }) => {
+  const updateStockOv = (
+    id: string,
+    ov: { annual_price_growth_pct?: number; target_share_price?: number },
+  ) => {
     setD((p) => ({
       ...p,
       stock_overrides: { ...p.stock_overrides, [id]: { ...p.stock_overrides[id], ...ov } },
     }));
+  };
+
+  const clearStockField = (id: string, field: "annual_price_growth_pct" | "target_share_price") => {
+    setD((p) => {
+      const cur = { ...(p.stock_overrides[id] ?? {}) };
+      delete cur[field];
+      return { ...p, stock_overrides: { ...p.stock_overrides, [id]: cur } };
+    });
   };
 
   const updatePropOv = (id: string, ov: { annual_growth_pct?: number }) => {
@@ -188,40 +199,79 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
             <p className="text-[11px] text-muted-foreground">
               Set a different growth % for individual stocks. Leave at the default to inherit.
             </p>
-            <div className="hidden sm:grid grid-cols-[2fr_1fr] gap-2 px-2 text-[11px] uppercase tracking-wide text-muted-foreground">
-              <span>Stock</span>
-              <span>Growth (overrides default {d.default_stock_growth_pct}%/yr)</span>
-            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Set a growth rate, OR a target share price at +{d.horizon_years}y — whichever
+              fits how you think. Target price wins when both are set.
+            </p>
             <div className="space-y-2">
               {data.stocks.map((h) => {
                 const ov = d.stock_overrides[h.id] ?? {};
-                const rate = ov.annual_price_growth_pct ?? d.default_stock_growth_pct;
-                const usingOverride = ov.annual_price_growth_pct !== undefined;
+                const usingTarget = ov.target_share_price !== undefined && ov.target_share_price > 0;
+                const usingRate = ov.annual_price_growth_pct !== undefined && !usingTarget;
+                // Implied annual growth from target, for display next to the field
+                const impliedFromTarget =
+                  usingTarget && h.current_share_price > 0 && d.horizon_years > 0
+                    ? (Math.pow((ov.target_share_price ?? 0) / h.current_share_price, 1 / d.horizon_years) - 1) * 100
+                    : null;
+                const effectiveRate = usingTarget
+                  ? impliedFromTarget ?? d.default_stock_growth_pct
+                  : ov.annual_price_growth_pct ?? d.default_stock_growth_pct;
                 return (
-                  <div
-                    key={h.id}
-                    className="grid grid-cols-1 gap-2 rounded-md border p-2 sm:grid-cols-[2fr_1fr]"
-                  >
+                  <div key={h.id} className="rounded-md border p-2 space-y-2">
                     <div className="text-sm">
                       <div className="font-medium">{h.ticker || h.company_name}</div>
                       <div className="text-[11px] text-muted-foreground">
                         current {formatMoney(h.current_share_price, h.currency, { fractionDigits: 2 })}/sh
                       </div>
                     </div>
-                    <div>
-                      <SuffixedInput
-                        suffix="%/yr"
-                        type="number"
-                        step="0.5"
-                        value={rate}
-                        onChange={(e) => updateStockOv(h.id, { annual_price_growth_pct: Number(e.target.value) })}
-                      />
-                      <p className="text-[10px] text-muted-foreground mt-1">
-                        {usingOverride
-                          ? `Overrides default ${d.default_stock_growth_pct}%/yr`
-                          : `Using default ${d.default_stock_growth_pct}%/yr`}
-                      </p>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <Field label="Growth rate" hint={`Default ${d.default_stock_growth_pct}%/yr`}>
+                        <SuffixedInput
+                          suffix="%/yr"
+                          type="number"
+                          step="0.5"
+                          value={ov.annual_price_growth_pct ?? d.default_stock_growth_pct}
+                          disabled={usingTarget}
+                          onChange={(e) =>
+                            updateStockOv(h.id, { annual_price_growth_pct: Number(e.target.value) })
+                          }
+                        />
+                      </Field>
+                      <Field
+                        label={`Target price at +${d.horizon_years}y`}
+                        hint={
+                          h.currency
+                            ? `In ${h.currency}. Leave blank to use the rate.`
+                            : "Leave blank to use the rate."
+                        }
+                      >
+                        <SuffixedInput
+                          suffix={h.currency}
+                          type="number"
+                          step="0.01"
+                          min={0}
+                          value={ov.target_share_price ?? ""}
+                          placeholder="e.g. 200"
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (val === "") clearStockField(h.id, "target_share_price");
+                            else updateStockOv(h.id, { target_share_price: Number(val) });
+                          }}
+                        />
+                      </Field>
                     </div>
+                    <p className="text-[10px] text-muted-foreground">
+                      {usingTarget ? (
+                        <>
+                          Target {formatMoney(ov.target_share_price ?? 0, h.currency, { fractionDigits: 2 })} → implied{" "}
+                          <b>{effectiveRate.toFixed(1)}%/yr</b>
+                        </>
+                      ) : usingRate ? (
+                        <>Overrides default — using <b>{effectiveRate.toFixed(1)}%/yr</b></>
+                      ) : (
+                        <>Using default {d.default_stock_growth_pct}%/yr</>
+                      )}
+                    </p>
                   </div>
                 );
               })}

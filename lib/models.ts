@@ -102,8 +102,13 @@ export const ScenarioSchema = z.object({
   horizon_years: z.number().int().min(1).max(50).default(5),
   default_stock_growth_pct: z.number().default(8.0),
   default_property_growth_pct: z.number().default(4.0),
+  /** Per-stock overrides. EITHER set `annual_price_growth_pct` directly,
+   *  OR set `target_share_price` (in the stock's native currency) and the
+   *  projection engine will derive the growth rate that hits that price at
+   *  the scenario's horizon. If both are set, target_share_price wins. */
   stock_overrides: z.record(z.string(), z.object({
     annual_price_growth_pct: z.number().optional(),
+    target_share_price: z.number().nonnegative().optional(),
   })).default({}),
   property_overrides: z.record(z.string(), z.object({
     annual_growth_pct: z.number().optional(),
