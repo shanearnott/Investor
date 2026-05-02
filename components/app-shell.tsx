@@ -57,7 +57,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       {error ? (
         <div className="border-b bg-destructive/10 px-4 py-2 text-sm text-destructive">{error}</div>
       ) : null}
-      <main className="flex-1 px-3 pb-24 pt-4 sm:px-6 sm:pb-6">{children}</main>
+      <main className="flex-1 px-3 pb-24 pt-4 sm:px-6 sm:pb-24">{children}</main>
       <nav className="fixed bottom-0 left-0 right-0 z-20 border-t bg-background/95 backdrop-blur sm:hidden">
         <ul className="flex justify-around">
           {navItems.map(({ href, label, icon: Icon }) => {
@@ -80,7 +80,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           })}
         </ul>
       </nav>
-      <nav className="hidden border-t bg-background sm:block">
+      <nav className="fixed bottom-0 left-0 right-0 z-20 hidden border-t bg-background/95 backdrop-blur sm:block">
         <ul className="mx-auto flex max-w-5xl gap-2 px-6 py-2">
           {navItems.map(({ href, label, icon: Icon }) => {
             const active =
