@@ -28,8 +28,8 @@ import {
 } from "@/lib/projections";
 import { formatMoney, formatNumber } from "@/lib/utils";
 
-const PIE_HORIZON_OPTIONS = [5, 10, 15, 20] as const;
-type PieHorizonYears = (typeof PIE_HORIZON_OPTIONS)[number];
+const HORIZON_OPTIONS = [5, 10, 15, 20] as const;
+type HorizonYears = (typeof HORIZON_OPTIONS)[number];
 
 const PIE_COLORS = [
   "#1e3a8a", "#0e7490", "#0f766e", "#65a30d", "#ca8a04",
@@ -154,6 +154,11 @@ export default function ProjectionsPage() {
   }, [scenarios]);
   const chosen = scenarios.filter((s) => selectedIds.includes(s.id));
 
+  // Shared horizon for both the line chart and the wealth-allocation pie.
+  // Decoupled from each scenario's `horizon_years` (which still drives
+  // target_share_price → implied annual growth rate).
+  const [horizonYears, setHorizonYears] = useState<HorizonYears>(5);
+
   // Build series in displayCurrency (so all chart axes/tooltips match the selector)
   const seriesByScenario = useMemo(() => {
     const out: Record<string, ReturnType<typeof buildNetWorthSeries>> = {};
@@ -167,11 +172,11 @@ export default function ProjectionsPage() {
         properties: data.properties,
         scenario: sc,
         settings: settingsForDisplay,
-        config: { horizon_years: sc.horizon_years, step_months: 1 },
+        config: { horizon_years: horizonYears, step_months: 1 },
       });
     }
     return out;
-  }, [chosen, data.stocks, data.properties, settings, displayCurrency]);
+  }, [chosen, data.stocks, data.properties, settings, displayCurrency, horizonYears]);
 
   const ccy = displayCurrency;
 
@@ -216,11 +221,6 @@ export default function ProjectionsPage() {
   }, [asOfMonth]);
   const isToday = asOfMonth === todayMonthISO;
 
-  // Pie's horizon is decoupled from the scenario's. Scenario still drives
-  // growth rates and (for target_share_price) implied annual rate, but the
-  // user picks how far forward to project for the wealth-allocation pie.
-  const [pieHorizonYears, setPieHorizonYears] = useState<PieHorizonYears>(5);
-
   const pieScenario = chosen[0];
   const realisedPie: Slice[] = pieScenario
     ? realisedAtDateByAsset({
@@ -232,7 +232,7 @@ export default function ProjectionsPage() {
     ? comingByAsset({
         holdings: data.stocks, properties: data.properties,
         scenario: pieScenario, settings, asOf: asOfDate, ccy,
-        horizonYears: pieHorizonYears,
+        horizonYears,
       })
     : [];
 
@@ -276,6 +276,18 @@ export default function ProjectionsPage() {
               </button>
             );
           })}
+          <div className="ml-auto flex items-center gap-2">
+            <Label className="text-xs text-muted-foreground">Horizon</Label>
+            <Select
+              value={String(horizonYears)}
+              onChange={(e) => setHorizonYears(Number(e.target.value) as HorizonYears)}
+              className="h-8 w-[100px] text-xs"
+            >
+              {HORIZON_OPTIONS.map((y) => (
+                <option key={y} value={y}>{y} years</option>
+              ))}
+            </Select>
+          </div>
         </div>
       </div>
 
@@ -345,8 +357,7 @@ export default function ProjectionsPage() {
 
           <NestedAllocationCard
             ccy={ccy}
-            horizonYears={pieHorizonYears}
-            setHorizonYears={setPieHorizonYears}
+            horizonYears={horizonYears}
             scenarioName={chosen[0]?.name ?? "—"}
             realised={realisedPie}
             coming={comingPie}
@@ -459,7 +470,6 @@ function renderInnerLabel(props: {
 function NestedAllocationCard({
   ccy,
   horizonYears,
-  setHorizonYears,
   scenarioName,
   realised,
   coming,
@@ -469,8 +479,7 @@ function NestedAllocationCard({
   todayMonthISO,
 }: {
   ccy: string;
-  horizonYears: PieHorizonYears;
-  setHorizonYears: (v: PieHorizonYears) => void;
+  horizonYears: HorizonYears;
   scenarioName: string;
   realised: Slice[];
   coming: Slice[];
@@ -567,16 +576,6 @@ function NestedAllocationCard({
                 Reset to today
               </button>
             ) : null}
-            <Label className="text-[11px] text-muted-foreground ml-2">Look ahead</Label>
-            <Select
-              value={String(horizonYears)}
-              onChange={(e) => setHorizonYears(Number(e.target.value) as PieHorizonYears)}
-              className="h-8 w-[100px] text-xs"
-            >
-              {PIE_HORIZON_OPTIONS.map((y) => (
-                <option key={y} value={y}>{y} years</option>
-              ))}
-            </Select>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-1">
