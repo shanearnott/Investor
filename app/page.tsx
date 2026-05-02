@@ -245,20 +245,22 @@ function nextTwelveMonthsOutlook(args: {
   let totalValue = 0;
 
   for (const h of args.holdings) {
-    for (const t of h.vesting_schedule) {
-      const d = parseISO(t.vest_date);
-      if (!d) continue;
-      if (d <= today || d > end) continue;
-      const valueNative = t.shares * h.current_share_price;
-      const valueDisplay = convert(valueNative, h.currency, args.displayCurrency, args.settings);
-      events.push({
-        date: t.vest_date,
-        ticker: h.ticker || h.company_name || h.id,
-        shares: t.shares,
-        value: valueDisplay,
-      });
-      totalShares += t.shares;
-      totalValue += valueDisplay;
+    for (const tr of h.tranches) {
+      for (const ev of tr.vest_events) {
+        const d = parseISO(ev.vest_date);
+        if (!d) continue;
+        if (d <= today || d > end) continue;
+        const valueNative = ev.shares * h.current_share_price;
+        const valueDisplay = convert(valueNative, h.currency, args.displayCurrency, args.settings);
+        events.push({
+          date: ev.vest_date,
+          ticker: h.ticker || h.company_name || h.id,
+          shares: ev.shares,
+          value: valueDisplay,
+        });
+        totalShares += ev.shares;
+        totalValue += valueDisplay;
+      }
     }
   }
   events.sort((a, b) => a.date.localeCompare(b.date));

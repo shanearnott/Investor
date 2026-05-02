@@ -18,10 +18,15 @@ const stockId = "demo-stock-acme";
 const propertyId = "demo-prop-bondi";
 
 export function buildDemoData(): CollectionsMap {
-  // Build vesting schedule: 16 quarterly tranches of 250 shares
-  const vesting = Array.from({ length: 16 }, (_, i) => ({
+  // Initial 4y hire grant — 16 quarterly vests of 250 shares
+  const hireVests = Array.from({ length: 16 }, (_, i) => ({
     vest_date: isoDateOffset(0, i * 3 - 12), // some past, some future
     shares: 250,
+  }));
+  // Refresher grant — 16 quarterly vests of 100 shares, starting 1y in the future
+  const refresherVests = Array.from({ length: 16 }, (_, i) => ({
+    vest_date: isoDateOffset(0, i * 3 + 12),
+    shares: 100,
   }));
 
   return {
@@ -36,8 +41,23 @@ export function buildDemoData(): CollectionsMap {
         current_share_price: 48.5,
         cost_basis_per_share: 22.0,
         shares_owned_outright: 1500,
-        vesting_schedule: vesting,
-        notes: "Demo: RSUs vesting on the schedule below.",
+        tranches: [
+          {
+            id: "demo-tranche-acme-hire",
+            name: "Initial hire grant",
+            grant_date: isoDateOffset(-1, 0),
+            vest_events: hireVests,
+            notes: "4y quarterly, 1y cliff already passed.",
+          },
+          {
+            id: "demo-tranche-acme-ref",
+            name: "2026 refresher",
+            grant_date: isoDateOffset(0, 0),
+            vest_events: refresherVests,
+            notes: "Refresher grant, vests 1y from now over 4y quarterly.",
+          },
+        ],
+        notes: "Demo: RSUs across two tranches (initial hire + refresher).",
       },
       {
         id: "demo-stock-msft",
@@ -49,7 +69,7 @@ export function buildDemoData(): CollectionsMap {
         current_share_price: 415.0,
         cost_basis_per_share: 280.0,
         shares_owned_outright: 200,
-        vesting_schedule: [],
+        tranches: [],
         notes: "Demo: public-stock holding, long-term cap gains eligible.",
       },
     ],

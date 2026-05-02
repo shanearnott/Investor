@@ -41,11 +41,24 @@ export const PROPERTY_COUNTRIES = [
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD").optional().nullable();
 
-export const VestingTrancheSchema = z.object({
+/** A single vest event — one date, one share count. */
+export const VestEventSchema = z.object({
   vest_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   shares: z.number().nonnegative(),
 });
-export type VestingTranche = z.infer<typeof VestingTrancheSchema>;
+export type VestEvent = z.infer<typeof VestEventSchema>;
+
+/** A tranche / grant — a logical group of vest events (e.g. "2024 hire grant",
+ *  "2025 refresher"). A stock can have multiple tranches; each has its own
+ *  schedule of vest events. */
+export const TrancheSchema = z.object({
+  id: z.string(),
+  name: z.string().default(""),
+  grant_date: isoDate,
+  vest_events: z.array(VestEventSchema).default([]),
+  notes: z.string().default(""),
+});
+export type Tranche = z.infer<typeof TrancheSchema>;
 
 export const StockHoldingSchema = z.object({
   id: z.string(),
@@ -57,7 +70,8 @@ export const StockHoldingSchema = z.object({
   current_share_price: z.number().nonnegative().default(0),
   cost_basis_per_share: z.number().nonnegative().default(0),
   shares_owned_outright: z.number().nonnegative().default(0),
-  vesting_schedule: z.array(VestingTrancheSchema).default([]),
+  /** Multiple tranches per stock; each has its own vesting schedule. */
+  tranches: z.array(TrancheSchema).default([]),
   notes: z.string().default(""),
 });
 export type StockHolding = z.infer<typeof StockHoldingSchema>;
@@ -166,16 +180,36 @@ export function todayISO(): string {
 
 // Stock helpers
 export function totalGrantedShares(h: StockHolding): number {
-  return h.shares_owned_outright + h.vesting_schedule.reduce((s, t) => s + t.shares, 0);
+  let total = h.shares_owned_outright;
+  for (const t of h.tranches) {
+    for (const ev of t.vest_events) total += ev.shares;
+  }
+  return total;
 }
 
 export function vestedSharesAt(h: StockHolding, asOf: Date): number {
   let v = h.shares_owned_outright;
-  for (const t of h.vesting_schedule) {
-    const d = parseISO(t.vest_date);
-    if (d && d <= asOf) v += t.shares;
+  for (const t of h.tranches) {
+    for (const ev of t.vest_events) {
+      const d = parseISO(ev.vest_date);
+      if (d && d <= asOf) v += ev.shares;
+    }
   }
   return v;
+}
+
+/** Flatten all vest events across all tranches into a single list with the
+ *  parent tranche name/id attached. Useful for dashboards that want a single
+ *  per-stock event stream. Sorted by date ascending. */
+export function flatVestEvents(h: StockHolding): Array<VestEvent & { tranche_id: string; tranche_name: string }> {
+  const out: Array<VestEvent & { tranche_id: string; tranche_name: string }> = [];
+  for (const t of h.tranches) {
+    for (const ev of t.vest_events) {
+      out.push({ ...ev, tranche_id: t.id, tranche_name: t.name });
+    }
+  }
+  out.sort((a, b) => a.vest_date.localeCompare(b.vest_date));
+  return out;
 }
 
 export function propertyEquity(p: Property): number {

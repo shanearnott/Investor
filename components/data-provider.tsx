@@ -14,6 +14,7 @@ import { buildDemoData } from "@/lib/demo-data";
 import {
   COLLECTION_FILES,
   SettingsSchema,
+  newId,
   type CollectionsMap,
   type InvestmentProject,
   type Property,
@@ -88,7 +89,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     setLoading(true);
     setError(null);
     try {
-      const [stocks, properties, scenariosRaw, projects, settings] = await Promise.all([
+      const [stocksRaw, properties, scenariosRaw, projects, settings] = await Promise.all([
         loadCollection("stocks", [] as StockHolding[]),
         loadCollection("properties", [] as Property[]),
         loadCollection("scenarios", [] as Scenario[]),
@@ -112,8 +113,41 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         window.localStorage.setItem(MIG_KEY, "1");
       }
 
+      // v2 migration: stocks used to have a flat `vesting_schedule: VestEvent[]`.
+      // The new schema groups events into named tranches (grants). Wrap any
+      // legacy flat schedule into a single "Initial grant" tranche per stock.
+      const MIG_V2_KEY = "investor:migration:v2";
+      let stocks = stocksRaw ?? [];
+      if (typeof window !== "undefined" && !window.localStorage.getItem(MIG_V2_KEY)) {
+        let changed = false;
+        stocks = stocks.map((s) => {
+          const sx = s as unknown as StockHolding & {
+            vesting_schedule?: { vest_date: string; shares: number }[];
+          };
+          if (Array.isArray(sx.tranches)) return s;
+          const events = Array.isArray(sx.vesting_schedule) ? sx.vesting_schedule : [];
+          changed = true;
+          const tranches =
+            events.length > 0
+              ? [
+                  {
+                    id: newId(),
+                    name: "Initial grant",
+                    grant_date: null,
+                    vest_events: events,
+                    notes: "",
+                  },
+                ]
+              : [];
+          const { vesting_schedule: _drop, ...rest } = sx;
+          return { ...rest, tranches } as StockHolding;
+        });
+        if (changed) await saveCollection("stocks", stocks);
+        window.localStorage.setItem(MIG_V2_KEY, "1");
+      }
+
       setData({
-        stocks: stocks ?? [],
+        stocks,
         properties: properties ?? [],
         scenarios,
         projects: projects ?? [],
