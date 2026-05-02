@@ -219,16 +219,53 @@ export default function HomePage() {
                 <div>
                   <p className="text-xs font-medium text-muted-foreground mb-1">Vesting events</p>
                   <ul className="text-xs space-y-1">
-                    {lookahead.vestingEvents.map((e, i) => (
-                      <li key={i} className="flex justify-between gap-2 border-b pb-1 last:border-0">
-                        <span>
-                          <b>{e.date}</b> · {e.ticker}
-                        </span>
-                        <span className="tabular-nums">
-                          {formatNumber(e.shares)} sh · {formatMoney(e.value, displayCurrency)}
-                        </span>
-                      </li>
-                    ))}
+                    {(() => {
+                      // Group adjacent events that share (date, ticker) so a stock
+                      // with multiple tranches vesting the same day gets a subtotal.
+                      const ev = lookahead.vestingEvents;
+                      const out: React.ReactNode[] = [];
+                      let i = 0;
+                      while (i < ev.length) {
+                        let j = i;
+                        while (
+                          j < ev.length &&
+                          ev[j].date === ev[i].date &&
+                          ev[j].ticker === ev[i].ticker
+                        ) j++;
+                        for (let k = i; k < j; k++) {
+                          const e = ev[k];
+                          out.push(
+                            <li key={`e-${k}`} className="flex justify-between gap-2 border-b pb-1 last:border-0">
+                              <span>
+                                <b>{e.date}</b> · {e.ticker} <span className="text-muted-foreground">· {e.trancheName}</span>
+                              </span>
+                              <span className="tabular-nums">
+                                {formatNumber(e.shares)} sh · {formatMoney(e.value, displayCurrency)}
+                              </span>
+                            </li>,
+                          );
+                        }
+                        if (j - i > 1) {
+                          const shares = ev.slice(i, j).reduce((s, x) => s + x.shares, 0);
+                          const value = ev.slice(i, j).reduce((s, x) => s + x.value, 0);
+                          out.push(
+                            <li
+                              key={`sub-${i}`}
+                              className="flex justify-between gap-2 border-b pb-1 last:border-0 text-muted-foreground italic"
+                            >
+                              <span>
+                                ↳ Subtotal · {ev[i].ticker} on {ev[i].date}
+                              </span>
+                              <span className="tabular-nums">
+                                {formatNumber(shares)} sh · {formatMoney(value, displayCurrency)}
+                              </span>
+                            </li>,
+                          );
+                        }
+                        i = j;
+                      }
+                      return out;
+                    })()}
                   </ul>
                 </div>
               ) : null}
@@ -284,6 +321,7 @@ export default function HomePage() {
 type VestingEvent = {
   date: string;
   ticker: string;
+  trancheName: string;
   shares: number;
   value: number; // in displayCurrency
 };
@@ -327,6 +365,7 @@ function computeLookahead(args: {
         events.push({
           date: ev.vest_date,
           ticker: h.ticker || h.company_name || h.id,
+          trancheName: tr.name || "Grant",
           shares: ev.shares,
           value: valueDisplay,
         });
