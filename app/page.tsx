@@ -12,7 +12,16 @@ import { convert } from "@/lib/fx";
 import { lookupGrowthRate } from "@/lib/growth";
 import { formatMoney, formatNumber } from "@/lib/utils";
 import { currentAllocationBreakdown } from "@/lib/projections";
-import { parseISO, type Property, type StockHolding } from "@/lib/models";
+import { parseISO, vestedSharesAt, type Property, type StockHolding } from "@/lib/models";
+
+/** RSU income-tax rates applied to the home-page "post-tax" net-worth
+ *  tiles. Mirrors the scenarios page defaults — gives a quick at-a-glance
+ *  read of net worth if you were taxed in each jurisdiction at vest. */
+const POST_TAX_RATES: ReadonlyArray<{ label: string; rate: number }> = [
+  { label: "US", rate: 37 },
+  { label: "AUS", rate: 51 },
+  { label: "UAE", rate: 0 },
+];
 
 const LOOKAHEAD_OPTIONS = [3, 6, 9, 12, 18, 24] as const;
 type LookaheadMonths = (typeof LOOKAHEAD_OPTIONS)[number];
@@ -34,6 +43,17 @@ export default function HomePage() {
   // currentAllocationBreakdown returns values in primary_currency; convert for display
   const todayPrimary = Object.values(allocation).reduce((s, v) => s + v, 0);
   const today = convert(todayPrimary, data.settings.primary_currency, displayCurrency, data.settings);
+
+  // Vested RSU value (gross, in displayCurrency) — needed to derive the
+  // post-tax tiles below. RSU income tax hits the value of vested RSU
+  // shares at vest; non-RSU equity and property equity are untouched.
+  const todayDate = new Date();
+  const vestedRsuDisplay = data.stocks
+    .filter((h) => h.equity_type === "RSU")
+    .reduce((sum, h) => {
+      const valueNative = vestedSharesAt(h, todayDate) * h.current_share_price;
+      return sum + convert(valueNative, h.currency, displayCurrency, data.settings);
+    }, 0);
 
   // Look-ahead window: equity tranches that will vest, plus expected property
   // growth between now and N months from now (user-selectable).
@@ -140,6 +160,28 @@ export default function HomePage() {
                 </p>
               );
             })()}
+            {vestedRsuDisplay > 0 ? (
+              <div className="mt-4">
+                <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">
+                  Post-tax (RSU income tax applied today)
+                </p>
+                <div className="grid grid-cols-3 gap-2">
+                  {POST_TAX_RATES.map(({ label, rate }) => {
+                    const value = today - vestedRsuDisplay * (rate / 100);
+                    return (
+                      <div key={label} className="rounded-md border p-2">
+                        <div className="text-[11px] text-muted-foreground">
+                          {label} <span className="tabular-nums">{rate}%</span>
+                        </div>
+                        <div className="text-base font-semibold tabular-nums">
+                          {formatMoney(value, displayCurrency)}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
             <p className="text-xs text-muted-foreground mt-2">
               See <Link href="/projections" className="underline">Projections</Link> for the full picture.
             </p>
