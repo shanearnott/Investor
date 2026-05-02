@@ -6,8 +6,8 @@ import { Plus, Trash2 } from "lucide-react";
 import { useData } from "@/components/data-provider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input, Label, Textarea } from "@/components/ui/input";
-import { newId, Scenario, ScenarioSchema, SUPPORTED_JURISDICTIONS } from "@/lib/models";
+import { Input, Label, Select, Textarea } from "@/components/ui/input";
+import { newId, RSU_DEFAULT_TAX_RATES, Scenario, ScenarioSchema, SUPPORTED_JURISDICTIONS } from "@/lib/models";
 import { formatMoney } from "@/lib/utils";
 
 function blank(): Scenario {
@@ -71,11 +71,7 @@ export default function ScenariosPage() {
                     {s.horizon_years}y · stocks {s.default_stock_growth_pct.toFixed(1)}%/yr · property{" "}
                     {s.default_property_growth_pct.toFixed(1)}%/yr
                     {s.inflation_pct ? ` · inflation ${s.inflation_pct.toFixed(1)}%` : ""}
-                    {Object.keys(s.rsu_tax_rates ?? {}).length > 0
-                      ? ` · RSU tax ${Object.entries(s.rsu_tax_rates)
-                          .map(([j, r]) => `${j} ${r}%`)
-                          .join(", ")}`
-                      : ""}
+                    {` · RSU tax ${s.rsu_tax_jurisdiction} ${s.rsu_tax_rate_pct}%`}
                   </CardDescription>
                 </div>
                 <div className="flex gap-1">
@@ -132,26 +128,20 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
     }));
   };
 
-  const updateRsuTax = (jurisdiction: string, rate: number) => {
-    setD((p) => ({
-      ...p,
-      rsu_tax_rates: { ...p.rsu_tax_rates, [jurisdiction]: rate },
-    }));
+  /** When the user picks a new jurisdiction, pre-fill the rate from the
+   *  per-jurisdiction default — but only overwrite the rate if there's a
+   *  default for that jurisdiction; otherwise leave the prior rate alone
+   *  so they don't lose a custom number. */
+  const setRsuJurisdiction = (j: typeof SUPPORTED_JURISDICTIONS[number]) => {
+    setD((p) => {
+      const def = RSU_DEFAULT_TAX_RATES[j];
+      return {
+        ...p,
+        rsu_tax_jurisdiction: j,
+        rsu_tax_rate_pct: def !== undefined ? def : p.rsu_tax_rate_pct,
+      };
+    });
   };
-
-  // Show only jurisdictions actually used by an RSU holding, falling back to
-  // the canonical three (US, Australia, UAE) when the user has none — keeps
-  // the form compact instead of showing all 11 supported jurisdictions.
-  const rsuJurisdictionsInUse = Array.from(
-    new Set(
-      data.stocks
-        .filter((h) => h.equity_type === "RSU")
-        .map((h) => h.jurisdiction),
-    ),
-  );
-  const rsuJurisdictions = rsuJurisdictionsInUse.length > 0
-    ? SUPPORTED_JURISDICTIONS.filter((j) => rsuJurisdictionsInUse.includes(j))
-    : ["California", "Australia", "UAE"] as const;
 
   const submit = async () => {
     setError(null);
@@ -353,29 +343,37 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
         ) : null}
 
         <div className="space-y-2">
-          <Label>RSU income tax</Label>
+          <Label>RSU tax jurisdiction</Label>
           <p className="text-[11px] text-muted-foreground">
-            Applied to the value of RSU holdings in this scenario, by jurisdiction.
-            Models income tax due at vest — both vested and unvested RSU values
-            are shown net of this rate. Non-RSU equity is unaffected.
+            Models income tax due at vest as a single jurisdiction-wide rate
+            applied to <i>all</i> RSU holdings in this scenario — useful for
+            &quot;what if I moved to UAE&quot; style modelling. Non-RSU equity
+            is unaffected.
           </p>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-            {rsuJurisdictions.map((j) => {
-              const rate = d.rsu_tax_rates?.[j] ?? 0;
-              return (
-                <Field key={j} label={j}>
-                  <SuffixedInput
-                    suffix="%"
-                    type="number"
-                    step="0.5"
-                    min={0}
-                    max={100}
-                    value={rate}
-                    onChange={(e) => updateRsuTax(j, Number(e.target.value))}
-                  />
-                </Field>
-              );
-            })}
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <Field label="Jurisdiction" hint="Picking a jurisdiction pre-fills the rate; you can edit after.">
+              <Select
+                value={d.rsu_tax_jurisdiction}
+                onChange={(e) => setRsuJurisdiction(e.target.value as typeof SUPPORTED_JURISDICTIONS[number])}
+              >
+                {SUPPORTED_JURISDICTIONS.map((j) => (
+                  <option key={j} value={j}>
+                    {j}{RSU_DEFAULT_TAX_RATES[j] !== undefined ? ` (${RSU_DEFAULT_TAX_RATES[j]}%)` : ""}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Tax rate" hint="Applied to RSU value (vested + unvested) in projections.">
+              <SuffixedInput
+                suffix="%"
+                type="number"
+                step="0.5"
+                min={0}
+                max={100}
+                value={d.rsu_tax_rate_pct}
+                onChange={(e) => update("rsu_tax_rate_pct", Number(e.target.value))}
+              />
+            </Field>
           </div>
         </div>
 

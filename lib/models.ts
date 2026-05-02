@@ -114,17 +114,24 @@ export const ScenarioSchema = z.object({
     annual_growth_pct: z.number().optional(),
   })).default({}),
   inflation_pct: z.number().default(0),
-  /** Per-jurisdiction RSU income tax rate (%). Applied to RSU equity value
-   *  in this scenario — both vested and unvested portions are shown
-   *  net-of-tax, modelling income tax due at vest. Holdings with non-RSU
-   *  equity types are unaffected. */
-  rsu_tax_rates: z.record(z.string(), z.number()).default({
-    "California": 37,
-    "US-Federal-Only": 37,
-    "Australia": 51,
-    "UAE": 0,
-  }),
+  /** Scenario-wide tax jurisdiction for RSUs. Models "what if I'm taxed
+   *  here when these vest" — overrides each RSU holding's own jurisdiction
+   *  for the purposes of this scenario. Non-RSU equity is unaffected. */
+  rsu_tax_jurisdiction: z.enum(SUPPORTED_JURISDICTIONS).default("California"),
+  /** Income-tax % applied to RSU value (vested + unvested) in this scenario.
+   *  Pre-fills from a per-jurisdiction default when the dropdown changes,
+   *  but stays user-editable so individual circumstances can override. */
+  rsu_tax_rate_pct: z.number().min(0).max(100).default(37),
 });
+
+/** Typical top-marginal-on-RSU defaults used to pre-fill the rate input
+ *  when the user picks a new jurisdiction in a scenario. Editable after. */
+export const RSU_DEFAULT_TAX_RATES: Partial<Record<typeof SUPPORTED_JURISDICTIONS[number], number>> = {
+  "California": 37,
+  "US-Federal-Only": 37,
+  "Australia": 51,
+  "UAE": 0,
+};
 export type Scenario = z.infer<typeof ScenarioSchema>;
 
 export const ProjectItemSchema = z.object({
