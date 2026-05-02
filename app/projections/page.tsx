@@ -18,7 +18,7 @@ import {
 import { CurrencySelector } from "@/components/currency-selector";
 import { useData } from "@/components/data-provider";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input, Label } from "@/components/ui/input";
+import { Input, Label, Select } from "@/components/ui/input";
 import { convert } from "@/lib/fx";
 import { Property, Scenario, ScenarioSchema, StockHolding } from "@/lib/models";
 import {
@@ -27,6 +27,9 @@ import {
   projectStockValueAt,
 } from "@/lib/projections";
 import { formatMoney, formatNumber } from "@/lib/utils";
+
+const PIE_HORIZON_OPTIONS = [5, 10, 15, 20] as const;
+type PieHorizonYears = (typeof PIE_HORIZON_OPTIONS)[number];
 
 const PIE_COLORS = [
   "#1e3a8a", "#0e7490", "#0f766e", "#65a30d", "#ca8a04",
@@ -103,10 +106,11 @@ function comingByAsset(args: {
   settings: ReturnType<typeof useData>["data"]["settings"];
   asOf: Date;
   ccy: string;
+  horizonYears: number;
 }): Slice[] {
   const out: Slice[] = [];
   const horizon = new Date();
-  horizon.setUTCFullYear(horizon.getUTCFullYear() + args.scenario.horizon_years);
+  horizon.setUTCFullYear(horizon.getUTCFullYear() + args.horizonYears);
   const settingsForCcy: typeof args.settings = {
     ...args.settings,
     primary_currency: args.ccy as typeof args.settings.primary_currency,
@@ -212,6 +216,11 @@ export default function ProjectionsPage() {
   }, [asOfMonth]);
   const isToday = asOfMonth === todayMonthISO;
 
+  // Pie's horizon is decoupled from the scenario's. Scenario still drives
+  // growth rates and (for target_share_price) implied annual rate, but the
+  // user picks how far forward to project for the wealth-allocation pie.
+  const [pieHorizonYears, setPieHorizonYears] = useState<PieHorizonYears>(5);
+
   const pieScenario = chosen[0];
   const realisedPie: Slice[] = pieScenario
     ? realisedAtDateByAsset({
@@ -223,6 +232,7 @@ export default function ProjectionsPage() {
     ? comingByAsset({
         holdings: data.stocks, properties: data.properties,
         scenario: pieScenario, settings, asOf: asOfDate, ccy,
+        horizonYears: pieHorizonYears,
       })
     : [];
 
@@ -335,7 +345,8 @@ export default function ProjectionsPage() {
 
           <NestedAllocationCard
             ccy={ccy}
-            horizonYears={chosen[0]?.horizon_years ?? 0}
+            horizonYears={pieHorizonYears}
+            setHorizonYears={setPieHorizonYears}
             scenarioName={chosen[0]?.name ?? "—"}
             realised={realisedPie}
             coming={comingPie}
@@ -448,6 +459,7 @@ function renderInnerLabel(props: {
 function NestedAllocationCard({
   ccy,
   horizonYears,
+  setHorizonYears,
   scenarioName,
   realised,
   coming,
@@ -457,7 +469,8 @@ function NestedAllocationCard({
   todayMonthISO,
 }: {
   ccy: string;
-  horizonYears: number;
+  horizonYears: PieHorizonYears;
+  setHorizonYears: (v: PieHorizonYears) => void;
   scenarioName: string;
   realised: Slice[];
   coming: Slice[];
@@ -554,6 +567,16 @@ function NestedAllocationCard({
                 Reset to today
               </button>
             ) : null}
+            <Label className="text-[11px] text-muted-foreground ml-2">Look ahead</Label>
+            <Select
+              value={String(horizonYears)}
+              onChange={(e) => setHorizonYears(Number(e.target.value) as PieHorizonYears)}
+              className="h-8 w-[100px] text-xs"
+            >
+              {PIE_HORIZON_OPTIONS.map((y) => (
+                <option key={y} value={y}>{y} years</option>
+              ))}
+            </Select>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-1">
