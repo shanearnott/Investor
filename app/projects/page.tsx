@@ -168,8 +168,11 @@ function ProjectCard({
           // always have a second reference point, regardless of which they're
           // displaying in. Falls back to secondary if both equal display, or
           // primary if secondary somehow matches display.
-          const subCcy = [data.settings.primary_currency, data.settings.secondary_currency]
-            .filter((c): c is string => Boolean(c) && c !== ev.primary_currency)[0];
+          const candidates: string[] = [
+            data.settings.primary_currency,
+            data.settings.secondary_currency,
+          ];
+          const subCcy = candidates.find((c) => c && c !== ev.primary_currency);
           const tiles = [
             { label: "Total cost", value: ev.total_cost },
             { label: "Available (net of tax)", value: ev.total_available_net },
