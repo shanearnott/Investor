@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Cloud, CloudOff, Download, Plus, Trash2, Upload } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Cloud, CloudOff, Download, FileDown, FileUp, Plus, Trash2, Upload } from "lucide-react";
 
 import { useData } from "@/components/data-provider";
 import { Button } from "@/components/ui/button";
@@ -42,6 +42,11 @@ const OVERRIDE_FIELDS: { key: keyof typeof TAX_DEFAULTS["California"]; label: st
 export default function SettingsPage() {
   const { data, setSettings, loadDemo, resetLocal } = useData();
   const [s, setS] = useState<Settings>(data.settings);
+  const hasUserData =
+    data.stocks.length > 0 ||
+    data.properties.length > 0 ||
+    data.scenarios.length > 0 ||
+    data.projects.length > 0;
   const [jurisToEdit, setJurisToEdit] = useState<string>("California");
   const [savedNote, setSavedNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -195,18 +200,36 @@ export default function SettingsPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Demo & data</CardTitle>
+          <CardTitle>{hasUserData ? "Data" : "Demo & data"}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <Button variant="outline" onClick={loadDemo}>Load demo data</Button>
-            <Button variant="ghost" onClick={resetLocal}>Clear local (demo) data</Button>
-            <span className="text-xs text-muted-foreground self-center">
-              Local data lives in your browser&apos;s localStorage. Use Google Drive below to back up or sync across devices.
-            </span>
-          </div>
+          {hasUserData ? (
+            <p className="text-xs text-muted-foreground">
+              Local data lives in your browser&apos;s localStorage. Use Google Drive below or the file backup card to back up or sync across devices.
+            </p>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="outline" onClick={loadDemo}>Load demo data</Button>
+              <Button variant="ghost" onClick={resetLocal}>Clear local (demo) data</Button>
+              <span className="text-xs text-muted-foreground self-center">
+                Local data lives in your browser&apos;s localStorage. Use Google Drive below to back up or sync across devices.
+              </span>
+            </div>
+          )}
 
           <DriveSyncSection settings={s} update={update} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Backup & restore</CardTitle>
+          <CardDescription>
+            Save a JSON snapshot of all your data to your computer, or restore from one if your local data gets corrupted.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <FileBackupSection />
         </CardContent>
       </Card>
 
@@ -484,4 +507,119 @@ function parseDriveBundle(raw: unknown): DriveBundle | null {
   const r = raw as { version?: number; collections?: unknown };
   if (r.version !== 1 || !r.collections || typeof r.collections !== "object") return null;
   return r as DriveBundle;
+}
+
+function backupFileName(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `investor-backup-${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.json`;
+}
+
+function FileBackupSection() {
+  const {
+    data,
+    setStocks,
+    setProperties,
+    setScenarios,
+    setProjects,
+    setSettings,
+  } = useData();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [busy, setBusy] = useState<"download" | "restore" | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const handleDownload = () => {
+    setErr(null); setNote(null);
+    setBusy("download");
+    try {
+      const bundle: DriveBundle = {
+        version: 1,
+        exported_at: new Date().toISOString(),
+        collections: {
+          stocks: data.stocks,
+          properties: data.properties,
+          scenarios: data.scenarios,
+          projects: data.projects,
+          settings: data.settings,
+        },
+      };
+      const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = backupFileName();
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setNote("Backup downloaded.");
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handleRestoreClick = () => {
+    setErr(null); setNote(null);
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChosen = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    const ok = window.confirm(
+      `Restore from "${file.name}"? This will replace all current stocks, properties, scenarios, projects, and settings.`,
+    );
+    if (!ok) return;
+    setBusy("restore");
+    try {
+      const text = await file.text();
+      const raw = JSON.parse(text);
+      const parsed = parseDriveBundle(raw);
+      if (!parsed) {
+        setErr("That file doesn't look like an Investor backup (missing version or collections).");
+        return;
+      }
+      await Promise.all([
+        setStocks(parsed.collections.stocks ?? []),
+        setProperties(parsed.collections.properties ?? []),
+        setScenarios(parsed.collections.scenarios ?? []),
+        setProjects(parsed.collections.projects ?? []),
+        setSettings(parsed.collections.settings ?? data.settings),
+      ]);
+      setNote(`Restored from ${file.name}.`);
+    } catch (ex) {
+      setErr((ex as Error).message || "Could not read file.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" variant="outline" onClick={handleDownload} disabled={!!busy}>
+          <FileDown className="h-3 w-3" /> {busy === "download" ? "Saving…" : "Download backup file"}
+        </Button>
+        <Button size="sm" variant="outline" onClick={handleRestoreClick} disabled={!!busy}>
+          <FileUp className="h-3 w-3" /> {busy === "restore" ? "Restoring…" : "Restore from file"}
+        </Button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="application/json,.json"
+          className="hidden"
+          onChange={handleFileChosen}
+        />
+      </div>
+      <p className="text-[11px] text-muted-foreground">
+        Same format as Drive sync. Restore replaces all existing data after confirmation.
+      </p>
+      {note ? <p className="text-xs text-emerald-700">{note}</p> : null}
+      {err ? <p className="text-xs text-destructive">{err}</p> : null}
+    </div>
+  );
 }
