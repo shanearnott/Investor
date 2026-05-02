@@ -133,17 +133,19 @@ export default function ProjectionsPage() {
   const settings = data.settings;
   const scenarios = data.scenarios.length ? data.scenarios : [fallbackScenario()];
 
-  const [selectedIds, setSelectedIds] = useState<string[]>(() => scenarios.map((s) => s.id));
-  // If scenarios change after load (e.g. data hydrates), select any newly-added ones too
+  // Default to the first scenario only — multi-select is opt-in via the chips.
+  const [selectedIds, setSelectedIds] = useState<string[]>(() =>
+    scenarios[0] ? [scenarios[0].id] : [],
+  );
+  // After data hydrates, if our selection still points at scenarios that no
+  // longer exist (e.g. we were holding the fallback id), fall back to the
+  // new first scenario. Don't fight a deliberate user selection.
   useEffect(() => {
     setSelectedIds((prev) => {
-      const known = new Set(prev);
-      const allIds = scenarios.map((s) => s.id);
-      const everSelected = allIds.every((id) => known.has(id));
-      // Only auto-add if previously everything was selected — don't fight a deliberate
-      // user de-selection.
-      if (everSelected || prev.length === 0) return allIds;
-      return prev;
+      const validIds = new Set(scenarios.map((s) => s.id));
+      const stillValid = prev.filter((id) => validIds.has(id));
+      if (stillValid.length > 0) return stillValid;
+      return scenarios[0] ? [scenarios[0].id] : [];
     });
   }, [scenarios]);
   const chosen = scenarios.filter((s) => selectedIds.includes(s.id));
