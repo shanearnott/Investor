@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Cloud, CloudOff, Download, Plus, Trash2, Upload } from "lucide-react";
 
 import { useData } from "@/components/data-provider";
@@ -269,6 +269,10 @@ type DriveBundle = {
   };
 };
 
+const TOKEN_KEY = "investor:driveToken";
+const EMAIL_KEY = "investor:driveEmail";
+const LAST_SYNC_KEY = "investor:driveLastSync";
+
 function DriveSyncSection({
   settings,
   update,
@@ -290,9 +294,32 @@ function DriveSyncSection({
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [lastSync, setLastSync] = useState<string | null>(null);
+
+  // Restore prior session's token + email + last-sync from sessionStorage so
+  // a page reload doesn't force the user to re-authenticate. Tokens still
+  // expire after ~1h server-side; if the next API call 401s we clear them.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const t = sessionStorage.getItem(TOKEN_KEY);
+    const e = sessionStorage.getItem(EMAIL_KEY);
+    const ls = localStorage.getItem(LAST_SYNC_KEY);
+    if (t) setToken(t);
+    if (e) setEmail(e);
+    if (ls) setLastSync(ls);
+  }, []);
 
   const clientId = settings.google_oauth_client_id?.trim() ?? "";
   const canConnect = clientId.length > 0;
+
+  const clearSession = () => {
+    setToken(null);
+    setEmail(null);
+    if (typeof window !== "undefined") {
+      sessionStorage.removeItem(TOKEN_KEY);
+      sessionStorage.removeItem(EMAIL_KEY);
+    }
+  };
 
   const handleConnect = async () => {
     setErr(null); setNote(null);
@@ -302,10 +329,19 @@ function DriveSyncSection({
     }
     setBusy("connect");
     try {
+      // Persist the Client ID to settings before connecting so a reload
+      // doesn't lose the value the user just typed in.
+      if (data.settings.google_oauth_client_id !== clientId) {
+        await setSettings({ ...data.settings, google_oauth_client_id: clientId });
+      }
       const t = await requestAccessToken(clientId);
-      setToken(t);
       const e = await getAuthorisedEmail(t);
+      setToken(t);
       setEmail(e);
+      if (typeof window !== "undefined") {
+        sessionStorage.setItem(TOKEN_KEY, t);
+        if (e) sessionStorage.setItem(EMAIL_KEY, e);
+      }
       setNote("Connected to Drive.");
     } catch (e) {
       setErr((e as Error).message);
@@ -317,9 +353,21 @@ function DriveSyncSection({
   const handleDisconnect = async () => {
     setErr(null); setNote(null);
     if (token) await revokeAccessToken(token);
-    setToken(null);
-    setEmail(null);
+    clearSession();
     setNote("Disconnected.");
+  };
+
+  // If a Drive call fails with 401, the access token expired (they're 1h);
+  // wipe the session so the user re-authenticates instead of seeing a confusing
+  // server error.
+  const handleAuthError = (e: unknown): boolean => {
+    const msg = (e as Error).message ?? "";
+    if (msg.includes(" 401") || msg.includes("Invalid Credentials")) {
+      clearSession();
+      setErr("Session expired — click Connect Drive again.");
+      return true;
+    }
+    return false;
   };
 
   const handleSyncToDrive = async () => {
@@ -327,9 +375,10 @@ function DriveSyncSection({
     if (!token) { setErr("Connect to Drive first."); return; }
     setBusy("up");
     try {
+      const exported_at = new Date().toISOString();
       const bundle: DriveBundle = {
         version: 1,
-        exported_at: new Date().toISOString(),
+        exported_at,
         collections: {
           stocks: data.stocks,
           properties: data.properties,
@@ -339,9 +388,13 @@ function DriveSyncSection({
         },
       };
       await writeToDrive(token, bundle);
+      if (typeof window !== "undefined") {
+        localStorage.setItem(LAST_SYNC_KEY, exported_at);
+      }
+      setLastSync(exported_at);
       setNote(`Saved to Drive · ${DRIVE_FILE_NAME}`);
     } catch (e) {
-      setErr((e as Error).message);
+      if (!handleAuthError(e)) setErr((e as Error).message);
     } finally {
       setBusy(null);
     }
@@ -372,7 +425,7 @@ function DriveSyncSection({
       ]);
       setNote("Restored from Drive.");
     } catch (e) {
-      setErr((e as Error).message);
+      if (!handleAuthError(e)) setErr((e as Error).message);
     } finally {
       setBusy(null);
     }
@@ -392,7 +445,7 @@ function DriveSyncSection({
         </span>
       </div>
 
-      <Field label="Google OAuth Client ID" hint="Create one in Google Cloud Console (Web application). Authorize this site's URL as a JavaScript origin. Save settings before connecting.">
+      <Field label="Google OAuth Client ID" hint="Create one in Google Cloud Console (Web application). Add this site's URL as a JavaScript origin. Saved automatically when you click Connect Drive.">
         <Input
           value={settings.google_oauth_client_id ?? ""}
           onChange={(e) => update("google_oauth_client_id", e.target.value)}
@@ -420,15 +473,24 @@ function DriveSyncSection({
 
       {note ? <p className="text-xs text-emerald-700">{note}</p> : null}
       {err ? <p className="text-xs text-destructive">{err}</p> : null}
+      {lastSync ? (
+        <p className="text-[11px] text-muted-foreground">
+          Last synced: {new Date(lastSync).toLocaleString()}
+        </p>
+      ) : null}
 
       <details className="text-[11px] text-muted-foreground">
         <summary className="cursor-pointer">How to get a Client ID</summary>
         <ol className="list-decimal pl-4 space-y-1 pt-1">
           <li>Open <a className="underline" href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noreferrer">Google Cloud Console → Credentials</a> in a new tab.</li>
           <li>Create credentials → OAuth client ID → <b>Web application</b>.</li>
-          <li>Under <b>Authorised JavaScript origins</b>, add this site&apos;s base URL (e.g. https://shanearnott.github.io). No redirect URI is needed for popup auth.</li>
+          <li>
+            Under <b>Authorised JavaScript origins</b>, add the URLs you&apos;ll use this app from.
+            For local dev: <code>http://localhost:3000</code>. For the live site: <code>https://shanearnott.github.io</code> (no path, no trailing slash).
+            No redirect URI is needed for popup auth.
+          </li>
           <li>OAuth consent screen → add scope <code>.../auth/drive.file</code> and add yourself as a test user (or publish).</li>
-          <li>Copy the Client ID and paste it above. Click Save settings, then Connect Drive.</li>
+          <li>Copy the Client ID, paste it above, then click <b>Connect Drive</b> — the ID is saved automatically.</li>
         </ol>
       </details>
     </div>
