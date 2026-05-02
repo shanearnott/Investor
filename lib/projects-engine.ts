@@ -40,7 +40,11 @@ export type ProjectEvaluation = {
   funding_lines: FundingLineResult[];
   total_gross: number;
   total_tax: number;
+  /** Net proceeds actually drawn down to cover the project (≈ total_cost when funded). */
   total_net_funding: number;
+  /** Full post-tax capacity of every listed source whether drawn or not. */
+  total_available_net: number;
+  /** total_available_net − total_cost. Positive = surplus capacity left over after the project. */
   surplus_or_shortfall: number;
   is_funded: boolean;
 };
@@ -52,6 +56,9 @@ function resolveTargetDate(p: InvestmentProject): Date {
   }
   return new Date();
 }
+
+const fmt0 = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
+const fmt2 = new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 export function evaluateProject(args: {
   project: InvestmentProject;
@@ -77,6 +84,9 @@ export function evaluateProject(args: {
   // How much net-of-tax funding we still need. Counts down as each source
   // contributes; once it hits 0, later sources emit zero-use lines.
   let remaining = totalCost;
+  // Sum of every listed source's full post-tax capacity, whether drawn or
+  // not — drives the headline surplus figure.
+  let totalAvailableNet = 0;
 
   for (const fs of project.funding) {
     if (fs.kind === "cash") {
@@ -84,9 +94,10 @@ export function evaluateProject(args: {
       // have — it's not derivable from any tracked asset.
       const cashAvail = Math.max(0, fs.amount_or_shares);
       const use = remaining > 0 ? Math.min(remaining, cashAvail) : 0;
+      totalAvailableNet += cashAvail;
       lines.push({
         kind: "cash",
-        asset_label: `Cash · ${cashAvail.toFixed(0)} ${primary} available`,
+        asset_label: `Cash · ${fmt0.format(cashAvail)} ${primary} available`,
         gross_proceeds: use,
         tax: 0,
         net_proceeds: use,
@@ -141,10 +152,16 @@ export function evaluateProject(args: {
         continue;
       }
 
+      // For RSUs, apply the scenario's RSU income-tax dropdown as the all-in
+      // haircut (matches the projections chart's net-of-tax line). Non-RSU
+      // equity goes through the full CGT engine.
+      const isRsu = h.equity_type === "RSU";
+      const rsuRate = Math.max(0, Math.min(100, scenario.rsu_tax_rate_pct ?? 0)) / 100;
+
       // Run the tax calc once for the full liquid pool — proceeds and tax
       // are both linear in shares, so net-per-share derived from the full
       // pool is exact for any sub-quantity.
-      const txFull = stockSaleTax({
+      let txFull = stockSaleTax({
         jurisdiction: project.jurisdiction,
         sale_price_per_share: projectedNative,
         cost_basis_per_share: costBasis,
@@ -152,7 +169,13 @@ export function evaluateProject(args: {
         holding_period_years: holdingPeriod,
         settings,
       });
+      if (isRsu) {
+        const grossFull = projectedNative * liquidAvail;
+        const taxFull = grossFull * rsuRate;
+        txFull = { ...txFull, gross_proceeds: grossFull, tax: taxFull, net_proceeds: grossFull - taxFull };
+      }
       const netFullPrimary = convert(txFull.net_proceeds, h.currency, primary, settings);
+      totalAvailableNet += netFullPrimary;
       const netPerShare = netFullPrimary / liquidAvail;
 
       let sharesNeeded = 0;
@@ -160,7 +183,7 @@ export function evaluateProject(args: {
         sharesNeeded = Math.min(liquidAvail, Math.ceil(remaining / netPerShare));
       }
 
-      const tx = stockSaleTax({
+      let tx = stockSaleTax({
         jurisdiction: project.jurisdiction,
         sale_price_per_share: projectedNative,
         cost_basis_per_share: costBasis,
@@ -168,13 +191,18 @@ export function evaluateProject(args: {
         holding_period_years: holdingPeriod,
         settings,
       });
+      if (isRsu) {
+        const grossN = projectedNative * sharesNeeded;
+        const taxN = grossN * rsuRate;
+        tx = { ...tx, gross_proceeds: grossN, tax: taxN, net_proceeds: grossN - taxN };
+      }
 
       const gross_p = convert(tx.gross_proceeds, h.currency, primary, settings);
       const tax_p = convert(tx.tax, h.currency, primary, settings);
       const net_p = convert(tx.net_proceeds, h.currency, primary, settings);
 
       const label = sharesNeeded > 0
-        ? `${h.ticker || h.company_name} — ${sharesNeeded.toFixed(0)} sh @ ~${projectedNative.toFixed(2)} ${h.currency}`
+        ? `${h.ticker || h.company_name} — ${fmt0.format(sharesNeeded)} sh @ ~${fmt2.format(projectedNative)} ${h.currency}`
         : `${h.ticker || h.company_name} — not needed`;
 
       const detail: Record<string, unknown> = { ...tx };
@@ -183,8 +211,11 @@ export function evaluateProject(args: {
       detail.shares_used = sharesNeeded;
       detail.shares_remaining = liquidAvail - sharesNeeded;
       detail.fully_used = sharesNeeded >= liquidAvail;
+      if (isRsu) {
+        detail.tax_model = `RSU income tax @ ${(rsuRate * 100).toFixed(0)}% (scenario)`;
+      }
       if (remaining > 0 && netPerShare > 0 && sharesNeeded === liquidAvail) {
-        detail.warning = `Required all ${liquidAvail.toFixed(0)} liquid shares — still need more funding.`;
+        detail.warning = `Required all ${fmt0.format(liquidAvail)} liquid shares — still need more funding.`;
       }
       if (remaining <= 0) detail.note = "Not needed — project already funded.";
 
@@ -230,6 +261,7 @@ export function evaluateProject(args: {
         settings,
       });
       const netFullPrimary = convert(txFull.net_to_owner, p.currency, primary, settings);
+      totalAvailableNet += Math.max(0, netFullPrimary);
 
       if (netFullPrimary <= 0) {
         lines.push({
@@ -271,7 +303,7 @@ export function evaluateProject(args: {
 
       const pctSold = fraction * 100;
       const label = fraction > 0
-        ? `${p.name} — sell ${pctSold.toFixed(1)}% @ ~${salePriceNative.toFixed(0)} ${p.currency}`
+        ? `${p.name} — sell ${pctSold.toFixed(1)}% @ ~${fmt0.format(salePriceNative)} ${p.currency}`
         : `${p.name} — not needed`;
 
       const detail: Record<string, unknown> = {
@@ -282,7 +314,7 @@ export function evaluateProject(args: {
         holding_period_years: Number(holdingPeriod.toFixed(2)),
       };
       if (remaining > 0 && fraction === 1) {
-        detail.warning = `Fully selling property only yields ${netFullPrimary.toFixed(0)} ${primary} — still need more funding.`;
+        detail.warning = `Fully selling property only yields ${fmt0.format(netFullPrimary)} ${primary} — still need more funding.`;
       }
       if (remaining <= 0) detail.note = "Not needed — project already funded.";
 
@@ -315,9 +347,13 @@ export function evaluateProject(args: {
     total_gross: totalGross,
     total_tax: totalTax,
     total_net_funding: totalNet,
-    surplus_or_shortfall: totalNet - totalCost,
+    total_available_net: totalAvailableNet,
+    // Surplus reflects the leftover capacity from EVERY listed source
+    // (whether drawn down or not), so the user can see how much of their
+    // available pool remains after the project.
+    surplus_or_shortfall: totalAvailableNet - totalCost,
     // Allow a tiny rounding tolerance — sharesNeeded uses Math.ceil, so
     // we can be a fraction of a share over the cost.
-    is_funded: totalNet >= totalCost - 0.01,
+    is_funded: totalAvailableNet >= totalCost - 0.01,
   };
 }

@@ -11,6 +11,7 @@ import {
 } from "react";
 
 import { buildDemoData } from "@/lib/demo-data";
+import { readFromDrive, writeToDrive } from "@/lib/drive-client";
 import {
   COLLECTION_FILES,
   SettingsSchema,
@@ -53,11 +54,23 @@ type DataContextValue = {
   driveEmail: string | null;
   setDriveAuth: (token: string, email: string | null) => void;
   clearDriveAuth: () => void;
+  /** Live auto-sync status (debounced push + pull-on-focus). */
+  autoSync: AutoSyncStatus;
 };
+
+export type AutoSyncStatus =
+  | { kind: "idle" }
+  | { kind: "pending" }
+  | { kind: "pushing" }
+  | { kind: "pulling" }
+  | { kind: "ok"; at: string; direction: "push" | "pull" }
+  | { kind: "error"; msg: string };
 
 const DISPLAY_CCY_KEY = "investor:displayCurrency";
 const DRIVE_TOKEN_KEY = "investor:driveToken";
 const DRIVE_EMAIL_KEY = "investor:driveEmail";
+const DRIVE_LAST_SYNC_KEY = "investor:driveLastSync";
+const PUSH_DEBOUNCE_MS = 3000;
 
 const Ctx = createContext<DataContextValue | null>(null);
 
@@ -203,16 +216,152 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     void reload();
   }, [reload]);
 
+  // --- Auto-sync (Drive) ---
+  // Debounced push triggered by user edits, pull on tab focus + on connect.
+  // Tokens expire after ~1h; on 401 we silently disconnect so the user knows
+  // to re-auth before further sync attempts.
+  const [autoSync, setAutoSync] = useState<AutoSyncStatus>({ kind: "idle" });
+  const driveTokenRef = useRef<string | null>(null);
+  const dataRef = useRef<CollectionsMap>(data);
+  const pushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pushInFlightRef = useRef<boolean>(false);
+  useEffect(() => { driveTokenRef.current = driveToken; }, [driveToken]);
+  useEffect(() => { dataRef.current = data; }, [data]);
+
+  const handleAuthError = useCallback((e: unknown): boolean => {
+    const msg = (e as Error).message ?? "";
+    if (msg.includes(" 401") || msg.includes("Invalid Credentials")) {
+      clearDriveAuth();
+      setAutoSync({ kind: "error", msg: "Drive session expired — reconnect" });
+      return true;
+    }
+    return false;
+  }, [clearDriveAuth]);
+
+  const flushPush = useCallback(async () => {
+    const tok = driveTokenRef.current;
+    if (!tok) return;
+    if (pushInFlightRef.current) return;
+    pushInFlightRef.current = true;
+    setAutoSync({ kind: "pushing" });
+    try {
+      const exported_at = new Date().toISOString();
+      const bundle = {
+        version: 1 as const,
+        exported_at,
+        collections: { ...dataRef.current },
+      };
+      await writeToDrive(tok, bundle);
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(DRIVE_LAST_SYNC_KEY, exported_at);
+      }
+      setAutoSync({ kind: "ok", at: exported_at, direction: "push" });
+    } catch (e) {
+      if (!handleAuthError(e)) setAutoSync({ kind: "error", msg: (e as Error).message });
+    } finally {
+      pushInFlightRef.current = false;
+    }
+  }, [handleAuthError]);
+
+  const schedulePush = useCallback(() => {
+    if (typeof window === "undefined") return;
+    if (!driveTokenRef.current) return;
+    if (pushTimerRef.current) clearTimeout(pushTimerRef.current);
+    setAutoSync({ kind: "pending" });
+    pushTimerRef.current = setTimeout(() => {
+      pushTimerRef.current = null;
+      void flushPush();
+    }, PUSH_DEBOUNCE_MS);
+  }, [flushPush]);
+
+  // Pull on connect + tab focus. Skips if a push is pending/in-flight (local
+  // changes are newer). Bundle's exported_at vs DRIVE_LAST_SYNC_KEY decides
+  // whether remote actually has anything newer than what we last synced.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!driveToken) return;
+
+    const pull = async () => {
+      if (pushTimerRef.current || pushInFlightRef.current) return;
+      const tok = driveTokenRef.current;
+      if (!tok) return;
+      try {
+        setAutoSync({ kind: "pulling" });
+        const raw = await readFromDrive(tok);
+        if (!raw || typeof raw !== "object") {
+          setAutoSync({ kind: "idle" });
+          return;
+        }
+        const r = raw as { version?: number; exported_at?: string; collections?: Partial<CollectionsMap> };
+        if (r.version !== 1 || !r.collections) {
+          setAutoSync({ kind: "idle" });
+          return;
+        }
+        const lastSync = window.localStorage.getItem(DRIVE_LAST_SYNC_KEY) ?? "";
+        if (r.exported_at && r.exported_at <= lastSync) {
+          setAutoSync({ kind: "idle" });
+          return;
+        }
+        const c = r.collections;
+        const next: CollectionsMap = {
+          stocks: c.stocks ?? [],
+          properties: c.properties ?? [],
+          scenarios: c.scenarios ?? [],
+          projects: c.projects ?? [],
+          settings: c.settings ?? DEFAULT_SETTINGS,
+        };
+        await Promise.all([
+          saveCollection("stocks", next.stocks),
+          saveCollection("properties", next.properties),
+          saveCollection("scenarios", next.scenarios),
+          saveCollection("projects", next.projects),
+          saveCollection("settings", next.settings),
+        ]);
+        setData(next);
+        if (r.exported_at) window.localStorage.setItem(DRIVE_LAST_SYNC_KEY, r.exported_at);
+        setAutoSync({ kind: "ok", at: r.exported_at ?? new Date().toISOString(), direction: "pull" });
+      } catch (e) {
+        if (!handleAuthError(e)) setAutoSync({ kind: "error", msg: (e as Error).message });
+      }
+    };
+
+    void pull();
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") void pull();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [driveToken, handleAuthError]);
+
+  // Push any pending changes on tab hide/unload — best-effort, browsers may
+  // cancel in-flight fetches but the timer would otherwise drop them entirely.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onHide = () => {
+      if (pushTimerRef.current) {
+        clearTimeout(pushTimerRef.current);
+        pushTimerRef.current = null;
+        void flushPush();
+      }
+    };
+    window.addEventListener("pagehide", onHide);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") onHide();
+    });
+    return () => window.removeEventListener("pagehide", onHide);
+  }, [flushPush]);
+
   const persist = useCallback(
     async <K extends keyof CollectionsMap>(key: K, next: CollectionsMap[K]) => {
       setData((prev) => ({ ...prev, [key]: next }));
       try {
         await saveCollection(key, next);
+        schedulePush();
       } catch (e) {
         setError(`Save ${COLLECTION_FILES[key]} failed: ${(e as Error).message}`);
       }
     },
-    [],
+    [schedulePush],
   );
 
   const setStocks = useCallback((n: StockHolding[]) => persist("stocks", n), [persist]);
@@ -258,8 +407,9 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       driveEmail,
       setDriveAuth,
       clearDriveAuth,
+      autoSync,
     }),
-    [loading, error, data, setStocks, setProperties, setScenarios, setProjects, setSettings, loadDemo, resetLocal, reload, displayCurrency, setDisplayCurrency, driveToken, driveEmail, setDriveAuth, clearDriveAuth],
+    [loading, error, data, setStocks, setProperties, setScenarios, setProjects, setSettings, loadDemo, resetLocal, reload, displayCurrency, setDisplayCurrency, driveToken, driveEmail, setDriveAuth, clearDriveAuth, autoSync],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

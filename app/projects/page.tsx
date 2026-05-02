@@ -162,20 +162,21 @@ function ProjectCard({
           </Select>
         </div>
 
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
           <Stat label="Total cost" value={formatMoney(ev.total_cost, ev.primary_currency)} />
-          <Stat label="Gross funding" value={formatMoney(ev.total_gross, ev.primary_currency)} />
-          <Stat label="Tax" value={formatMoney(ev.total_tax, ev.primary_currency)} />
-          <Stat label="Net funding" value={formatMoney(ev.total_net_funding, ev.primary_currency)} />
+          <Stat label="Available (net of tax)" value={formatMoney(ev.total_available_net, ev.primary_currency)} />
+          <Stat label="Drawn down" value={formatMoney(ev.total_net_funding, ev.primary_currency)} />
+          <Stat label="Tax on drawdown" value={formatMoney(ev.total_tax, ev.primary_currency)} />
+          <Stat label="Gross drawn" value={formatMoney(ev.total_gross, ev.primary_currency)} />
         </div>
 
         {ev.is_funded ? (
           <p className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-            ✅ Funded with surplus of <b>{formatMoney(ev.surplus_or_shortfall, ev.primary_currency)}</b>.
+            ✅ Funded — <b>{formatMoney(ev.surplus_or_shortfall, ev.primary_currency)}</b> of capacity remains across listed sources after this project.
           </p>
         ) : (
           <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-800">
-            ❌ Shortfall of <b>{formatMoney(Math.abs(ev.surplus_or_shortfall), ev.primary_currency)}</b>.
+            ❌ Shortfall of <b>{formatMoney(Math.abs(ev.surplus_or_shortfall), ev.primary_currency)}</b> — the listed sources cannot fully cover the project.
           </p>
         )}
 

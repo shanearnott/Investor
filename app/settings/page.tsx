@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Cloud, CloudOff, Download, FileDown, FileUp, Plus, Trash2, Upload } from "lucide-react";
 
-import { useData } from "@/components/data-provider";
+import { useData, type AutoSyncStatus } from "@/components/data-provider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Label, Select } from "@/components/ui/input";
@@ -312,6 +312,7 @@ function DriveSyncSection({
     driveEmail: email,
     setDriveAuth,
     clearDriveAuth,
+    autoSync,
   } = useData();
 
   const [busy, setBusy] = useState<string | null>(null);
@@ -477,7 +478,12 @@ function DriveSyncSection({
 
       {note ? <p className="text-xs text-emerald-700">{note}</p> : null}
       {err ? <p className="text-xs text-destructive">{err}</p> : null}
-      {lastSync ? (
+      {token ? (
+        <p className="text-[11px] text-muted-foreground">
+          Auto-sync: {autoSyncLabel(autoSync)}
+          {lastSync ? ` · Last synced ${new Date(lastSync).toLocaleString()}` : null}
+        </p>
+      ) : lastSync ? (
         <p className="text-[11px] text-muted-foreground">
           Last synced: {new Date(lastSync).toLocaleString()}
         </p>
@@ -500,6 +506,17 @@ function DriveSyncSection({
       </details>
     </div>
   );
+}
+
+function autoSyncLabel(s: AutoSyncStatus): string {
+  switch (s.kind) {
+    case "idle": return "on (idle)";
+    case "pending": return "saving in a moment…";
+    case "pushing": return "uploading…";
+    case "pulling": return "checking Drive…";
+    case "ok": return s.direction === "push" ? "uploaded just now" : "pulled latest from Drive";
+    case "error": return `error — ${s.msg}`;
+  }
 }
 
 function parseDriveBundle(raw: unknown): DriveBundle | null {
