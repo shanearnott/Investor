@@ -5,7 +5,7 @@ Personal investment tracker, scenario projections, and project evaluation. Mobil
 - **Track** stocks (incl. RSU vesting schedules and double-trigger second-trigger dates) and properties
 - **Project** net worth across scenarios with line + stacked-area "sand" charts and allocation pies
 - **Evaluate** investment projects (e.g. buy a house + furniture + car) — checks whether your chosen funding sources cover the cost net of tax in a given scenario
-- **Storage**: browser localStorage (per-device). Drive sync planned as a follow-up.
+- **Storage**: browser localStorage (per-device), with optional Google Drive auto-sync (debounced push + pull on focus) and a file backup/restore option in Settings.
 - **Demo mode**: full app, populated fake data, no setup needed.
 
 ## Stack
@@ -60,7 +60,7 @@ Supported jurisdictions: California, Australia, UAE, UK, Singapore, Canada, Germ
 ## Roadmap
 
 - [x] Static export to GitHub Pages
-- [ ] Client-side Google sign-in (Google Identity Services) + Drive sync, all in the browser, no server
+- [x] Client-side Google sign-in (Google Identity Services) + Drive auto-sync, all in the browser, no server
 - [ ] Bundled US ZIP-level growth seed dataset
 
 ## Disclaimer

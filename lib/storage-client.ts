@@ -1,8 +1,7 @@
 /**
- * Client-side storage. Currently localStorage-only (demo mode).
- *
- * Drive sync is planned as a follow-up: will use client-side Google Identity
- * Services to call the Drive API directly, no server routes needed.
+ * Client-side storage. localStorage is the source of truth; Drive sync (in
+ * `drive-client.ts`) layers on top via the DataProvider's auto-sync engine
+ * and pushes/pulls a single combined `investor-data.json`.
  */
 
 "use client";

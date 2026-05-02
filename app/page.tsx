@@ -273,7 +273,7 @@ export default function HomePage() {
             <b>Projects</b> → model investment projects (e.g. buy a house). The app figures out whether your chosen funding sources cover the cost net of tax in a given scenario.
           </p>
           <p className="pt-2 text-xs text-muted-foreground">
-            Data is stored locally in your browser (localStorage). Drive sync coming next.
+            Data is stored locally in your browser (localStorage). Connect Google Drive in Settings to auto-sync across devices, or use the file backup option for an offline copy.
           </p>
         </CardContent>
       </Card>
