@@ -168,6 +168,8 @@ export default function HomePage() {
                 <div className="grid grid-cols-3 gap-2">
                   {POST_TAX_RATES.map(({ label, rate }) => {
                     const value = today - vestedRsuDisplay * (rate / 100);
+                    const subCcy = [data.settings.primary_currency, data.settings.secondary_currency]
+                      .find((c) => c && c !== displayCurrency);
                     return (
                       <div key={label} className="rounded-md border p-2">
                         <div className="text-[11px] text-muted-foreground">
@@ -176,6 +178,11 @@ export default function HomePage() {
                         <div className="text-base font-semibold tabular-nums">
                           {formatMoney(value, displayCurrency)}
                         </div>
+                        {subCcy ? (
+                          <div className="text-[10px] text-muted-foreground tabular-nums">
+                            {formatMoney(convert(value, displayCurrency, subCcy, data.settings), subCcy)}
+                          </div>
+                        ) : null}
                       </div>
                     );
                   })}

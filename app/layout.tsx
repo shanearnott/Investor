@@ -18,8 +18,12 @@ export const metadata: Metadata = {
     statusBarStyle: "default",
   },
   icons: {
-    icon: [{ url: `${basePath}/icon.svg`, type: "image/svg+xml" }],
-    apple: [{ url: `${basePath}/icon-192.png` }],
+    icon: [
+      { url: `${basePath}/icon.svg`, type: "image/svg+xml" },
+      { url: `${basePath}/icon-192.png`, sizes: "192x192", type: "image/png" },
+      { url: `${basePath}/icon-512.png`, sizes: "512x512", type: "image/png" },
+    ],
+    apple: [{ url: `${basePath}/apple-touch-icon.png`, sizes: "180x180" }],
   },
 };
 
