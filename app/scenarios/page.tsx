@@ -7,7 +7,7 @@ import { useData } from "@/components/data-provider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Label, Textarea } from "@/components/ui/input";
-import { newId, Scenario, ScenarioSchema } from "@/lib/models";
+import { newId, Scenario, ScenarioSchema, SUPPORTED_JURISDICTIONS } from "@/lib/models";
 import { formatMoney } from "@/lib/utils";
 
 function blank(): Scenario {
@@ -71,6 +71,11 @@ export default function ScenariosPage() {
                     {s.horizon_years}y · stocks {s.default_stock_growth_pct.toFixed(1)}%/yr · property{" "}
                     {s.default_property_growth_pct.toFixed(1)}%/yr
                     {s.inflation_pct ? ` · inflation ${s.inflation_pct.toFixed(1)}%` : ""}
+                    {Object.keys(s.rsu_tax_rates ?? {}).length > 0
+                      ? ` · RSU tax ${Object.entries(s.rsu_tax_rates)
+                          .map(([j, r]) => `${j} ${r}%`)
+                          .join(", ")}`
+                      : ""}
                   </CardDescription>
                 </div>
                 <div className="flex gap-1">
@@ -126,6 +131,27 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
       property_overrides: { ...p.property_overrides, [id]: { ...p.property_overrides[id], ...ov } },
     }));
   };
+
+  const updateRsuTax = (jurisdiction: string, rate: number) => {
+    setD((p) => ({
+      ...p,
+      rsu_tax_rates: { ...p.rsu_tax_rates, [jurisdiction]: rate },
+    }));
+  };
+
+  // Show only jurisdictions actually used by an RSU holding, falling back to
+  // the canonical three (US, Australia, UAE) when the user has none — keeps
+  // the form compact instead of showing all 11 supported jurisdictions.
+  const rsuJurisdictionsInUse = Array.from(
+    new Set(
+      data.stocks
+        .filter((h) => h.equity_type === "RSU")
+        .map((h) => h.jurisdiction),
+    ),
+  );
+  const rsuJurisdictions = rsuJurisdictionsInUse.length > 0
+    ? SUPPORTED_JURISDICTIONS.filter((j) => rsuJurisdictionsInUse.includes(j))
+    : ["California", "Australia", "UAE"] as const;
 
   const submit = async () => {
     setError(null);
@@ -325,6 +351,33 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
             </div>
           </div>
         ) : null}
+
+        <div className="space-y-2">
+          <Label>RSU income tax</Label>
+          <p className="text-[11px] text-muted-foreground">
+            Applied to the value of RSU holdings in this scenario, by jurisdiction.
+            Models income tax due at vest — both vested and unvested RSU values
+            are shown net of this rate. Non-RSU equity is unaffected.
+          </p>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            {rsuJurisdictions.map((j) => {
+              const rate = d.rsu_tax_rates?.[j] ?? 0;
+              return (
+                <Field key={j} label={j}>
+                  <SuffixedInput
+                    suffix="%"
+                    type="number"
+                    step="0.5"
+                    min={0}
+                    max={100}
+                    value={rate}
+                    onChange={(e) => updateRsuTax(j, Number(e.target.value))}
+                  />
+                </Field>
+              );
+            })}
+          </div>
+        </div>
 
         {error ? <p className="text-sm text-destructive">{error}</p> : null}
       </CardContent>

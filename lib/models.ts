@@ -114,6 +114,16 @@ export const ScenarioSchema = z.object({
     annual_growth_pct: z.number().optional(),
   })).default({}),
   inflation_pct: z.number().default(0),
+  /** Per-jurisdiction RSU income tax rate (%). Applied to RSU equity value
+   *  in this scenario — both vested and unvested portions are shown
+   *  net-of-tax, modelling income tax due at vest. Holdings with non-RSU
+   *  equity types are unaffected. */
+  rsu_tax_rates: z.record(z.string(), z.number()).default({
+    "California": 37,
+    "US-Federal-Only": 37,
+    "Australia": 51,
+    "UAE": 0,
+  }),
 });
 export type Scenario = z.infer<typeof ScenarioSchema>;
 

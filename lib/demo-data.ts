@@ -120,6 +120,7 @@ export function buildDemoData(): CollectionsMap {
         stock_overrides: {},
         property_overrides: {},
         inflation_pct: 2.5,
+        rsu_tax_rates: { California: 37, "US-Federal-Only": 37, Australia: 51, UAE: 0 },
       },
       {
         id: "demo-sc-bull",
@@ -133,6 +134,7 @@ export function buildDemoData(): CollectionsMap {
         },
         property_overrides: {},
         inflation_pct: 3,
+        rsu_tax_rates: { California: 37, "US-Federal-Only": 37, Australia: 51, UAE: 0 },
       },
       {
         id: "demo-sc-bear",
@@ -148,6 +150,7 @@ export function buildDemoData(): CollectionsMap {
         },
         property_overrides: {},
         inflation_pct: 4,
+        rsu_tax_rates: { California: 37, "US-Federal-Only": 37, Australia: 51, UAE: 0 },
       },
     ],
     projects: [

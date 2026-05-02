@@ -66,6 +66,16 @@ function propertyGrowthForScenario(
   return fallbackPct || s.default_property_growth_pct;
 }
 
+/** RSU income-tax factor for a holding under a scenario.
+ *  Returns 1 (no tax) for non-RSU holdings or jurisdictions without a
+ *  configured rate. Otherwise returns (1 − rate/100). */
+function rsuTaxFactor(scenario: Scenario, h: Pick<StockHolding, "equity_type" | "jurisdiction">): number {
+  if (h.equity_type !== "RSU") return 1;
+  const rate = scenario.rsu_tax_rates?.[h.jurisdiction];
+  if (rate === undefined) return 1;
+  return Math.max(0, 1 - rate / 100);
+}
+
 export function projectStockValueAt(
   h: StockHolding,
   scenario: Scenario,
@@ -82,13 +92,15 @@ export function projectStockValueAt(
   const vested = vestedSharesAt(h, asOf);
   const granted = totalGrantedShares(h);
   const unvested = Math.max(0, granted - vested);
+  const taxFactor = rsuTaxFactor(scenario, h);
 
   return {
-    liquid: convert(vested * projectedPrice, h.currency, primaryCcy, settings),
-    unvested: convert(unvested * projectedPrice, h.currency, primaryCcy, settings),
+    liquid: convert(vested * projectedPrice * taxFactor, h.currency, primaryCcy, settings),
+    unvested: convert(unvested * projectedPrice * taxFactor, h.currency, primaryCcy, settings),
     shares_vested: vested,
     shares_unvested: unvested,
     projected_price: projectedPrice, // in native currency
+    tax_factor: taxFactor,
   };
 }
 
@@ -194,6 +206,7 @@ export function currentAllocationBreakdown(args: {
     stock_overrides: {},
     property_overrides: {},
     inflation_pct: 0,
+    rsu_tax_rates: {},
   };
   const out: Record<string, number> = {};
   for (const h of args.holdings) {
