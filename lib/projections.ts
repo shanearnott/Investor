@@ -6,7 +6,6 @@
 import { convert } from "./fx";
 import { lookupGrowthRate } from "./growth";
 import {
-  isRsuLike,
   totalGrantedShares,
   vestedSharesAt,
   type Property,
@@ -68,14 +67,11 @@ function propertyGrowthForScenario(
 }
 
 /** RSU income-tax factor for a holding under a scenario.
- *  Non-RSU holdings pass through. RSU and double-trigger RSU both use the
- *  scenario's flat rate — for double-trigger we assume the second trigger
- *  occurs at the projection date, so it's an income event at that point.
- *  The scenario picks one jurisdiction + rate that applies to *all* RSU-like
- *  holdings — models "what if I was taxed in jurisdiction X" regardless of
- *  where the grant is held. */
+ *  Non-RSU holdings pass through. The scenario picks one jurisdiction +
+ *  rate that applies to *all* RSU holdings — so this models "what if I
+ *  was taxed in jurisdiction X" regardless of where the grant is held. */
 function rsuTaxFactor(scenario: Scenario, h: Pick<StockHolding, "equity_type">): number {
-  if (!isRsuLike(h)) return 1;
+  if (h.equity_type !== "RSU") return 1;
   return Math.max(0, 1 - (scenario.rsu_tax_rate_pct ?? 0) / 100);
 }
 
