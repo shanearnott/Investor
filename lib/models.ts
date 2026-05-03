@@ -102,11 +102,17 @@ export const ScenarioSchema = z.object({
   horizon_years: z.number().int().min(1).max(50).default(5),
   default_stock_growth_pct: z.number().default(8.0),
   default_property_growth_pct: z.number().default(4.0),
-  /** Per-stock overrides. EITHER set `annual_price_growth_pct` directly,
-   *  OR set `target_share_price` (in the stock's native currency) and the
-   *  projection engine will derive the growth rate that hits that price at
-   *  the scenario's horizon. If both are set, target_share_price wins. */
+  /** Per-stock overrides.
+   *  - `starting_share_price`: pretend today's price is this value for the
+   *    scenario. Affects today's projected value AND becomes the base from
+   *    which future growth is computed. Useful for "what if the next funding
+   *    round prices me at $X right now" what-ifs.
+   *  - `annual_price_growth_pct`: overrides the scenario default growth.
+   *  - `target_share_price`: at the scenario's horizon. The engine derives
+   *    the implied annual growth rate from the (possibly overridden) starting
+   *    price up to this target. Wins over annual_price_growth_pct if set. */
   stock_overrides: z.record(z.string(), z.object({
+    starting_share_price: z.number().nonnegative().optional(),
     annual_price_growth_pct: z.number().optional(),
     target_share_price: z.number().nonnegative().optional(),
   })).default({}),

@@ -43,15 +43,30 @@ function monthsBetween(from: Date, to: Date): number {
   return (to.getUTCFullYear() - from.getUTCFullYear()) * 12 + (to.getUTCMonth() - from.getUTCMonth());
 }
 
+/** Effective today's price for a stock under a scenario — defaults to the
+ *  holding's actual price unless the scenario overrides it. */
+function startingPriceForScenario(
+  s: Scenario,
+  holding: Pick<StockHolding, "id" | "current_share_price">,
+): number {
+  const ov = s.stock_overrides[holding.id];
+  if (ov?.starting_share_price !== undefined && ov.starting_share_price > 0) {
+    return ov.starting_share_price;
+  }
+  return holding.current_share_price;
+}
+
 function stockGrowthForScenario(
   s: Scenario,
   holding: Pick<StockHolding, "id" | "current_share_price">,
 ): number {
   const ov = s.stock_overrides[holding.id];
-  // Target price wins if set: derive the annual rate that takes the current
-  // price to the target over the scenario's horizon.
-  if (ov?.target_share_price !== undefined && ov.target_share_price > 0 && holding.current_share_price > 0 && s.horizon_years > 0) {
-    return (Math.pow(ov.target_share_price / holding.current_share_price, 1 / s.horizon_years) - 1) * 100;
+  // Target price wins if set: derive the annual rate that takes the
+  // *effective starting price* (override or actual) to the target over the
+  // scenario's horizon.
+  const startPrice = startingPriceForScenario(s, holding);
+  if (ov?.target_share_price !== undefined && ov.target_share_price > 0 && startPrice > 0 && s.horizon_years > 0) {
+    return (Math.pow(ov.target_share_price / startPrice, 1 / s.horizon_years) - 1) * 100;
   }
   return ov?.annual_price_growth_pct ?? s.default_stock_growth_pct;
 }
@@ -86,7 +101,11 @@ export function projectStockValueAt(
   const monthsForward = Math.max(0, monthsBetween(today, asOf));
   const growthPct = stockGrowthForScenario(scenario, h);
   const monthlyGrowth = Math.pow(1 + growthPct / 100, 1 / 12) - 1;
-  const projectedPrice = h.current_share_price * Math.pow(1 + monthlyGrowth, monthsForward);
+  // Start from the scenario's override price if one is set (the "what if my
+  // shares were already worth X today" override), otherwise the actual
+  // current price. Growth compounds from there.
+  const startPrice = startingPriceForScenario(scenario, h);
+  const projectedPrice = startPrice * Math.pow(1 + monthlyGrowth, monthsForward);
 
   const vested = vestedSharesAt(h, asOf);
   const granted = totalGrantedShares(h);

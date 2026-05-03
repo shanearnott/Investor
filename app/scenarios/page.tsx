@@ -105,7 +105,11 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
 
   const updateStockOv = (
     id: string,
-    ov: { annual_price_growth_pct?: number; target_share_price?: number },
+    ov: {
+      starting_share_price?: number;
+      annual_price_growth_pct?: number;
+      target_share_price?: number;
+    },
   ) => {
     setD((p) => ({
       ...p,
@@ -113,7 +117,10 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
     }));
   };
 
-  const clearStockField = (id: string, field: "annual_price_growth_pct" | "target_share_price") => {
+  const clearStockField = (
+    id: string,
+    field: "starting_share_price" | "annual_price_growth_pct" | "target_share_price",
+  ) => {
     setD((p) => {
       const cur = { ...(p.stock_overrides[id] ?? {}) };
       delete cur[field];
@@ -222,12 +229,17 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
             <div className="space-y-2">
               {data.stocks.map((h) => {
                 const ov = d.stock_overrides[h.id] ?? {};
+                const usingStart = ov.starting_share_price !== undefined && ov.starting_share_price > 0;
+                const startPrice = usingStart
+                  ? (ov.starting_share_price ?? h.current_share_price)
+                  : h.current_share_price;
                 const usingTarget = ov.target_share_price !== undefined && ov.target_share_price > 0;
                 const usingRate = ov.annual_price_growth_pct !== undefined && !usingTarget;
-                // Implied annual growth from target, for display next to the field
+                // Implied annual growth from target, computed against the
+                // *effective* starting price (override-aware)
                 const impliedFromTarget =
-                  usingTarget && h.current_share_price > 0 && d.horizon_years > 0
-                    ? (Math.pow((ov.target_share_price ?? 0) / h.current_share_price, 1 / d.horizon_years) - 1) * 100
+                  usingTarget && startPrice > 0 && d.horizon_years > 0
+                    ? (Math.pow((ov.target_share_price ?? 0) / startPrice, 1 / d.horizon_years) - 1) * 100
                     : null;
                 const effectiveRate = usingTarget
                   ? impliedFromTarget ?? d.default_stock_growth_pct
@@ -237,10 +249,31 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
                     <div className="text-sm">
                       <div className="font-medium">{h.ticker || h.company_name}</div>
                       <div className="text-[11px] text-muted-foreground">
-                        current {formatMoney(h.current_share_price, h.currency, { fractionDigits: 2 })}/sh
+                        actual {formatMoney(h.current_share_price, h.currency, { fractionDigits: 2 })}/sh
+                        {usingStart ? (
+                          <> · scenario starts at <b>{formatMoney(startPrice, h.currency, { fractionDigits: 2 })}</b></>
+                        ) : null}
                       </div>
                     </div>
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                      <Field
+                        label="Starting price (today)"
+                        hint={`What if today's ${h.ticker || "share"} price was X. Blank = use actual ${formatMoney(h.current_share_price, h.currency, { fractionDigits: 2 })}.`}
+                      >
+                        <SuffixedInput
+                          suffix={h.currency}
+                          type="number"
+                          step="0.01"
+                          min={0}
+                          value={ov.starting_share_price ?? ""}
+                          placeholder={h.current_share_price.toFixed(2)}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (val === "") clearStockField(h.id, "starting_share_price");
+                            else updateStockOv(h.id, { starting_share_price: Number(val) });
+                          }}
+                        />
+                      </Field>
                       <Field label="Growth rate" hint={`Default ${d.default_stock_growth_pct}%/yr`}>
                         <SuffixedInput
                           suffix="%/yr"
@@ -254,11 +287,11 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
                         />
                       </Field>
                       <Field
-                        label={`Target price at +${d.horizon_years}y`}
+                        label={`Target at +${d.horizon_years}y`}
                         hint={
                           h.currency
-                            ? `In ${h.currency}. Leave blank to use the rate.`
-                            : "Leave blank to use the rate."
+                            ? `Implies a growth from the starting price. Blank = use the rate.`
+                            : "Blank = use the rate."
                         }
                       >
                         <SuffixedInput
@@ -279,13 +312,26 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
                     <p className="text-[10px] text-muted-foreground">
                       {usingTarget ? (
                         <>
-                          Target {formatMoney(ov.target_share_price ?? 0, h.currency, { fractionDigits: 2 })} → implied{" "}
+                          {usingStart ? (
+                            <>From <b>{formatMoney(startPrice, h.currency, { fractionDigits: 2 })}</b> → </>
+                          ) : null}
+                          target {formatMoney(ov.target_share_price ?? 0, h.currency, { fractionDigits: 2 })} → implied{" "}
                           <b>{effectiveRate.toFixed(1)}%/yr</b>
                         </>
                       ) : usingRate ? (
-                        <>Overrides default — using <b>{effectiveRate.toFixed(1)}%/yr</b></>
+                        <>
+                          {usingStart ? (
+                            <>Starting at <b>{formatMoney(startPrice, h.currency, { fractionDigits: 2 })}</b>, </>
+                          ) : null}
+                          using <b>{effectiveRate.toFixed(1)}%/yr</b>
+                        </>
                       ) : (
-                        <>Using default {d.default_stock_growth_pct}%/yr</>
+                        <>
+                          {usingStart ? (
+                            <>Starting at <b>{formatMoney(startPrice, h.currency, { fractionDigits: 2 })}</b>, </>
+                          ) : null}
+                          using default {d.default_stock_growth_pct}%/yr
+                        </>
                       )}
                     </p>
                   </div>
