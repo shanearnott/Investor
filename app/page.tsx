@@ -126,9 +126,9 @@ export default function HomePage() {
       {today > 0 ? (
         <Card>
           <CardHeader>
-            <CardTitle>Vested net worth today</CardTitle>
+            <CardTitle>Gross (pre-tax) worth today</CardTitle>
             <CardDescription>
-              Vested equity + property equity
+              Vested equity + property equity, before any tax on a sale or vest
             </CardDescription>
           </CardHeader>
           <CardContent>
