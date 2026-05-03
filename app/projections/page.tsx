@@ -352,6 +352,10 @@ export default function ProjectionsPage() {
                     <Legend />
                     {chosen.map((s, i) => {
                       const colour = PIE_COLORS[i % PIE_COLORS.length];
+                      // Order matters: draw the dashed total first, then the
+                      // solid vested line on top. Where the two converge the
+                      // solid line covers the dashed one, so a fully-vested
+                      // tail reads as a single solid line.
                       return [
                         <Line
                           key={`${s.id}-total`}
@@ -359,6 +363,7 @@ export default function ProjectionsPage() {
                           dataKey={s.name}
                           stroke={colour}
                           strokeWidth={2}
+                          strokeDasharray="4 3"
                           dot={false}
                         />,
                         <Line
@@ -367,7 +372,6 @@ export default function ProjectionsPage() {
                           dataKey={`${s.name} vested`}
                           stroke={colour}
                           strokeWidth={2}
-                          strokeDasharray="4 3"
                           dot={false}
                         />,
                       ];
