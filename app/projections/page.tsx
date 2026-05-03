@@ -373,6 +373,7 @@ export default function ProjectionsPage() {
                           stroke={colour}
                           strokeWidth={2}
                           dot={false}
+                          legendType="none"
                         />,
                       ];
                     })}
