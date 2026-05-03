@@ -26,6 +26,7 @@ export const SUPPORTED_JURISDICTIONS = [
 export const EQUITY_TYPES = [
   "Common Stock",
   "RSU",
+  "RSU (double trigger)",
   "ESPP",
   "Stock Options",
 ] as const;
@@ -232,6 +233,16 @@ export function flatVestEvents(h: StockHolding): Array<VestEvent & { tranche_id:
   }
   out.sort((a, b) => a.vest_date.localeCompare(b.vest_date));
   return out;
+}
+
+/** Treat both regular RSUs and double-trigger RSUs as RSU-like for the
+ *  purposes of projections, project funding, and the income-tax haircut.
+ *  For double-trigger, the projection engine assumes the second trigger
+ *  occurs at the projection point in time, so the value behaves identically
+ *  to a regular RSU. The label is kept distinct just so users can record
+ *  the distinction in their data. */
+export function isRsuLike(h: Pick<StockHolding, "equity_type">): boolean {
+  return h.equity_type === "RSU" || h.equity_type === "RSU (double trigger)";
 }
 
 export function propertyEquity(p: Property): number {

@@ -9,6 +9,7 @@
 
 import { convert } from "./fx";
 import {
+  isRsuLike,
   parseISO,
   vestedSharesAt,
   type InvestmentProject,
@@ -155,7 +156,12 @@ export function evaluateProject(args: {
       // For RSUs, apply the scenario's RSU income-tax dropdown as the all-in
       // haircut (matches the projections chart's net-of-tax line). Non-RSU
       // equity goes through the full CGT engine.
-      const isRsu = h.equity_type === "RSU";
+      // Double-trigger RSUs are treated identically to regular RSUs here:
+      // we assume the project's target date IS when the second trigger
+      // occurs, so vested shares are usable and unvested ones are not
+      // (vestedSharesAt above already handles that). The flat scenario
+      // RSU rate is applied for the income event at trigger.
+      const isRsu = isRsuLike(h);
       const rsuRate = Math.max(0, Math.min(100, scenario.rsu_tax_rate_pct ?? 0)) / 100;
 
       // Run the tax calc once for the full liquid pool — proceeds and tax

@@ -12,7 +12,7 @@ import { convert } from "@/lib/fx";
 import { lookupGrowthRate } from "@/lib/growth";
 import { formatMoney, formatNumber } from "@/lib/utils";
 import { currentAllocationBreakdown } from "@/lib/projections";
-import { parseISO, vestedSharesAt, type Property, type StockHolding } from "@/lib/models";
+import { isRsuLike, parseISO, vestedSharesAt, type Property, type StockHolding } from "@/lib/models";
 
 /** RSU income-tax rates applied to the home-page "post-tax" net-worth
  *  tiles. Mirrors the scenarios page defaults — gives a quick at-a-glance
@@ -49,7 +49,7 @@ export default function HomePage() {
   // shares at vest; non-RSU equity and property equity are untouched.
   const todayDate = new Date();
   const vestedRsuDisplay = data.stocks
-    .filter((h) => h.equity_type === "RSU")
+    .filter(isRsuLike)
     .reduce((sum, h) => {
       const valueNative = vestedSharesAt(h, todayDate) * h.current_share_price;
       return sum + convert(valueNative, h.currency, displayCurrency, data.settings);
