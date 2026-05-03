@@ -94,15 +94,8 @@ export function projectStockValueAt(
 
   const vested = vestedSharesAt(h, asOf);
   const granted = totalGrantedShares(h);
-  const unvestedRaw = Math.max(0, granted - vested);
+  const unvested = Math.max(0, granted - vested);
   const taxFactor = rsuTaxFactor(scenario, h);
-
-  // Double-trigger RSUs only count shares vested BY the projection date.
-  // Unvested shares are excluded because the second trigger is assumed to
-  // occur at the projection date itself — anything still unvested at that
-  // moment hasn't crossed the trigger and so contributes no projected value.
-  const isDoubleTrigger = h.equity_type === "RSU (double trigger)";
-  const unvested = isDoubleTrigger ? 0 : unvestedRaw;
 
   return {
     liquid: convert(vested * projectedPrice * taxFactor, h.currency, primaryCcy, settings),
