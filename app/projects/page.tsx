@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 
 import { CurrencySelector } from "@/components/currency-selector";
@@ -22,6 +22,18 @@ import {
 import { convert } from "@/lib/fx";
 import { evaluateProject } from "@/lib/projects-engine";
 import { formatMoney } from "@/lib/utils";
+
+/** Scroll an inline edit form into view on mount. */
+function useScrollIntoViewOnMount<T extends HTMLElement>() {
+  const ref = useRef<T>(null);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      ref.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }, 60);
+    return () => clearTimeout(t);
+  }, []);
+  return ref;
+}
 
 function blank(primary: string, defaultJurisdiction: string): InvestmentProject {
   return InvestmentProjectSchema.parse({
@@ -90,19 +102,36 @@ export default function ProjectsPage() {
           </Card>
         ) : (
           data.projects.map((p) => (
-            <ProjectCard
-              key={p.id}
-              project={p}
-              scenarios={scenarios}
-              onEdit={() => setEditing({ ...p })}
-              onDelete={() => remove(p.id)}
-            />
+            <Fragment key={p.id}>
+              <ProjectCard
+                project={p}
+                scenarios={scenarios}
+                isEditing={editing?.id === p.id}
+                onEdit={() => setEditing(editing?.id === p.id ? null : { ...p })}
+                onDelete={() => remove(p.id)}
+              />
+              {editing?.id === p.id ? (
+                <ProjectForm
+                  key={editing.id}
+                  draft={editing}
+                  scenarios={scenarios}
+                  onCancel={() => setEditing(null)}
+                  onSave={save}
+                />
+              ) : null}
+            </Fragment>
           ))
         )}
       </div>
 
-      {editing ? (
-        <ProjectForm draft={editing} scenarios={scenarios} onCancel={() => setEditing(null)} onSave={save} />
+      {editing && !data.projects.some((p) => p.id === editing.id) ? (
+        <ProjectForm
+          key={editing.id}
+          draft={editing}
+          scenarios={scenarios}
+          onCancel={() => setEditing(null)}
+          onSave={save}
+        />
       ) : null}
     </div>
   );
@@ -111,11 +140,13 @@ export default function ProjectsPage() {
 function ProjectCard({
   project,
   scenarios,
+  isEditing,
   onEdit,
   onDelete,
 }: {
   project: InvestmentProject;
   scenarios: Scenario[];
+  isEditing: boolean;
   onEdit: () => void;
   onDelete: () => void;
 }) {
@@ -147,7 +178,9 @@ function ProjectCard({
           </CardDescription>
         </div>
         <div className="flex gap-1">
-          <Button size="sm" variant="outline" onClick={onEdit}>Edit</Button>
+          <Button size="sm" variant={isEditing ? "default" : "outline"} onClick={onEdit}>
+            {isEditing ? "Close" : "Edit"}
+          </Button>
           <Button size="sm" variant="ghost" onClick={onDelete}>
             <Trash2 className="h-4 w-4" />
           </Button>
@@ -293,6 +326,7 @@ function ProjectForm({
   const { data } = useData();
   const [d, setD] = useState<InvestmentProject>(draft);
   const [error, setError] = useState<string | null>(null);
+  const cardRef = useScrollIntoViewOnMount<HTMLDivElement>();
 
   const update = <K extends keyof InvestmentProject>(k: K, v: InvestmentProject[K]) =>
     setD((p) => ({ ...p, [k]: v }));
@@ -345,7 +379,7 @@ function ProjectForm({
   };
 
   return (
-    <Card>
+    <Card ref={cardRef} className="scroll-mt-24 ring-2 ring-primary/20">
       <CardHeader>
         <CardTitle>{draft.name ? `Edit "${draft.name}"` : "Add project"}</CardTitle>
       </CardHeader>

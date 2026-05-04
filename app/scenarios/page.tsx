@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 
 import { useData } from "@/components/data-provider";
@@ -9,6 +9,18 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input, Label, Select, Textarea } from "@/components/ui/input";
 import { newId, RSU_DEFAULT_TAX_RATES, Scenario, ScenarioSchema, SUPPORTED_JURISDICTIONS } from "@/lib/models";
 import { formatMoney } from "@/lib/utils";
+
+/** Scroll an inline edit form into view on mount. */
+function useScrollIntoViewOnMount<T extends HTMLElement>() {
+  const ref = useRef<T>(null);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      ref.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }, 60);
+    return () => clearTimeout(t);
+  }, []);
+  return ref;
+}
 
 function blank(): Scenario {
   return ScenarioSchema.parse({
@@ -63,35 +75,56 @@ export default function ScenariosPage() {
           </Card>
         ) : (
           data.scenarios.map((s) => (
-            <Card key={s.id}>
-              <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
-                <div>
-                  <CardTitle className="text-base">{s.name}</CardTitle>
-                  <CardDescription>
-                    {s.horizon_years}y · stocks {s.default_stock_growth_pct.toFixed(1)}%/yr · property{" "}
-                    {s.default_property_growth_pct.toFixed(1)}%/yr
-                    {s.inflation_pct ? ` · inflation ${s.inflation_pct.toFixed(1)}%` : ""}
-                    {` · RSU tax ${s.rsu_tax_jurisdiction} ${s.rsu_tax_rate_pct}%`}
-                  </CardDescription>
-                </div>
-                <div className="flex gap-1">
-                  <Button size="sm" variant="outline" onClick={() => setEditing({ ...s })}>
-                    Edit
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={() => remove(s.id)}>
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-              </CardHeader>
-              {s.description ? (
-                <CardContent className="text-xs text-muted-foreground">{s.description}</CardContent>
+            <Fragment key={s.id}>
+              <Card>
+                <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
+                  <div>
+                    <CardTitle className="text-base">{s.name}</CardTitle>
+                    <CardDescription>
+                      {s.horizon_years}y · stocks {s.default_stock_growth_pct.toFixed(1)}%/yr · property{" "}
+                      {s.default_property_growth_pct.toFixed(1)}%/yr
+                      {s.inflation_pct ? ` · inflation ${s.inflation_pct.toFixed(1)}%` : ""}
+                      {` · RSU tax ${s.rsu_tax_jurisdiction} ${s.rsu_tax_rate_pct}%`}
+                    </CardDescription>
+                  </div>
+                  <div className="flex gap-1">
+                    <Button
+                      size="sm"
+                      variant={editing?.id === s.id ? "default" : "outline"}
+                      onClick={() => setEditing(editing?.id === s.id ? null : { ...s })}
+                    >
+                      {editing?.id === s.id ? "Close" : "Edit"}
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => remove(s.id)}>
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </CardHeader>
+                {s.description ? (
+                  <CardContent className="text-xs text-muted-foreground">{s.description}</CardContent>
+                ) : null}
+              </Card>
+              {editing?.id === s.id ? (
+                <ScenarioForm
+                  key={editing.id}
+                  draft={editing}
+                  onCancel={() => setEditing(null)}
+                  onSave={save}
+                />
               ) : null}
-            </Card>
+            </Fragment>
           ))
         )}
       </div>
 
-      {editing ? <ScenarioForm draft={editing} onCancel={() => setEditing(null)} onSave={save} /> : null}
+      {editing && !data.scenarios.some((s) => s.id === editing.id) ? (
+        <ScenarioForm
+          key={editing.id}
+          draft={editing}
+          onCancel={() => setEditing(null)}
+          onSave={save}
+        />
+      ) : null}
     </div>
   );
 }
@@ -100,6 +133,7 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
   const { data } = useData();
   const [d, setD] = useState<Scenario>(draft);
   const [error, setError] = useState<string | null>(null);
+  const cardRef = useScrollIntoViewOnMount<HTMLDivElement>();
 
   const update = <K extends keyof Scenario>(k: K, v: Scenario[K]) => setD((p) => ({ ...p, [k]: v }));
 
@@ -161,7 +195,7 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
   };
 
   return (
-    <Card>
+    <Card ref={cardRef} className="scroll-mt-24 ring-2 ring-primary/20">
       <CardHeader>
         <CardTitle>{draft.name ? `Edit "${draft.name}"` : "Add scenario"}</CardTitle>
       </CardHeader>

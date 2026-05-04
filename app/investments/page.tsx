@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
 
 import { useData } from "@/components/data-provider";
@@ -28,6 +28,19 @@ import { lookupGrowthRate } from "@/lib/growth";
 
 type StockDraft = StockHolding;
 type PropertyDraft = Property;
+
+/** Scroll an inline edit form into view when it mounts so the user sees it
+ *  appear directly under the row they clicked. Slight delay so layout settles. */
+function useScrollIntoViewOnMount<T extends HTMLElement>() {
+  const ref = useRef<T>(null);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      ref.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }, 60);
+    return () => clearTimeout(t);
+  }, []);
+  return ref;
+}
 
 function blankStock(defaultJurisdiction: string): StockDraft {
   return StockHoldingSchema.parse({
@@ -169,44 +182,59 @@ function StocksSection(props: {
           </Card>
         ) : (
           stocks.map((h) => (
-            <Card key={h.id}>
-              <CardHeader className="flex flex-row items-start justify-between gap-2 space-y-0 pb-2">
-                <div>
-                  <CardTitle className="text-base">
-                    {h.ticker || h.company_name || "(unnamed)"}{" "}
-                    <span className="text-xs font-normal text-muted-foreground">
-                      · {h.equity_type}
-                    </span>
-                  </CardTitle>
-                  <CardDescription>
-                    {formatNumber(totalGrantedShares(h))} sh @{" "}
-                    {formatMoney(h.current_share_price, h.currency, { fractionDigits: 2 })} ·{" "}
-                    {h.jurisdiction}
-                  </CardDescription>
-                </div>
-                <div className="flex gap-1">
-                  <Button size="sm" variant="outline" onClick={() => startEdit({ ...h })}>
-                    Edit
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={() => onDelete(h.id)}>
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-              </CardHeader>
-              <CardContent className="text-xs space-y-1">
-                <div>
-                  Vested today: <b>{formatNumber(vestedSharesAt(h, today))}</b> sh · Cost basis:{" "}
-                  {formatMoney(h.cost_basis_per_share, h.currency, { fractionDigits: 2 })} / sh
-                </div>
-                {h.notes ? <div className="text-muted-foreground italic">{h.notes}</div> : null}
-              </CardContent>
-            </Card>
+            <Fragment key={h.id}>
+              <Card>
+                <CardHeader className="flex flex-row items-start justify-between gap-2 space-y-0 pb-2">
+                  <div>
+                    <CardTitle className="text-base">
+                      {h.ticker || h.company_name || "(unnamed)"}{" "}
+                      <span className="text-xs font-normal text-muted-foreground">
+                        · {h.equity_type}
+                      </span>
+                    </CardTitle>
+                    <CardDescription>
+                      {formatNumber(totalGrantedShares(h))} sh @{" "}
+                      {formatMoney(h.current_share_price, h.currency, { fractionDigits: 2 })} ·{" "}
+                      {h.jurisdiction}
+                    </CardDescription>
+                  </div>
+                  <div className="flex gap-1">
+                    <Button
+                      size="sm"
+                      variant={editing?.id === h.id ? "default" : "outline"}
+                      onClick={() => startEdit(editing?.id === h.id ? null : { ...h })}
+                    >
+                      {editing?.id === h.id ? "Close" : "Edit"}
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => onDelete(h.id)}>
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </CardHeader>
+                <CardContent className="text-xs space-y-1">
+                  <div>
+                    Vested today: <b>{formatNumber(vestedSharesAt(h, today))}</b> sh · Cost basis:{" "}
+                    {formatMoney(h.cost_basis_per_share, h.currency, { fractionDigits: 2 })} / sh
+                  </div>
+                  {h.notes ? <div className="text-muted-foreground italic">{h.notes}</div> : null}
+                </CardContent>
+              </Card>
+              {editing?.id === h.id ? (
+                <StockForm
+                  key={editing.id}
+                  draft={editing}
+                  onCancel={() => startEdit(null)}
+                  onSave={onSave}
+                />
+              ) : null}
+            </Fragment>
           ))
         )}
       </div>
 
-      {editing ? (
+      {editing && !stocks.some((s) => s.id === editing.id) ? (
         <StockForm
+          key={editing.id}
           draft={editing}
           onCancel={() => startEdit(null)}
           onSave={onSave}
@@ -227,6 +255,7 @@ function StockForm({
 }) {
   const [d, setD] = useState<StockDraft>(draft);
   const [error, setError] = useState<string | null>(null);
+  const cardRef = useScrollIntoViewOnMount<HTMLDivElement>();
 
   const update = <K extends keyof StockDraft>(k: K, v: StockDraft[K]) =>
     setD((prev) => ({ ...prev, [k]: v }));
@@ -301,7 +330,7 @@ function StockForm({
   };
 
   return (
-    <Card>
+    <Card ref={cardRef} className="scroll-mt-24 ring-2 ring-primary/20">
       <CardHeader>
         <CardTitle>{draft.ticker ? `Edit ${draft.ticker}` : "Add a stock"}</CardTitle>
       </CardHeader>
@@ -422,43 +451,62 @@ function PropertiesSection(props: {
               fallback_pct: p.annual_growth_pct,
             });
             return (
-              <Card key={p.id}>
-                <CardHeader className="flex flex-row items-start justify-between gap-2 space-y-0 pb-2">
-                  <div>
-                    <CardTitle className="text-base">{p.name || "(unnamed)"}</CardTitle>
-                    <CardDescription>
-                      {p.suburb}, {p.region}, {p.country} ·{" "}
-                      {formatMoney(p.current_value, p.currency)}
-                    </CardDescription>
-                  </div>
-                  <div className="flex gap-1">
-                    <Button size="sm" variant="outline" onClick={() => startEdit({ ...p })}>
-                      Edit
-                    </Button>
-                    <Button size="sm" variant="ghost" onClick={() => onDelete(p.id)}>
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </CardHeader>
-                <CardContent className="text-xs space-y-1">
-                  <div>
-                    Equity: <b>{formatMoney(p.current_value - p.mortgage_balance, p.currency)}</b>{" "}
-                    · Mortgage: {formatMoney(p.mortgage_balance, p.currency)}
-                  </div>
-                  <div>
-                    Growth: <b>{provider.rate.toFixed(2)}%/yr</b>{" "}
-                    <span className="text-muted-foreground">(source: {provider.source})</span>
-                  </div>
-                  {p.notes ? <div className="text-muted-foreground italic">{p.notes}</div> : null}
-                </CardContent>
-              </Card>
+              <Fragment key={p.id}>
+                <Card>
+                  <CardHeader className="flex flex-row items-start justify-between gap-2 space-y-0 pb-2">
+                    <div>
+                      <CardTitle className="text-base">{p.name || "(unnamed)"}</CardTitle>
+                      <CardDescription>
+                        {p.suburb}, {p.region}, {p.country} ·{" "}
+                        {formatMoney(p.current_value, p.currency)}
+                      </CardDescription>
+                    </div>
+                    <div className="flex gap-1">
+                      <Button
+                        size="sm"
+                        variant={editing?.id === p.id ? "default" : "outline"}
+                        onClick={() => startEdit(editing?.id === p.id ? null : { ...p })}
+                      >
+                        {editing?.id === p.id ? "Close" : "Edit"}
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => onDelete(p.id)}>
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="text-xs space-y-1">
+                    <div>
+                      Equity: <b>{formatMoney(p.current_value - p.mortgage_balance, p.currency)}</b>{" "}
+                      · Mortgage: {formatMoney(p.mortgage_balance, p.currency)}
+                    </div>
+                    <div>
+                      Growth: <b>{provider.rate.toFixed(2)}%/yr</b>{" "}
+                      <span className="text-muted-foreground">(source: {provider.source})</span>
+                    </div>
+                    {p.notes ? <div className="text-muted-foreground italic">{p.notes}</div> : null}
+                  </CardContent>
+                </Card>
+                {editing?.id === p.id ? (
+                  <PropertyForm
+                    key={editing.id}
+                    draft={editing}
+                    onCancel={() => startEdit(null)}
+                    onSave={onSave}
+                  />
+                ) : null}
+              </Fragment>
             );
           })
         )}
       </div>
 
-      {editing ? (
-        <PropertyForm draft={editing} onCancel={() => startEdit(null)} onSave={onSave} />
+      {editing && !properties.some((p) => p.id === editing.id) ? (
+        <PropertyForm
+          key={editing.id}
+          draft={editing}
+          onCancel={() => startEdit(null)}
+          onSave={onSave}
+        />
       ) : null}
     </div>
   );
@@ -475,6 +523,7 @@ function PropertyForm({
 }) {
   const [d, setD] = useState<PropertyDraft>(draft);
   const [error, setError] = useState<string | null>(null);
+  const cardRef = useScrollIntoViewOnMount<HTMLDivElement>();
   const update = <K extends keyof PropertyDraft>(k: K, v: PropertyDraft[K]) =>
     setD((prev) => ({ ...prev, [k]: v }));
 
@@ -500,7 +549,7 @@ function PropertyForm({
   };
 
   return (
-    <Card>
+    <Card ref={cardRef} className="scroll-mt-24 ring-2 ring-primary/20">
       <CardHeader>
         <CardTitle>{draft.name ? `Edit ${draft.name}` : "Add a property"}</CardTitle>
       </CardHeader>
