@@ -94,31 +94,24 @@ function blankProperty(defaultJurisdiction: string): PropertyDraft {
 
 export default function InvestmentsPage() {
   const { data, setStocks, setProperties } = useData();
-  const [tab, setTab] = useState<"stocks" | "properties">("stocks");
   const [editingStock, setEditingStock] = useState<StockDraft | null>(null);
   const [editingProp, setEditingProp] = useState<PropertyDraft | null>(null);
 
   return (
-    <div className="mx-auto max-w-5xl space-y-4">
-      <div className="flex items-center justify-between gap-2">
-        <h1 className="text-xl font-semibold">Investments</h1>
-        <div className="flex rounded-md border bg-card text-sm">
-          <button
-            className={`px-3 py-1.5 ${tab === "stocks" ? "bg-secondary" : ""}`}
-            onClick={() => setTab("stocks")}
-          >
-            Stocks
-          </button>
-          <button
-            className={`px-3 py-1.5 ${tab === "properties" ? "bg-secondary" : ""}`}
-            onClick={() => setTab("properties")}
-          >
-            Properties
-          </button>
-        </div>
-      </div>
+    <div className="mx-auto max-w-5xl space-y-8">
+      <h1 className="text-xl font-semibold">Investments</h1>
 
-      {tab === "stocks" ? (
+      <section className="space-y-4">
+        <div className="flex items-end justify-between gap-2 border-b pb-2">
+          <div>
+            <h2 className="text-lg font-semibold">📊 Stocks &amp; equity</h2>
+            <p className="text-xs text-muted-foreground">
+              {data.stocks.length === 0
+                ? "No stocks yet."
+                : `${data.stocks.length} holding${data.stocks.length === 1 ? "" : "s"}`}
+            </p>
+          </div>
+        </div>
         <StocksSection
           stocks={data.stocks}
           defaultJurisdiction={data.settings.default_jurisdiction}
@@ -134,7 +127,19 @@ export default function InvestmentsPage() {
           }}
           onDelete={async (id) => setStocks(data.stocks.filter((s) => s.id !== id))}
         />
-      ) : (
+      </section>
+
+      <section className="space-y-4">
+        <div className="flex items-end justify-between gap-2 border-b pb-2">
+          <div>
+            <h2 className="text-lg font-semibold">🏠 Properties</h2>
+            <p className="text-xs text-muted-foreground">
+              {data.properties.length === 0
+                ? "No properties yet."
+                : `${data.properties.length} propert${data.properties.length === 1 ? "y" : "ies"}`}
+            </p>
+          </div>
+        </div>
         <PropertiesSection
           properties={data.properties}
           defaultJurisdiction={data.settings.default_jurisdiction}
@@ -150,7 +155,7 @@ export default function InvestmentsPage() {
           }}
           onDelete={async (id) => setProperties(data.properties.filter((p) => p.id !== id))}
         />
-      )}
+      </section>
     </div>
   );
 }
