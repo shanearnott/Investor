@@ -97,30 +97,38 @@ export default function HomePage() {
       ) : null}
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>Stocks</CardDescription>
-            <CardTitle className="text-2xl">{stocksCount}</CardTitle>
-          </CardHeader>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>Properties</CardDescription>
-            <CardTitle className="text-2xl">{propertiesCount}</CardTitle>
-          </CardHeader>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>Scenarios</CardDescription>
-            <CardTitle className="text-2xl">{scenariosCount}</CardTitle>
-          </CardHeader>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>Projects</CardDescription>
-            <CardTitle className="text-2xl">{projectsCount}</CardTitle>
-          </CardHeader>
-        </Card>
+        <Link href="/investments" aria-label="Go to Stocks">
+          <Card className="h-full transition-colors hover:bg-accent">
+            <CardHeader className="pb-2">
+              <CardDescription>Stocks</CardDescription>
+              <CardTitle className="text-2xl">{stocksCount}</CardTitle>
+            </CardHeader>
+          </Card>
+        </Link>
+        <Link href="/investments" aria-label="Go to Properties">
+          <Card className="h-full transition-colors hover:bg-accent">
+            <CardHeader className="pb-2">
+              <CardDescription>Properties</CardDescription>
+              <CardTitle className="text-2xl">{propertiesCount}</CardTitle>
+            </CardHeader>
+          </Card>
+        </Link>
+        <Link href="/scenarios" aria-label="Go to Scenarios">
+          <Card className="h-full transition-colors hover:bg-accent">
+            <CardHeader className="pb-2">
+              <CardDescription>Scenarios</CardDescription>
+              <CardTitle className="text-2xl">{scenariosCount}</CardTitle>
+            </CardHeader>
+          </Card>
+        </Link>
+        <Link href="/projects" aria-label="Go to Projects">
+          <Card className="h-full transition-colors hover:bg-accent">
+            <CardHeader className="pb-2">
+              <CardDescription>Projects</CardDescription>
+              <CardTitle className="text-2xl">{projectsCount}</CardTitle>
+            </CardHeader>
+          </Card>
+        </Link>
       </div>
 
       {today > 0 ? (
