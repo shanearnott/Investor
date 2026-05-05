@@ -314,17 +314,17 @@ export default function ProjectionsPage() {
       {!noData ? (
         <>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <Kpi label="Net worth" valueNum={totalToday} ccy={ccy} settings={settings} />
-            <Kpi label="Vested equity" valueNum={liquidToday} ccy={ccy} settings={settings} />
-            <Kpi label="Unvested" valueNum={unvestedToday} ccy={ccy} settings={settings} />
-            <Kpi label="Property" valueNum={propertyToday} ccy={ccy} settings={settings} />
+            <Kpi label="Net (post-tax) worth" valueNum={totalToday} ccy={ccy} settings={settings} />
+            <Kpi label="Vested equity (post-tax)" valueNum={liquidToday} ccy={ccy} settings={settings} />
+            <Kpi label="Unvested equity (post-tax)" valueNum={unvestedToday} ccy={ccy} settings={settings} />
+            <Kpi label="Property equity" valueNum={propertyToday} ccy={ccy} settings={settings} />
           </div>
 
           <Card>
             <CardHeader>
-              <CardTitle>Net worth over time ({ccy})</CardTitle>
+              <CardTitle>Net (post-tax) worth over time ({ccy})</CardTitle>
               <CardDescription>
-                Solid line = total (vested + unvested + property). Dashed line = vested + property only — steps up as shares vest. {chosen.map((s) => s.name).join(" · ") || "—"}
+                Solid line = total (vested + unvested + property). Dashed line = vested + property only — steps up as shares vest. RSU income tax (per scenario) is already applied. {chosen.map((s) => s.name).join(" · ") || "—"}
               </CardDescription>
             </CardHeader>
             <CardContent>
