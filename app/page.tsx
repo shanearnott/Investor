@@ -97,7 +97,7 @@ export default function HomePage() {
       ) : null}
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Link href="/investments" aria-label="Go to Stocks">
+        <Link href="/investments" aria-label="Go to Stocks" className="block h-full">
           <Card className="h-full transition-colors hover:bg-accent">
             <CardHeader className="pb-2">
               <CardDescription>Stocks</CardDescription>
@@ -105,7 +105,7 @@ export default function HomePage() {
             </CardHeader>
           </Card>
         </Link>
-        <Link href="/investments" aria-label="Go to Properties">
+        <Link href="/investments" aria-label="Go to Properties" className="block h-full">
           <Card className="h-full transition-colors hover:bg-accent">
             <CardHeader className="pb-2">
               <CardDescription>Properties</CardDescription>
@@ -113,7 +113,7 @@ export default function HomePage() {
             </CardHeader>
           </Card>
         </Link>
-        <Link href="/scenarios" aria-label="Go to Scenarios">
+        <Link href="/scenarios" aria-label="Go to Scenarios" className="block h-full">
           <Card className="h-full transition-colors hover:bg-accent">
             <CardHeader className="pb-2">
               <CardDescription>Scenarios</CardDescription>
@@ -121,7 +121,7 @@ export default function HomePage() {
             </CardHeader>
           </Card>
         </Link>
-        <Link href="/projects" aria-label="Go to Projects">
+        <Link href="/projects" aria-label="Go to Projects" className="block h-full">
           <Card className="h-full transition-colors hover:bg-accent">
             <CardHeader className="pb-2">
               <CardDescription>Projects</CardDescription>
