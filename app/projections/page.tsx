@@ -195,7 +195,6 @@ export default function ProjectionsPage() {
   // KPIs from row 0 of any selected scenario
   const firstSeries = chosen[0] ? seriesByScenario[chosen[0].id] : [];
   const todayRow = firstSeries[0];
-  const totalToday = todayRow?.total ?? 0;
   const liquidToday = todayRow?.liquid_equity_total ?? 0;
   const unvestedToday = todayRow?.unvested_equity_total ?? 0;
   const propertyToday = todayRow?.property_equity_total ?? 0;
@@ -328,9 +327,8 @@ export default function ProjectionsPage() {
 
       {!noData ? (
         <>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <Kpi label="Gross (pre-tax) worth today" valueNum={grossTodayPretax} ccy={ccy} settings={settings} />
-            <Kpi label="Net (post-tax) worth today" valueNum={totalToday} ccy={ccy} settings={settings} />
             <Kpi label="Vested equity (post-tax)" valueNum={liquidToday} ccy={ccy} settings={settings} />
             <Kpi label="Unvested equity (post-tax)" valueNum={unvestedToday} ccy={ccy} settings={settings} />
             <Kpi label="Property equity" valueNum={propertyToday} ccy={ccy} settings={settings} />
