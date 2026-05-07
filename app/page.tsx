@@ -132,76 +132,79 @@ export default function HomePage() {
       </div>
 
       {today > 0 ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>Gross (pre-tax) worth today</CardTitle>
-            <CardDescription>
-              Vested equity + property equity, before any tax on a sale or vest
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <p className="text-3xl font-semibold tabular-nums">
-              {formatMoney(today, displayCurrency)}
-            </p>
-            {(() => {
-              // Secondary = whatever the user picked in Settings. If the
-              // current display IS that currency, swap to the primary.
-              const settingsPrimary = data.settings.primary_currency;
-              const settingsSecondary = data.settings.secondary_currency;
-              const secondary = displayCurrency === settingsSecondary
-                ? settingsPrimary
-                : settingsSecondary;
-              if (secondary === displayCurrency) return null;
-              const rates = data.settings.fx_rates ?? {};
-              const haveRates = Boolean(rates[displayCurrency]) && Boolean(rates[secondary]);
-              const inSecondary = convert(today, displayCurrency, secondary, data.settings);
-              if (!haveRates) {
+        <Link
+          href="/projections"
+          aria-label="Open Projections"
+          className="block transition-colors"
+        >
+          <Card className="cursor-pointer hover:bg-accent">
+            <CardHeader>
+              <CardTitle>Gross (pre-tax) worth today</CardTitle>
+              <CardDescription>
+                Vested equity + property equity, before any tax on a sale or vest. Tap for projections.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <p className="text-3xl font-semibold tabular-nums">
+                {formatMoney(today, displayCurrency)}
+              </p>
+              {(() => {
+                // Secondary = whatever the user picked in Settings. If the
+                // current display IS that currency, swap to the primary.
+                const settingsPrimary = data.settings.primary_currency;
+                const settingsSecondary = data.settings.secondary_currency;
+                const secondary = displayCurrency === settingsSecondary
+                  ? settingsPrimary
+                  : settingsSecondary;
+                if (secondary === displayCurrency) return null;
+                const rates = data.settings.fx_rates ?? {};
+                const haveRates = Boolean(rates[displayCurrency]) && Boolean(rates[secondary]);
+                const inSecondary = convert(today, displayCurrency, secondary, data.settings);
+                if (!haveRates) {
+                  return (
+                    <p className="text-sm text-amber-700 mt-1">
+                      Set FX rate for <b>{displayCurrency}</b> and <b>{secondary}</b> in Settings to see the {secondary} equivalent.
+                    </p>
+                  );
+                }
                 return (
-                  <p className="text-sm text-amber-700 mt-1">
-                    Set FX rate for <b>{displayCurrency}</b> and <b>{secondary}</b> in Settings to see the {secondary} equivalent.
+                  <p className="text-base text-foreground/80 tabular-nums mt-1">
+                    ≈ {formatMoney(inSecondary, secondary)}
                   </p>
                 );
-              }
-              return (
-                <p className="text-base text-foreground/80 tabular-nums mt-1">
-                  ≈ {formatMoney(inSecondary, secondary)}
-                </p>
-              );
-            })()}
-            {vestedRsuDisplay > 0 ? (
-              <div className="mt-4">
-                <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">
-                  Post-tax (RSU income tax applied today)
-                </p>
-                <div className="grid grid-cols-3 gap-2">
-                  {POST_TAX_RATES.map(({ label, rate }) => {
-                    const value = today - vestedRsuDisplay * (rate / 100);
-                    const subCcy = [data.settings.primary_currency, data.settings.secondary_currency]
-                      .find((c) => c && c !== displayCurrency);
-                    return (
-                      <div key={label} className="rounded-md border p-2">
-                        <div className="text-[11px] text-muted-foreground">
-                          {label} <span className="tabular-nums">{rate}%</span>
-                        </div>
-                        <div className="text-base font-semibold tabular-nums">
-                          {formatMoney(value, displayCurrency)}
-                        </div>
-                        {subCcy ? (
-                          <div className="text-[10px] text-muted-foreground tabular-nums">
-                            {formatMoney(convert(value, displayCurrency, subCcy, data.settings), subCcy)}
+              })()}
+              {vestedRsuDisplay > 0 ? (
+                <div className="mt-4">
+                  <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">
+                    Post-tax (RSU income tax applied today)
+                  </p>
+                  <div className="grid grid-cols-3 gap-2">
+                    {POST_TAX_RATES.map(({ label, rate }) => {
+                      const value = today - vestedRsuDisplay * (rate / 100);
+                      const subCcy = [data.settings.primary_currency, data.settings.secondary_currency]
+                        .find((c) => c && c !== displayCurrency);
+                      return (
+                        <div key={label} className="rounded-md border p-2">
+                          <div className="text-[11px] text-muted-foreground">
+                            {label} <span className="tabular-nums">{rate}%</span>
                           </div>
-                        ) : null}
-                      </div>
-                    );
-                  })}
+                          <div className="text-base font-semibold tabular-nums">
+                            {formatMoney(value, displayCurrency)}
+                          </div>
+                          {subCcy ? (
+                            <div className="text-[10px] text-muted-foreground tabular-nums">
+                              {formatMoney(convert(value, displayCurrency, subCcy, data.settings), subCcy)}
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            ) : null}
-            <p className="text-xs text-muted-foreground mt-2">
-              See <Link href="/projections" className="underline">Projections</Link> for the full picture.
-            </p>
-          </CardContent>
-        </Card>
+              ) : null}
+            </CardContent>
+          </Card>
+        </Link>
       ) : null}
 
       <Card>
