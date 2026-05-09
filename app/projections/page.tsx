@@ -721,7 +721,7 @@ function NestedAllocationCard({
                 : "rounded-full border px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:bg-accent"
             }
           >
-            Stocks
+            📊 Stocks
           </button>
           <button
             type="button"
@@ -732,7 +732,7 @@ function NestedAllocationCard({
                 : "rounded-full border px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:bg-accent"
             }
           >
-            Property
+            🏠 Properties
           </button>
         </div>
       </CardHeader>
