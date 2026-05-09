@@ -153,6 +153,11 @@ export default function ProjectionsPage() {
   const [selectedIds, setSelectedIds] = useState<string[]>(() =>
     scenarios[0] ? [scenarios[0].id] : [],
   );
+  // Asset-type filters for the line chart. Both on by default; toggling
+  // restricts the line series to just stocks or just property so the user
+  // can isolate one. Same UX as the wealth-allocation pie below.
+  const [lineShowStocks, setLineShowStocks] = useState(true);
+  const [lineShowProperty, setLineShowProperty] = useState(true);
   // After data hydrates, if our selection still points at scenarios that no
   // longer exist (e.g. we were holding the fallback id), fall back to the
   // new first scenario. Don't fight a deliberate user selection.
@@ -227,13 +232,18 @@ export default function ProjectionsPage() {
       for (const sc of chosen) {
         const r = (seriesByScenario[sc.id] ?? []).find((x) => x.date === date);
         if (r) {
-          row[sc.name] = Math.round(r.total);
-          row[`${sc.name} vested`] = Math.round(r.liquid_equity_total + r.property_equity_total);
+          // total = vested + unvested + property; mask out whichever asset
+          // class is filtered off. Same for the vested-only dashed line.
+          const stockTotal = (lineShowStocks ? 1 : 0) * (r.liquid_equity_total + r.unvested_equity_total);
+          const stockVested = (lineShowStocks ? 1 : 0) * r.liquid_equity_total;
+          const property = (lineShowProperty ? 1 : 0) * r.property_equity_total;
+          row[sc.name] = Math.round(stockTotal + property);
+          row[`${sc.name} vested`] = Math.round(stockVested + property);
         }
       }
       return row;
     });
-  }, [chosen, seriesByScenario]);
+  }, [chosen, seriesByScenario, lineShowStocks, lineShowProperty]);
 
   // As-of date for the wealth-allocation pie chart. YYYY-MM is enough — pin
   // to the 1st of the chosen month. Defaults to today; user can slide it
@@ -340,6 +350,31 @@ export default function ProjectionsPage() {
               <CardDescription>
                 Solid line = total (vested + unvested + property). Dashed line = vested + property only — steps up as shares vest. RSU income tax (per scenario) is already applied. {chosen.map((s) => s.name).join(" · ") || "—"}
               </CardDescription>
+              <div className="mt-2 flex flex-wrap items-center gap-1">
+                <span className="text-[11px] text-muted-foreground mr-1">Show</span>
+                <button
+                  type="button"
+                  onClick={() => setLineShowStocks((v) => !v)}
+                  className={
+                    lineShowStocks
+                      ? "rounded-full border border-primary bg-primary text-primary-foreground px-2.5 py-1 text-[11px] font-medium"
+                      : "rounded-full border px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:bg-accent"
+                  }
+                >
+                  📊 Stocks
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLineShowProperty((v) => !v)}
+                  className={
+                    lineShowProperty
+                      ? "rounded-full border border-primary bg-primary text-primary-foreground px-2.5 py-1 text-[11px] font-medium"
+                      : "rounded-full border px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:bg-accent"
+                  }
+                >
+                  🏠 Properties
+                </button>
+              </div>
             </CardHeader>
             <CardContent>
               <div className="h-[320px] w-full">
