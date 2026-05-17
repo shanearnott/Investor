@@ -237,7 +237,7 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
         {
           id: newId(),
           stock_id: firstStock?.id ?? "",
-          date: new Date().toISOString().slice(0, 10),
+          release_date: new Date().toISOString().slice(0, 10),
           shares: 0,
           tax_rate_pct: p.rsu_tax_rate_pct ?? 0,
         },
@@ -246,7 +246,14 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
   };
   const updateSale = (
     id: string,
-    patch: Partial<{ stock_id: string; date: string; shares: number; tax_rate_pct: number }>,
+    patch: Partial<{
+      stock_id: string;
+      release_date: string;
+      sell_date: string;
+      sale_price: number;
+      shares: number;
+      tax_rate_pct: number;
+    }>,
   ) => {
     setD((p) => ({
       ...p,
@@ -682,10 +689,12 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
             </Button>
           </div>
           <p className="text-[11px] text-muted-foreground">
-            Sell already-vested shares at a date under a chosen tax rate. The
-            post-tax proceeds become cash that adds to net worth from then on,
-            and the sold shares leave the equity line. The chart marks each
-            sale with a bar. Sales are capped at shares vested by their date.
+            Sell already-vested shares under a chosen tax rate. On the release
+            date the shares leave the equity line; on the sell date the post-tax
+            proceeds become cash that adds to net worth. Between the two the
+            gross value is held flat. The chart marks each sale with a bar in
+            the scenario&apos;s colour. Sales are capped at shares vested by the
+            release date.
           </p>
           {data.stocks.length === 0 ? (
             <p className="text-[11px] text-muted-foreground">Add a stock first to plan a sale.</p>
@@ -708,20 +717,41 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
                         ))}
                       </Select>
                     </Field>
-                    <Field label="Sale date">
+                    <Field label="Release date" hint="When the shares leave the equity line.">
                       <Input
                         type="date"
-                        value={s.date}
-                        onChange={(e) => updateSale(s.id, { date: e.target.value })}
+                        value={s.release_date ?? s.date ?? ""}
+                        onChange={(e) => updateSale(s.id, { release_date: e.target.value })}
                       />
                     </Field>
-                    <Field label="Shares" hint="Capped at shares vested by the sale date.">
+                    <Field label="Sell date" hint="Cash added to net worth. Blank = release date.">
+                      <Input
+                        type="date"
+                        value={s.sell_date ?? ""}
+                        onChange={(e) => updateSale(s.id, { sell_date: e.target.value })}
+                      />
+                    </Field>
+                    <Field label="Shares" hint="Capped at shares vested by the release date.">
                       <Input
                         type="number"
                         step="1"
                         min={0}
                         value={s.shares}
                         onChange={(e) => updateSale(s.id, { shares: Number(e.target.value) })}
+                      />
+                    </Field>
+                    <Field label="Share price at sale" hint="Native currency. Blank = projected price.">
+                      <Input
+                        type="number"
+                        step="0.01"
+                        min={0}
+                        value={s.sale_price ?? ""}
+                        onChange={(e) =>
+                          updateSale(s.id, {
+                            sale_price:
+                              e.target.value === "" ? undefined : Number(e.target.value),
+                          })
+                        }
                       />
                     </Field>
                     <Field label="Tax on sale">

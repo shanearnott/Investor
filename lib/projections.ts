@@ -22,9 +22,13 @@ export type ProjectionRow = {
   unvested_equity_total: number;
   property_equity_total: number;
   property_gross_total: number;
-  // Accumulated post-tax cash from planned scenario stock sales up to this date.
+  // Accumulated post-tax cash from sales whose sell date has passed.
   cash_total: number;
-  // Post-tax proceeds from sales that land in *this* step (drives the bar).
+  // Gross value of shares released-but-not-yet-sold (held flat, keeps the
+  // net-worth line continuous between a release date and a later sell date).
+  pending_sale_total: number;
+  // Post-tax proceeds from sales whose sell date lands in *this* step
+  // (drives the bar on the chart).
   sale_proceeds_step: number;
   // Per-asset combined value (vested + unvested for stocks; equity for property)
   perAsset: Record<string, number>;
@@ -193,6 +197,71 @@ export function projectPropertyValueAt(
   };
 }
 
+export type ResolvedSale = {
+  stockId: string;
+  releaseDate: Date;
+  sellDate: Date;
+  shares: number;
+  /** Gross + net proceeds in settings.primary_currency. */
+  grossPrimary: number;
+  netPrimary: number;
+};
+
+/** Resolve a scenario's planned sales chronologically: cap shares at those
+ *  vested by the release date (and not already earmarked by an earlier
+ *  sale), and price each at sale_price or the projected price at sell date.
+ *  Amounts are in settings.primary_currency. */
+export function resolveScenarioSales(
+  scenario: Scenario,
+  holdings: StockHolding[],
+  settings: Settings,
+): ResolvedSale[] {
+  const holdingsById = new Map(holdings.map((h) => [h.id, h]));
+  const earmarked: Record<string, number> = {};
+  const out: ResolvedSale[] = [];
+  const dateKey = (s: { release_date?: string; date?: string }) => s.release_date ?? s.date ?? "";
+  for (const s of [...(scenario.stock_sales ?? [])].sort((a, b) => dateKey(a).localeCompare(dateKey(b)))) {
+    const h = holdingsById.get(s.stock_id);
+    const releaseDate = parseISO(s.release_date ?? s.date ?? null);
+    if (!h || !releaseDate) continue;
+    const sellDate = parseISO(s.sell_date ?? s.release_date ?? s.date ?? null) ?? releaseDate;
+    const available = Math.max(0, vestedSharesAt(h, releaseDate) - (earmarked[s.stock_id] ?? 0));
+    const shares = Math.min(s.shares, available);
+    earmarked[s.stock_id] = (earmarked[s.stock_id] ?? 0) + shares;
+    if (shares <= 0) continue;
+    const priceNative =
+      s.sale_price !== undefined && s.sale_price > 0
+        ? s.sale_price
+        : projectStockValueAt(h, scenario, sellDate, settings.primary_currency, settings).projected_price;
+    const grossNative = shares * priceNative;
+    const netNative = grossNative * (1 - Math.max(0, Math.min(100, s.tax_rate_pct)) / 100);
+    out.push({
+      stockId: s.stock_id,
+      releaseDate,
+      sellDate,
+      shares,
+      grossPrimary: convert(grossNative, h.currency, settings.primary_currency, settings),
+      netPrimary: convert(netNative, h.currency, settings.primary_currency, settings),
+    });
+  }
+  return out;
+}
+
+/** Cash/pending/share-removal state from resolved sales as of a date. */
+export function saleStateAt(resolved: ResolvedSale[], asOf: Date) {
+  let cash = 0;
+  let pending = 0;
+  const soldByHolding: Record<string, number> = {};
+  for (const r of resolved) {
+    if (r.releaseDate <= asOf) {
+      soldByHolding[r.stockId] = (soldByHolding[r.stockId] ?? 0) + r.shares;
+    }
+    if (r.sellDate <= asOf) cash += r.netPrimary;
+    else if (r.releaseDate <= asOf) pending += r.grossPrimary;
+  }
+  return { cash, pending, soldByHolding };
+}
+
 export function buildNetWorthSeries(args: {
   holdings: StockHolding[];
   properties: Property[];
@@ -211,30 +280,7 @@ export function buildNetWorthSeries(args: {
     ? Math.pow(1 + scenario.inflation_pct / 100, 1 / 12) - 1
     : 0;
 
-  // Resolve planned sales chronologically, capping each at the shares vested
-  // (and not already earmarked) at its own date. Post-tax proceeds are in
-  // primary currency and stay flat (nominal) once realised.
-  const holdingsById = new Map(holdings.map((h) => [h.id, h]));
-  const earmarked: Record<string, number> = {};
-  const resolvedSales: { stockId: string; date: Date; shares: number; proceeds: number }[] = [];
-  for (const s of [...(scenario.stock_sales ?? [])].sort((a, b) => a.date.localeCompare(b.date))) {
-    const h = holdingsById.get(s.stock_id);
-    const d = parseISO(s.date);
-    if (!h || !d) continue;
-    const available = Math.max(0, vestedSharesAt(h, d) - (earmarked[s.stock_id] ?? 0));
-    const shares = Math.min(s.shares, available);
-    earmarked[s.stock_id] = (earmarked[s.stock_id] ?? 0) + shares;
-    if (shares <= 0) continue;
-    const v = projectStockValueAt(h, scenario, d, settings.primary_currency, settings);
-    const grossNative = shares * v.projected_price;
-    const netNative = grossNative * (1 - Math.max(0, Math.min(100, s.tax_rate_pct)) / 100);
-    resolvedSales.push({
-      stockId: s.stock_id,
-      date: d,
-      shares,
-      proceeds: convert(netNative, h.currency, settings.primary_currency, settings),
-    });
-  }
+  const resolvedSales = resolveScenarioSales(scenario, holdings, settings);
 
   for (let i = 0; i <= totalMonths; i += step) {
     const asOf = addMonths(startMonth, i);
@@ -242,17 +288,11 @@ export function buildNetWorthSeries(args: {
     const perAsset: Record<string, number> = {};
     let liquid = 0, unvested = 0, propEq = 0, propGross = 0;
 
-    // Cash realised so far + per-holding shares sold by now + the bar slice.
-    let cashTotal = 0;
+    const { cash: cashTotal, pending: pendingTotal, soldByHolding } = saleStateAt(resolvedSales, asOf);
+    // Bar slice: proceeds whose sell date lands in this step.
     let saleStep = 0;
-    const soldByHolding: Record<string, number> = {};
     for (const r of resolvedSales) {
-      if (r.date <= asOf) {
-        cashTotal += r.proceeds;
-        soldByHolding[r.stockId] = (soldByHolding[r.stockId] ?? 0) + r.shares;
-        const inStep = i === 0 ? true : r.date > prevAsOf;
-        if (inStep) saleStep += r.proceeds;
-      }
+      if (r.sellDate <= asOf && (i === 0 || r.sellDate > prevAsOf)) saleStep += r.netPrimary;
     }
 
     for (const h of holdings) {
@@ -274,7 +314,7 @@ export function buildNetWorthSeries(args: {
       propGross += v.gross;
     }
 
-    const total = liquid + unvested + propEq + cashTotal;
+    const total = liquid + unvested + propEq + cashTotal + pendingTotal;
     const row: ProjectionRow = {
       date: asOf.toISOString().slice(0, 10),
       total,
@@ -283,6 +323,7 @@ export function buildNetWorthSeries(args: {
       property_equity_total: propEq,
       property_gross_total: propGross,
       cash_total: cashTotal,
+      pending_sale_total: pendingTotal,
       sale_proceeds_step: saleStep,
       perAsset,
     };
