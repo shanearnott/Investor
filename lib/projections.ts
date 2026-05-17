@@ -52,6 +52,14 @@ function monthsBetween(from: Date, to: Date): number {
   return (to.getUTCFullYear() - from.getUTCFullYear()) * 12 + (to.getUTCMonth() - from.getUTCMonth());
 }
 
+/** First day of a date's month (UTC). The projection grid steps on month
+ *  boundaries, so comparing a mid-month sale date directly would push its
+ *  effect into the *next* monthly step. Snapping to the containing month
+ *  makes a sale take effect in the month it actually happens. */
+function monthStart(d: Date): Date {
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
+}
+
 /** Effective today's price for a stock under a scenario — defaults to the
  *  holding's actual price unless the scenario overrides it. */
 function startingPriceForScenario(
@@ -253,11 +261,13 @@ export function saleStateAt(resolved: ResolvedSale[], asOf: Date) {
   let pending = 0;
   const soldByHolding: Record<string, number> = {};
   for (const r of resolved) {
-    if (r.releaseDate <= asOf) {
+    const released = monthStart(r.releaseDate) <= asOf;
+    const sold = monthStart(r.sellDate) <= asOf;
+    if (released) {
       soldByHolding[r.stockId] = (soldByHolding[r.stockId] ?? 0) + r.shares;
     }
-    if (r.sellDate <= asOf) cash += r.netPrimary;
-    else if (r.releaseDate <= asOf) pending += r.grossPrimary;
+    if (sold) cash += r.netPrimary;
+    else if (released) pending += r.grossPrimary;
   }
   return { cash, pending, soldByHolding };
 }
@@ -292,7 +302,8 @@ export function buildNetWorthSeries(args: {
     // Bar slice: proceeds whose sell date lands in this step.
     let saleStep = 0;
     for (const r of resolvedSales) {
-      if (r.sellDate <= asOf && (i === 0 || r.sellDate > prevAsOf)) saleStep += r.netPrimary;
+      const sellMonth = monthStart(r.sellDate);
+      if (sellMonth <= asOf && (i === 0 || sellMonth > prevAsOf)) saleStep += r.netPrimary;
     }
 
     for (const h of holdings) {

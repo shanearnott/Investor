@@ -183,6 +183,7 @@ export default function ProjectionsPage() {
   // can isolate one. Same UX as the wealth-allocation pie below.
   const [lineShowStocks, setLineShowStocks] = useState(true);
   const [lineShowProperty, setLineShowProperty] = useState(true);
+  const [lineShowCash, setLineShowCash] = useState(true);
   // After data hydrates, if our selection still points at scenarios that no
   // longer exist (e.g. we were holding the fallback id), fall back to the
   // new first scenario. Don't fight a deliberate user selection.
@@ -271,19 +272,19 @@ export default function ProjectionsPage() {
           const stockTotal = (lineShowStocks ? 1 : 0) * (r.liquid_equity_total + r.unvested_equity_total);
           const stockVested = (lineShowStocks ? 1 : 0) * r.liquid_equity_total;
           const property = (lineShowProperty ? 1 : 0) * r.property_equity_total;
-          const cash = r.cash_total + r.pending_sale_total;
+          const cash = (lineShowCash ? 1 : 0) * (r.cash_total + r.pending_sale_total);
           row[sc.name] = Math.round(stockTotal + property + cash);
           row[`${sc.name} vested`] = Math.round(stockVested + property + cash);
           // One bar series per scenario so they don't get lost when several
           // scenarios are selected; coloured to match the scenario line.
-          if (r.sale_proceeds_step > 0) {
+          if (lineShowCash && r.sale_proceeds_step > 0) {
             row[`${sc.name} sold`] = Math.round(r.sale_proceeds_step);
           }
         }
       }
       return row;
     });
-  }, [chosen, seriesByScenario, lineShowStocks, lineShowProperty]);
+  }, [chosen, seriesByScenario, lineShowStocks, lineShowProperty, lineShowCash]);
 
   // As-of date for the wealth-allocation pie chart. YYYY-MM is enough — pin
   // to the 1st of the chosen month. Defaults to today; user can slide it
@@ -429,6 +430,17 @@ export default function ProjectionsPage() {
                   }
                 >
                   🏠 Properties
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLineShowCash((v) => !v)}
+                  className={
+                    lineShowCash
+                      ? "rounded-full border border-primary bg-primary text-primary-foreground px-2.5 py-1 text-[11px] font-medium"
+                      : "rounded-full border px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:bg-accent"
+                  }
+                >
+                  💵 Cash
                 </button>
               </div>
             </CardHeader>
@@ -704,9 +716,10 @@ function NestedAllocationCard({
   // pie restricted to just stocks or just property.
   const [showStocks, setShowStocks] = useState(true);
   const [showProperty, setShowProperty] = useState(true);
+  const [showCash, setShowCash] = useState(true);
 
   const passes = (s: Slice) =>
-    s.kind === "cash" ||
+    (s.kind === "cash" && showCash) ||
     (s.kind === "stock" && showStocks) ||
     (s.kind === "property" && showProperty);
 
@@ -816,6 +829,17 @@ function NestedAllocationCard({
             }
           >
             🏠 Properties
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowCash((v) => !v)}
+            className={
+              showCash
+                ? "rounded-full border border-primary bg-primary text-primary-foreground px-2.5 py-1 text-[11px] font-medium"
+                : "rounded-full border px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:bg-accent"
+            }
+          >
+            💵 Cash
           </button>
         </div>
       </CardHeader>
