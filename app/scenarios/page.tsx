@@ -135,6 +135,32 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
   const [error, setError] = useState<string | null>(null);
   const cardRef = useScrollIntoViewOnMount<HTMLDivElement>();
 
+  // Which per-asset override rows are expanded. Rows that already have an
+  // override start expanded; everything else is collapsed to a one-line
+  // summary so a scenario that only tweaks the defaults stays compact.
+  const [expandedAssets, setExpandedAssets] = useState<Set<string>>(() => {
+    const init = new Set<string>();
+    for (const id of Object.keys(draft.stock_overrides ?? {})) {
+      const ov = draft.stock_overrides[id];
+      if (ov && (ov.starting_share_price !== undefined || ov.annual_price_growth_pct !== undefined || ov.target_share_price !== undefined)) {
+        init.add(id);
+      }
+    }
+    for (const id of Object.keys(draft.property_overrides ?? {})) {
+      if (draft.property_overrides[id]?.annual_growth_pct !== undefined) init.add(id);
+    }
+    return init;
+  });
+  const isExpanded = (id: string) => expandedAssets.has(id);
+  const expand = (id: string) =>
+    setExpandedAssets((prev) => new Set(prev).add(id));
+  const collapse = (id: string) =>
+    setExpandedAssets((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+
   const update = <K extends keyof Scenario>(k: K, v: Scenario[K]) => setD((p) => ({ ...p, [k]: v }));
 
   const updateStockOv = (
@@ -162,11 +188,30 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
     });
   };
 
+  /** Drop every override field for a stock and collapse it back to default. */
+  const resetStock = (id: string) => {
+    setD((p) => {
+      const next = { ...p.stock_overrides };
+      delete next[id];
+      return { ...p, stock_overrides: next };
+    });
+    collapse(id);
+  };
+
   const updatePropOv = (id: string, ov: { annual_growth_pct?: number }) => {
     setD((p) => ({
       ...p,
       property_overrides: { ...p.property_overrides, [id]: { ...p.property_overrides[id], ...ov } },
     }));
+  };
+
+  const resetProperty = (id: string) => {
+    setD((p) => {
+      const next = { ...p.property_overrides };
+      delete next[id];
+      return { ...p, property_overrides: next };
+    });
+    collapse(id);
   };
 
   /** When the user picks a new jurisdiction, pre-fill the rate from the
@@ -278,96 +323,137 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
                 const effectiveRate = usingTarget
                   ? impliedFromTarget ?? d.default_stock_growth_pct
                   : ov.annual_price_growth_pct ?? d.default_stock_growth_pct;
+                const hasOverride =
+                  ov.starting_share_price !== undefined ||
+                  ov.annual_price_growth_pct !== undefined ||
+                  ov.target_share_price !== undefined;
+                const open = isExpanded(h.id);
                 return (
                   <div key={h.id} className="rounded-md border p-2 space-y-2">
-                    <div className="text-sm">
-                      <div className="font-medium">{h.ticker || h.company_name}</div>
-                      <div className="text-[11px] text-muted-foreground">
-                        actual {formatMoney(h.current_share_price, h.currency, { fractionDigits: 2 })}/sh
-                        {usingStart ? (
-                          <> · scenario starts at <b>{formatMoney(startPrice, h.currency, { fractionDigits: 2 })}</b></>
-                        ) : null}
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="text-sm">
+                        <div className="font-medium">{h.ticker || h.company_name}</div>
+                        <div className="text-[11px] text-muted-foreground">
+                          {open ? (
+                            <>
+                              actual {formatMoney(h.current_share_price, h.currency, { fractionDigits: 2 })}/sh
+                              {usingStart ? (
+                                <> · scenario starts at <b>{formatMoney(startPrice, h.currency, { fractionDigits: 2 })}</b></>
+                              ) : null}
+                            </>
+                          ) : hasOverride ? (
+                            <>
+                              {usingStart ? (
+                                <>start {formatMoney(startPrice, h.currency, { fractionDigits: 2 })} · </>
+                              ) : null}
+                              <b>{effectiveRate.toFixed(1)}%/yr</b>
+                              {usingTarget ? (
+                                <> (target {formatMoney(ov.target_share_price ?? 0, h.currency, { fractionDigits: 2 })})</>
+                              ) : null}
+                            </>
+                          ) : (
+                            <>using default {d.default_stock_growth_pct}%/yr</>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                      <Field
-                        label="Starting price (today)"
-                        hint={`What if today's ${h.ticker || "share"} price was X. Blank = use actual ${formatMoney(h.current_share_price, h.currency, { fractionDigits: 2 })}.`}
-                      >
-                        <SuffixedInput
-                          suffix={h.currency}
-                          type="number"
-                          step="0.01"
-                          min={0}
-                          value={ov.starting_share_price ?? ""}
-                          placeholder={h.current_share_price.toFixed(2)}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            if (val === "") clearStockField(h.id, "starting_share_price");
-                            else updateStockOv(h.id, { starting_share_price: Number(val) });
-                          }}
-                        />
-                      </Field>
-                      <Field label="Growth rate" hint={`Default ${d.default_stock_growth_pct}%/yr`}>
-                        <SuffixedInput
-                          suffix="%/yr"
-                          type="number"
-                          step="0.5"
-                          value={ov.annual_price_growth_pct ?? d.default_stock_growth_pct}
-                          disabled={usingTarget}
-                          onChange={(e) =>
-                            updateStockOv(h.id, { annual_price_growth_pct: Number(e.target.value) })
+                      <button
+                        type="button"
+                        className="shrink-0 rounded-md border px-2 py-1 text-[11px] font-medium text-muted-foreground hover:bg-accent"
+                        onClick={() => {
+                          if (open) {
+                            if (hasOverride) resetStock(h.id);
+                            else collapse(h.id);
+                          } else {
+                            expand(h.id);
                           }
-                        />
-                      </Field>
-                      <Field
-                        label={`Target at +${d.horizon_years}y`}
-                        hint={
-                          h.currency
-                            ? `Implies a growth from the starting price. Blank = use the rate.`
-                            : "Blank = use the rate."
-                        }
+                        }}
                       >
-                        <SuffixedInput
-                          suffix={h.currency}
-                          type="number"
-                          step="0.01"
-                          min={0}
-                          value={ov.target_share_price ?? ""}
-                          placeholder="e.g. 200"
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            if (val === "") clearStockField(h.id, "target_share_price");
-                            else updateStockOv(h.id, { target_share_price: Number(val) });
-                          }}
-                        />
-                      </Field>
+                        {open ? (hasOverride ? "Reset to default" : "Done") : "Customise"}
+                      </button>
                     </div>
-                    <p className="text-[10px] text-muted-foreground">
-                      {usingTarget ? (
-                        <>
-                          {usingStart ? (
-                            <>From <b>{formatMoney(startPrice, h.currency, { fractionDigits: 2 })}</b> → </>
-                          ) : null}
-                          target {formatMoney(ov.target_share_price ?? 0, h.currency, { fractionDigits: 2 })} → implied{" "}
-                          <b>{effectiveRate.toFixed(1)}%/yr</b>
-                        </>
-                      ) : usingRate ? (
-                        <>
-                          {usingStart ? (
-                            <>Starting at <b>{formatMoney(startPrice, h.currency, { fractionDigits: 2 })}</b>, </>
-                          ) : null}
-                          using <b>{effectiveRate.toFixed(1)}%/yr</b>
-                        </>
-                      ) : (
-                        <>
-                          {usingStart ? (
-                            <>Starting at <b>{formatMoney(startPrice, h.currency, { fractionDigits: 2 })}</b>, </>
-                          ) : null}
-                          using default {d.default_stock_growth_pct}%/yr
-                        </>
-                      )}
-                    </p>
+                    {open ? (
+                      <>
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                          <Field
+                            label="Starting price (today)"
+                            hint={`What if today's ${h.ticker || "share"} price was X. Blank = use actual ${formatMoney(h.current_share_price, h.currency, { fractionDigits: 2 })}.`}
+                          >
+                            <SuffixedInput
+                              suffix={h.currency}
+                              type="number"
+                              step="0.01"
+                              min={0}
+                              value={ov.starting_share_price ?? ""}
+                              placeholder={h.current_share_price.toFixed(2)}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                if (val === "") clearStockField(h.id, "starting_share_price");
+                                else updateStockOv(h.id, { starting_share_price: Number(val) });
+                              }}
+                            />
+                          </Field>
+                          <Field label="Growth rate" hint={`Default ${d.default_stock_growth_pct}%/yr`}>
+                            <SuffixedInput
+                              suffix="%/yr"
+                              type="number"
+                              step="0.5"
+                              value={ov.annual_price_growth_pct ?? d.default_stock_growth_pct}
+                              disabled={usingTarget}
+                              onChange={(e) =>
+                                updateStockOv(h.id, { annual_price_growth_pct: Number(e.target.value) })
+                              }
+                            />
+                          </Field>
+                          <Field
+                            label={`Target at +${d.horizon_years}y`}
+                            hint={
+                              h.currency
+                                ? `Implies a growth from the starting price. Blank = use the rate.`
+                                : "Blank = use the rate."
+                            }
+                          >
+                            <SuffixedInput
+                              suffix={h.currency}
+                              type="number"
+                              step="0.01"
+                              min={0}
+                              value={ov.target_share_price ?? ""}
+                              placeholder="e.g. 200"
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                if (val === "") clearStockField(h.id, "target_share_price");
+                                else updateStockOv(h.id, { target_share_price: Number(val) });
+                              }}
+                            />
+                          </Field>
+                        </div>
+                        <p className="text-[10px] text-muted-foreground">
+                          {usingTarget ? (
+                            <>
+                              {usingStart ? (
+                                <>From <b>{formatMoney(startPrice, h.currency, { fractionDigits: 2 })}</b> → </>
+                              ) : null}
+                              target {formatMoney(ov.target_share_price ?? 0, h.currency, { fractionDigits: 2 })} → implied{" "}
+                              <b>{effectiveRate.toFixed(1)}%/yr</b>
+                            </>
+                          ) : usingRate ? (
+                            <>
+                              {usingStart ? (
+                                <>Starting at <b>{formatMoney(startPrice, h.currency, { fractionDigits: 2 })}</b>, </>
+                              ) : null}
+                              using <b>{effectiveRate.toFixed(1)}%/yr</b>
+                            </>
+                          ) : (
+                            <>
+                              {usingStart ? (
+                                <>Starting at <b>{formatMoney(startPrice, h.currency, { fractionDigits: 2 })}</b>, </>
+                              ) : null}
+                              using default {d.default_stock_growth_pct}%/yr
+                            </>
+                          )}
+                        </p>
+                      </>
+                    ) : null}
                   </div>
                 );
               })}
@@ -381,40 +467,59 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
             <p className="text-[11px] text-muted-foreground">
               Override the growth rate for individual properties. Leave blank to use the default.
             </p>
-            <div className="hidden sm:grid grid-cols-[2fr_1fr] gap-2 px-2 text-[11px] uppercase tracking-wide text-muted-foreground">
-              <span>Property</span>
-              <span>Growth (overrides default {d.default_property_growth_pct}%/yr)</span>
-            </div>
             <div className="space-y-2">
               {data.properties.map((p) => {
                 const ov = d.property_overrides[p.id] ?? {};
                 const rate = ov.annual_growth_pct ?? d.default_property_growth_pct;
                 const usingOverride = ov.annual_growth_pct !== undefined;
+                const open = isExpanded(p.id);
                 return (
-                  <div
-                    key={p.id}
-                    className="grid grid-cols-1 gap-2 rounded-md border p-2 sm:grid-cols-[2fr_1fr]"
-                  >
-                    <div className="text-sm">
-                      <div className="font-medium">{p.name}</div>
-                      <div className="text-[11px] text-muted-foreground">
-                        {p.suburb}, {p.region} · current {formatMoney(p.current_value, p.currency)}
+                  <div key={p.id} className="rounded-md border p-2 space-y-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="text-sm">
+                        <div className="font-medium">{p.name}</div>
+                        <div className="text-[11px] text-muted-foreground">
+                          {p.suburb}, {p.region}
+                          {open ? (
+                            <> · current {formatMoney(p.current_value, p.currency)}</>
+                          ) : usingOverride ? (
+                            <> · <b>{rate.toFixed(1)}%/yr</b></>
+                          ) : (
+                            <> · using default {d.default_property_growth_pct}%/yr</>
+                          )}
+                        </div>
                       </div>
+                      <button
+                        type="button"
+                        className="shrink-0 rounded-md border px-2 py-1 text-[11px] font-medium text-muted-foreground hover:bg-accent"
+                        onClick={() => {
+                          if (open) {
+                            if (usingOverride) resetProperty(p.id);
+                            else collapse(p.id);
+                          } else {
+                            expand(p.id);
+                          }
+                        }}
+                      >
+                        {open ? (usingOverride ? "Reset to default" : "Done") : "Customise"}
+                      </button>
                     </div>
-                    <div>
-                      <SuffixedInput
-                        suffix="%/yr"
-                        type="number"
-                        step="0.5"
-                        value={rate}
-                        onChange={(e) => updatePropOv(p.id, { annual_growth_pct: Number(e.target.value) })}
-                      />
-                      <p className="text-[10px] text-muted-foreground mt-1">
-                        {usingOverride
-                          ? `Overrides default ${d.default_property_growth_pct}%/yr`
-                          : `Using default ${d.default_property_growth_pct}%/yr`}
-                      </p>
-                    </div>
+                    {open ? (
+                      <div>
+                        <SuffixedInput
+                          suffix="%/yr"
+                          type="number"
+                          step="0.5"
+                          value={rate}
+                          onChange={(e) => updatePropOv(p.id, { annual_growth_pct: Number(e.target.value) })}
+                        />
+                        <p className="text-[10px] text-muted-foreground mt-1">
+                          {usingOverride
+                            ? `Overrides default ${d.default_property_growth_pct}%/yr`
+                            : `Using default ${d.default_property_growth_pct}%/yr`}
+                        </p>
+                      </div>
+                    ) : null}
                   </div>
                 );
               })}
