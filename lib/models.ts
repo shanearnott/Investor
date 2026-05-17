@@ -134,7 +134,20 @@ export const ScenarioSchema = z.object({
    *  "I relocate, so RSUs vesting from 2028 are taxed in the new place".
    *  Empty = pure flat-rate behaviour (unchanged). */
   rsu_tax_year_overrides: z.record(z.string(), z.number().min(0).max(100)).default({}),
+  /** Planned stock sales within the scenario. Each sale liquidates a number
+   *  of *already-vested* shares of one holding on a date, taxed at its own
+   *  rate. Post-tax proceeds become cash that adds to net worth from the
+   *  sale date on; the sold shares leave the equity line. Multiple sales
+   *  over time are allowed. */
+  stock_sales: z.array(z.object({
+    id: z.string(),
+    stock_id: z.string(),
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    shares: z.number().nonnegative().default(0),
+    tax_rate_pct: z.number().min(0).max(100).default(0),
+  })).default([]),
 });
+export type StockSale = z.infer<typeof ScenarioSchema>["stock_sales"][number];
 
 /** Typical top-marginal-on-RSU defaults used to pre-fill the rate input
  *  when the user picks a new jurisdiction in a scenario. Editable after. */

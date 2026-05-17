@@ -22,6 +22,10 @@ export type ProjectionRow = {
   unvested_equity_total: number;
   property_equity_total: number;
   property_gross_total: number;
+  // Accumulated post-tax cash from planned scenario stock sales up to this date.
+  cash_total: number;
+  // Post-tax proceeds from sales that land in *this* step (drives the bar).
+  sale_proceeds_step: number;
   // Per-asset combined value (vested + unvested for stocks; equity for property)
   perAsset: Record<string, number>;
   // Optional inflation-adjusted total
@@ -207,16 +211,59 @@ export function buildNetWorthSeries(args: {
     ? Math.pow(1 + scenario.inflation_pct / 100, 1 / 12) - 1
     : 0;
 
+  // Resolve planned sales chronologically, capping each at the shares vested
+  // (and not already earmarked) at its own date. Post-tax proceeds are in
+  // primary currency and stay flat (nominal) once realised.
+  const holdingsById = new Map(holdings.map((h) => [h.id, h]));
+  const earmarked: Record<string, number> = {};
+  const resolvedSales: { stockId: string; date: Date; shares: number; proceeds: number }[] = [];
+  for (const s of [...(scenario.stock_sales ?? [])].sort((a, b) => a.date.localeCompare(b.date))) {
+    const h = holdingsById.get(s.stock_id);
+    const d = parseISO(s.date);
+    if (!h || !d) continue;
+    const available = Math.max(0, vestedSharesAt(h, d) - (earmarked[s.stock_id] ?? 0));
+    const shares = Math.min(s.shares, available);
+    earmarked[s.stock_id] = (earmarked[s.stock_id] ?? 0) + shares;
+    if (shares <= 0) continue;
+    const v = projectStockValueAt(h, scenario, d, settings.primary_currency, settings);
+    const grossNative = shares * v.projected_price;
+    const netNative = grossNative * (1 - Math.max(0, Math.min(100, s.tax_rate_pct)) / 100);
+    resolvedSales.push({
+      stockId: s.stock_id,
+      date: d,
+      shares,
+      proceeds: convert(netNative, h.currency, settings.primary_currency, settings),
+    });
+  }
+
   for (let i = 0; i <= totalMonths; i += step) {
     const asOf = addMonths(startMonth, i);
+    const prevAsOf = addMonths(startMonth, Math.max(0, i - step));
     const perAsset: Record<string, number> = {};
     let liquid = 0, unvested = 0, propEq = 0, propGross = 0;
 
+    // Cash realised so far + per-holding shares sold by now + the bar slice.
+    let cashTotal = 0;
+    let saleStep = 0;
+    const soldByHolding: Record<string, number> = {};
+    for (const r of resolvedSales) {
+      if (r.date <= asOf) {
+        cashTotal += r.proceeds;
+        soldByHolding[r.stockId] = (soldByHolding[r.stockId] ?? 0) + r.shares;
+        const inStep = i === 0 ? true : r.date > prevAsOf;
+        if (inStep) saleStep += r.proceeds;
+      }
+    }
+
     for (const h of holdings) {
       const v = projectStockValueAt(h, scenario, asOf, settings.primary_currency, settings);
+      const sold = soldByHolding[h.id] ?? 0;
+      // Sold shares come out of the vested pool at the blended current value.
+      const scale = v.shares_vested > 0 ? Math.max(0, v.shares_vested - sold) / v.shares_vested : 0;
+      const liquidAdj = v.liquid * scale;
       const label = `stock:${h.ticker || h.company_name || h.id}`;
-      perAsset[label] = v.liquid + v.unvested;
-      liquid += v.liquid;
+      perAsset[label] = liquidAdj + v.unvested;
+      liquid += liquidAdj;
       unvested += v.unvested;
     }
     for (const p of properties) {
@@ -227,7 +274,7 @@ export function buildNetWorthSeries(args: {
       propGross += v.gross;
     }
 
-    const total = liquid + unvested + propEq;
+    const total = liquid + unvested + propEq + cashTotal;
     const row: ProjectionRow = {
       date: asOf.toISOString().slice(0, 10),
       total,
@@ -235,6 +282,8 @@ export function buildNetWorthSeries(args: {
       unvested_equity_total: unvested,
       property_equity_total: propEq,
       property_gross_total: propGross,
+      cash_total: cashTotal,
+      sale_proceeds_step: saleStep,
       perAsset,
     };
     if (inflMonthly > 0) {
@@ -264,6 +313,7 @@ export function currentAllocationBreakdown(args: {
     rsu_tax_jurisdiction: "California",
     rsu_tax_rate_pct: 0,
     rsu_tax_year_overrides: {},
+    stock_sales: [],
   };
   const out: Record<string, number> = {};
   for (const h of args.holdings) {
