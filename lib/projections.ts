@@ -210,8 +210,9 @@ export type ResolvedSale = {
   releaseDate: Date;
   sellDate: Date;
   shares: number;
-  /** Gross + net proceeds in settings.primary_currency. */
-  grossPrimary: number;
+  /** Post-sale-tax proceeds in settings.primary_currency. Earmarked shares
+   *  are valued at this net amount for the whole projection, so a sale never
+   *  causes a step in the net-worth line. */
   netPrimary: number;
 };
 
@@ -248,7 +249,6 @@ export function resolveScenarioSales(
       releaseDate,
       sellDate,
       shares,
-      grossPrimary: convert(grossNative, h.currency, settings.primary_currency, settings),
       netPrimary: convert(netNative, h.currency, settings.primary_currency, settings),
     });
   }
@@ -259,23 +259,24 @@ export type HoldingSaleAccrual = {
   /** Vested shares to take out of the scenario-priced pool (sold, released,
    *  or vested-and-earmarked-but-not-yet-released). */
   scenarioRemovedShares: number;
-  /** Gross value of vested-but-not-yet-released earmarked shares, held flat
-   *  at the sale price. These stay *in* the equity line — the shares are
-   *  still held, just locked to the agreed sale price rather than tracking
-   *  the scenario price, so there is no jump when the sale happens. */
+  /** Net (post-sale-tax) value of vested-but-not-yet-released earmarked
+   *  shares, held flat. These stay *in* the equity line — the shares are
+   *  still held, just locked to the after-tax sale value rather than
+   *  tracking the scenario price, so the sale causes no step at all. */
   lockedLiquid: number;
-  /** Gross of released-but-not-yet-sold shares (continuous net-worth bucket
-   *  between the release and sell dates). */
+  /** Net (post-sale-tax) value of released-but-not-yet-sold shares
+   *  (continuous net-worth bucket between the release and sell dates). */
   pending: number;
-  /** Net (post sale-tax) proceeds of sold shares. */
+  /** Net (post-sale-tax) proceeds of sold shares. */
   cash: number;
 };
 
 /** Per-holding sale accrual at `asOf`. Earmarked shares are valued at the
- *  resolved sale price (override or projected-at-sell) for the whole
- *  projection — they never track the scenario price — so the only net-worth
- *  step a sale produces is the sale tax on the sell date. A sale's shares
- *  only start counting once they have vested (walked in release order). */
+ *  after-tax sale proceeds (override or projected-at-sell, less the sale
+ *  tax) for the whole projection — they never track the scenario price and
+ *  the value is identical while locked, pending and as cash — so a sale
+ *  causes no step in the net-worth line. A sale's shares only start counting
+ *  once they have vested (walked in release order). */
 export function holdingSaleAccrual(
   resolvedForHolding: ResolvedSale[],
   vestedNow: number,
@@ -296,10 +297,10 @@ export function holdingSaleAccrual(
       cash += r.netPrimary;
       scenarioRemovedShares += r.shares;
     } else if (released) {
-      pending += r.grossPrimary;
+      pending += r.netPrimary;
       scenarioRemovedShares += r.shares;
     } else {
-      lockedLiquid += r.grossPrimary * (vestedPortion / r.shares);
+      lockedLiquid += r.netPrimary * (vestedPortion / r.shares);
       scenarioRemovedShares += vestedPortion;
     }
   }
