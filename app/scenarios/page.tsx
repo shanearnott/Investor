@@ -703,23 +703,24 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
           ) : (
             <div className="space-y-2">
               {(d.stock_sales ?? []).map((s) => (
-                <div key={s.id} className="rounded-md border p-2 space-y-2">
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                    <Field label="Stock">
-                      <Select
-                        value={s.stock_id}
-                        onChange={(e) => updateSale(s.id, { stock_id: e.target.value })}
-                      >
-                        {data.stocks.map((h) => (
-                          <option key={h.id} value={h.id}>
-                            {h.ticker || h.company_name || h.id}
-                          </option>
-                        ))}
-                      </Select>
-                    </Field>
+                <div key={s.id} className="rounded-md border p-3 space-y-3">
+                  <Field label="Stock">
+                    <Select
+                      value={s.stock_id}
+                      onChange={(e) => updateSale(s.id, { stock_id: e.target.value })}
+                    >
+                      {data.stocks.map((h) => (
+                        <option key={h.id} value={h.id}>
+                          {h.ticker || h.company_name || h.id}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <Field label="Release date" hint="When the shares leave the equity line.">
                       <Input
                         type="date"
+                        className="min-w-[9rem]"
                         value={s.release_date ?? s.date ?? ""}
                         onChange={(e) => updateSale(s.id, { release_date: e.target.value })}
                       />
@@ -727,10 +728,13 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
                     <Field label="Sell date" hint="Cash added to net worth. Blank = release date.">
                       <Input
                         type="date"
+                        className="min-w-[9rem]"
                         value={s.sell_date ?? ""}
                         onChange={(e) => updateSale(s.id, { sell_date: e.target.value })}
                       />
                     </Field>
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                     <Field label="Shares" hint="Capped at shares vested by the release date.">
                       <Input
                         type="number"
@@ -754,7 +758,7 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
                         }
                       />
                     </Field>
-                    <Field label="Tax on sale">
+                    <Field label="Tax on sale" hint="Income/CGT applied to the proceeds.">
                       <SuffixedInput
                         suffix="%"
                         type="number"
