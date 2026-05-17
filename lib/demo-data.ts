@@ -122,6 +122,7 @@ export function buildDemoData(): CollectionsMap {
         inflation_pct: 2.5,
         rsu_tax_jurisdiction: "California",
         rsu_tax_rate_pct: 37,
+        rsu_tax_year_overrides: {},
       },
       {
         id: "demo-sc-bull",
@@ -137,6 +138,7 @@ export function buildDemoData(): CollectionsMap {
         inflation_pct: 3,
         rsu_tax_jurisdiction: "California",
         rsu_tax_rate_pct: 37,
+        rsu_tax_year_overrides: {},
       },
       {
         id: "demo-sc-bear",
@@ -154,6 +156,7 @@ export function buildDemoData(): CollectionsMap {
         inflation_pct: 4,
         rsu_tax_jurisdiction: "California",
         rsu_tax_rate_pct: 37,
+        rsu_tax_year_overrides: {},
       },
     ],
     projects: [

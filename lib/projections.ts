@@ -6,6 +6,7 @@
 import { convert } from "./fx";
 import { lookupGrowthRate } from "./growth";
 import {
+  parseISO,
   totalGrantedShares,
   vestedSharesAt,
   type Property,
@@ -81,13 +82,38 @@ function propertyGrowthForScenario(
   return fallbackPct || s.default_property_growth_pct;
 }
 
-/** RSU income-tax factor for a holding under a scenario.
- *  Non-RSU holdings pass through. The scenario picks one jurisdiction +
- *  rate that applies to *all* RSU holdings — so this models "what if I
- *  was taxed in jurisdiction X" regardless of where the grant is held. */
-function rsuTaxFactor(scenario: Scenario, h: Pick<StockHolding, "equity_type">): number {
-  if (h.equity_type !== "RSU") return 1;
-  return Math.max(0, 1 - (scenario.rsu_tax_rate_pct ?? 0) / 100);
+/** RSU income-tax rate (%) that applies to shares vesting in `year`.
+ *  Uses the scenario's per-year override for that calendar year if present,
+ *  otherwise the flat scenario rate. */
+function rsuRateForYear(scenario: Scenario, year: number): number {
+  const ov = scenario.rsu_tax_year_overrides?.[String(year)];
+  return ov !== undefined ? ov : (scenario.rsu_tax_rate_pct ?? 0);
+}
+
+/** Net-of-RSU-tax value of an RSU holding split into vested / unvested as of
+ *  `asOf`. Each vest event is taxed at the rate for its own vest year (per-
+ *  year override or flat). Outright-owned shares vested in the past, so they
+ *  take the flat rate. Returns native-currency amounts. */
+function rsuValueNative(
+  h: StockHolding,
+  scenario: Scenario,
+  asOf: Date,
+  projectedPrice: number,
+): { vested: number; unvested: number } {
+  const flatFactor = Math.max(0, 1 - (scenario.rsu_tax_rate_pct ?? 0) / 100);
+  let vested = h.shares_owned_outright * projectedPrice * flatFactor;
+  let unvested = 0;
+  for (const t of h.tranches) {
+    for (const ev of t.vest_events) {
+      const d = parseISO(ev.vest_date);
+      if (!d) continue;
+      const factor = Math.max(0, 1 - rsuRateForYear(scenario, d.getUTCFullYear()) / 100);
+      const val = ev.shares * projectedPrice * factor;
+      if (d <= asOf) vested += val;
+      else unvested += val;
+    }
+  }
+  return { vested, unvested };
 }
 
 export function projectStockValueAt(
@@ -110,15 +136,26 @@ export function projectStockValueAt(
   const vested = vestedSharesAt(h, asOf);
   const granted = totalGrantedShares(h);
   const unvested = Math.max(0, granted - vested);
-  const taxFactor = rsuTaxFactor(scenario, h);
+
+  // RSUs: tax per vest year (override or flat). Non-RSU: untaxed here.
+  let vestedNative: number;
+  let unvestedNative: number;
+  if (h.equity_type === "RSU") {
+    const v = rsuValueNative(h, scenario, asOf, projectedPrice);
+    vestedNative = v.vested;
+    unvestedNative = v.unvested;
+  } else {
+    vestedNative = vested * projectedPrice;
+    unvestedNative = unvested * projectedPrice;
+  }
 
   return {
-    liquid: convert(vested * projectedPrice * taxFactor, h.currency, primaryCcy, settings),
-    unvested: convert(unvested * projectedPrice * taxFactor, h.currency, primaryCcy, settings),
+    liquid: convert(vestedNative, h.currency, primaryCcy, settings),
+    unvested: convert(unvestedNative, h.currency, primaryCcy, settings),
     shares_vested: vested,
     shares_unvested: unvested,
     projected_price: projectedPrice, // in native currency
-    tax_factor: taxFactor,
+    tax_factor: Math.max(0, 1 - (scenario.rsu_tax_rate_pct ?? 0) / 100),
   };
 }
 
@@ -226,6 +263,7 @@ export function currentAllocationBreakdown(args: {
     inflation_pct: 0,
     rsu_tax_jurisdiction: "California",
     rsu_tax_rate_pct: 0,
+    rsu_tax_year_overrides: {},
   };
   const out: Record<string, number> = {};
   for (const h of args.holdings) {
