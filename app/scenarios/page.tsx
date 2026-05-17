@@ -228,6 +228,38 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
     collapse(id);
   };
 
+  const addSale = () => {
+    const firstStock = data.stocks[0];
+    setD((p) => ({
+      ...p,
+      stock_sales: [
+        ...(p.stock_sales ?? []),
+        {
+          id: newId(),
+          stock_id: firstStock?.id ?? "",
+          date: new Date().toISOString().slice(0, 10),
+          shares: 0,
+          tax_rate_pct: p.rsu_tax_rate_pct ?? 0,
+        },
+      ],
+    }));
+  };
+  const updateSale = (
+    id: string,
+    patch: Partial<{ stock_id: string; date: string; shares: number; tax_rate_pct: number }>,
+  ) => {
+    setD((p) => ({
+      ...p,
+      stock_sales: (p.stock_sales ?? []).map((s) => (s.id === id ? { ...s, ...patch } : s)),
+    }));
+  };
+  const removeSale = (id: string) => {
+    setD((p) => ({
+      ...p,
+      stock_sales: (p.stock_sales ?? []).filter((s) => s.id !== id),
+    }));
+  };
+
   /** When the user picks a new jurisdiction, pre-fill the rate from the
    *  per-jurisdiction default — but only overwrite the rate if there's a
    *  default for that jurisdiction; otherwise leave the prior rate alone
@@ -635,6 +667,84 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
               </div>
             </div>
           ) : null}
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <Label>Planned sales</Label>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={addSale}
+              disabled={data.stocks.length === 0}
+            >
+              <Plus className="h-3.5 w-3.5" /> Add sale
+            </Button>
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            Sell already-vested shares at a date under a chosen tax rate. The
+            post-tax proceeds become cash that adds to net worth from then on,
+            and the sold shares leave the equity line. The chart marks each
+            sale with a bar. Sales are capped at shares vested by their date.
+          </p>
+          {data.stocks.length === 0 ? (
+            <p className="text-[11px] text-muted-foreground">Add a stock first to plan a sale.</p>
+          ) : (d.stock_sales ?? []).length === 0 ? (
+            <p className="text-[11px] text-muted-foreground">No planned sales.</p>
+          ) : (
+            <div className="space-y-2">
+              {(d.stock_sales ?? []).map((s) => (
+                <div key={s.id} className="rounded-md border p-2 space-y-2">
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <Field label="Stock">
+                      <Select
+                        value={s.stock_id}
+                        onChange={(e) => updateSale(s.id, { stock_id: e.target.value })}
+                      >
+                        {data.stocks.map((h) => (
+                          <option key={h.id} value={h.id}>
+                            {h.ticker || h.company_name || h.id}
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
+                    <Field label="Sale date">
+                      <Input
+                        type="date"
+                        value={s.date}
+                        onChange={(e) => updateSale(s.id, { date: e.target.value })}
+                      />
+                    </Field>
+                    <Field label="Shares" hint="Capped at shares vested by the sale date.">
+                      <Input
+                        type="number"
+                        step="1"
+                        min={0}
+                        value={s.shares}
+                        onChange={(e) => updateSale(s.id, { shares: Number(e.target.value) })}
+                      />
+                    </Field>
+                    <Field label="Tax on sale">
+                      <SuffixedInput
+                        suffix="%"
+                        type="number"
+                        step="0.5"
+                        min={0}
+                        max={100}
+                        value={s.tax_rate_pct}
+                        onChange={(e) => updateSale(s.id, { tax_rate_pct: Number(e.target.value) })}
+                      />
+                    </Field>
+                  </div>
+                  <div className="flex justify-end">
+                    <Button size="sm" variant="ghost" onClick={() => removeSale(s.id)}>
+                      <Trash2 className="h-4 w-4" /> Remove
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {error ? <p className="text-sm text-destructive">{error}</p> : null}

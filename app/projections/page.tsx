@@ -2,11 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
+  Bar,
   CartesianGrid,
   Cell,
+  ComposedChart,
   Legend,
   Line,
-  LineChart,
   Pie,
   PieChart,
   ResponsiveContainer,
@@ -227,18 +228,25 @@ export default function ProjectionsPage() {
     const dates = new Set<string>();
     for (const sc of chosen) (seriesByScenario[sc.id] ?? []).forEach((r) => dates.add(r.date));
     const sorted = Array.from(dates).sort();
+    const firstId = chosen[0]?.id;
     return sorted.map((date) => {
       const row: Record<string, number | string> = { date };
       for (const sc of chosen) {
         const r = (seriesByScenario[sc.id] ?? []).find((x) => x.date === date);
         if (r) {
-          // total = vested + unvested + property; mask out whichever asset
-          // class is filtered off. Same for the vested-only dashed line.
+          // total = vested + unvested + property + realised cash; mask out
+          // whichever asset class is filtered off. Cash from planned sales
+          // is always counted (it's neither a stock nor a property line).
           const stockTotal = (lineShowStocks ? 1 : 0) * (r.liquid_equity_total + r.unvested_equity_total);
           const stockVested = (lineShowStocks ? 1 : 0) * r.liquid_equity_total;
           const property = (lineShowProperty ? 1 : 0) * r.property_equity_total;
-          row[sc.name] = Math.round(stockTotal + property);
-          row[`${sc.name} vested`] = Math.round(stockVested + property);
+          row[sc.name] = Math.round(stockTotal + property + r.cash_total);
+          row[`${sc.name} vested`] = Math.round(stockVested + property + r.cash_total);
+          // Sale bar — proceeds realised this step, for the first selected
+          // scenario only (keeps the axis readable across scenarios).
+          if (sc.id === firstId && r.sale_proceeds_step > 0) {
+            row.__sale = Math.round(r.sale_proceeds_step);
+          }
         }
       }
       return row;
@@ -348,7 +356,7 @@ export default function ProjectionsPage() {
             <CardHeader>
               <CardTitle>Net (post-tax) worth over time ({ccy})</CardTitle>
               <CardDescription>
-                Solid line = total (vested + unvested + property). Dashed line = vested + property only — steps up as shares vest. RSU income tax (per scenario) is already applied. {chosen.map((s) => s.name).join(" · ") || "—"}
+                Solid line = total (vested + unvested + property + realised cash). Dashed line = vested + property + cash only. Amber bars mark planned sales (post-tax proceeds, first selected scenario). RSU income tax (per scenario) is already applied. {chosen.map((s) => s.name).join(" · ") || "—"}
               </CardDescription>
               <div className="mt-2 flex flex-wrap items-center gap-1">
                 <span className="text-[11px] text-muted-foreground mr-1">Show</span>
@@ -379,8 +387,15 @@ export default function ProjectionsPage() {
             <CardContent>
               <div className="h-[320px] w-full">
                 <ResponsiveContainer>
-                  <LineChart data={lineData} margin={{ top: 10, right: 16, left: 0, bottom: 0 }}>
+                  <ComposedChart data={lineData} margin={{ top: 10, right: 16, left: 0, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                    <Bar
+                      dataKey="__sale"
+                      name="Sale proceeds (post-tax)"
+                      fill="#f59e0b"
+                      barSize={10}
+                      isAnimationActive={false}
+                    />
                     <XAxis
                       dataKey="date"
                       tick={{ fontSize: 11 }}
@@ -426,7 +441,7 @@ export default function ProjectionsPage() {
                         />,
                       ];
                     })}
-                  </LineChart>
+                  </ComposedChart>
                 </ResponsiveContainer>
               </div>
             </CardContent>
@@ -513,9 +528,14 @@ function LesserOfTooltip({
 }) {
   if (!active || !payload?.length) return null;
   const byScenario = new Map<string, { total?: number; vested?: number; color: string }>();
+  let saleValue: number | undefined;
   for (const p of payload) {
     const key = String(p.dataKey ?? "");
     if (!key) continue;
+    if (key === "__sale") {
+      if (typeof p.value === "number" && p.value > 0) saleValue = p.value;
+      continue;
+    }
     const isVested = key.endsWith(" vested");
     const sc = isVested ? key.slice(0, -" vested".length) : key;
     const cur = byScenario.get(sc) ?? { color: p.color ?? "#000" };
@@ -528,7 +548,7 @@ function LesserOfTooltip({
     if (candidates.length === 0) return [];
     return [{ name, value: Math.min(...candidates), color: v.color }];
   });
-  if (rows.length === 0) return null;
+  if (rows.length === 0 && saleValue === undefined) return null;
   return (
     <div className="rounded-md border bg-background/95 px-2 py-1 text-xs shadow">
       <p className="font-medium mb-0.5">As of {label ? formatMmmYY(label) : ""}</p>
@@ -541,6 +561,12 @@ function LesserOfTooltip({
           {r.name}: {formatMoney(r.value, ccy)}
         </p>
       ))}
+      {saleValue !== undefined ? (
+        <p className="tabular-nums">
+          <span className="mr-1 inline-block h-2 w-2 rounded-sm align-middle" style={{ background: "#f59e0b" }} />
+          Sold (post-tax): {formatMoney(saleValue, ccy)}
+        </p>
+      ) : null}
     </div>
   );
 }
