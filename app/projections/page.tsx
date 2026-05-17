@@ -26,6 +26,8 @@ import {
   buildNetWorthSeries,
   projectPropertyValueAt,
   projectStockValueAt,
+  resolveScenarioSales,
+  saleStateAt,
 } from "@/lib/projections";
 import { formatMoney, formatNumber } from "@/lib/utils";
 
@@ -93,10 +95,15 @@ function realisedAtDateByAsset(args: {
     ...args.settings,
     primary_currency: args.ccy as typeof args.settings.primary_currency,
   };
+  const resolved = resolveScenarioSales(args.scenario, args.holdings, settingsForCcy);
+  const { cash, pending, soldByHolding } = saleStateAt(resolved, args.asOf);
   for (const h of args.holdings) {
     const v = projectStockValueAt(h, args.scenario, args.asOf, args.ccy, settingsForCcy);
-    if (v.liquid > 0) {
-      out.push({ name: h.ticker || h.company_name || h.id, value: Math.round(v.liquid), kind: "stock" });
+    const sold = soldByHolding[h.id] ?? 0;
+    const scale = v.shares_vested > 0 ? Math.max(0, v.shares_vested - sold) / v.shares_vested : 0;
+    const liquidAdj = v.liquid * scale;
+    if (liquidAdj > 0) {
+      out.push({ name: h.ticker || h.company_name || h.id, value: Math.round(liquidAdj), kind: "stock" });
     }
   }
   for (const p of args.properties) {
@@ -104,6 +111,10 @@ function realisedAtDateByAsset(args: {
     if (v.equity > 0) {
       out.push({ name: `${p.name} (property)`, value: Math.round(v.equity), kind: "property" });
     }
+  }
+  const saleCash = cash + pending;
+  if (saleCash > 0) {
+    out.push({ name: SALE_CASH_LABEL, value: Math.round(saleCash), kind: "cash" });
   }
   return out;
 }
@@ -128,11 +139,19 @@ function comingByAsset(args: {
     ...args.settings,
     primary_currency: args.ccy as typeof args.settings.primary_currency,
   };
+  const resolved = resolveScenarioSales(args.scenario, args.holdings, settingsForCcy);
+  const sNow = saleStateAt(resolved, args.asOf);
+  const sHor = saleStateAt(resolved, horizon);
 
   for (const h of args.holdings) {
-    const realisedNow = projectStockValueAt(h, args.scenario, args.asOf, args.ccy, settingsForCcy).liquid;
+    const now = projectStockValueAt(h, args.scenario, args.asOf, args.ccy, settingsForCcy);
+    const soldNow = sNow.soldByHolding[h.id] ?? 0;
+    const scaleNow = now.shares_vested > 0 ? Math.max(0, now.shares_vested - soldNow) / now.shares_vested : 0;
+    const realisedNow = now.liquid * scaleNow;
     const v = projectStockValueAt(h, args.scenario, horizon, args.ccy, settingsForCcy);
-    const horizonTotal = v.liquid + v.unvested;
+    const soldHor = sHor.soldByHolding[h.id] ?? 0;
+    const scaleHor = v.shares_vested > 0 ? Math.max(0, v.shares_vested - soldHor) / v.shares_vested : 0;
+    const horizonTotal = v.liquid * scaleHor + v.unvested;
     const coming = Math.max(0, horizonTotal - realisedNow);
     if (coming > 0) out.push({ name: h.ticker || h.company_name || h.id, value: Math.round(coming), kind: "stock" });
   }
@@ -141,6 +160,11 @@ function comingByAsset(args: {
     const v = projectPropertyValueAt(p, args.scenario, horizon, args.ccy, settingsForCcy);
     const coming = Math.max(0, v.equity - realisedNow);
     if (coming > 0) out.push({ name: `${p.name} (property)`, value: Math.round(coming), kind: "property" });
+  }
+  // Cash from sales that land between asOf and horizon.
+  const comingCash = Math.max(0, sHor.cash + sHor.pending - (sNow.cash + sNow.pending));
+  if (comingCash > 0) {
+    out.push({ name: SALE_CASH_LABEL, value: Math.round(comingCash), kind: "cash" });
   }
   return out;
 }
@@ -177,6 +201,14 @@ export default function ProjectionsPage() {
   // target_share_price → implied annual growth rate).
   const [horizonYears, setHorizonYears] = useState<HorizonYears>(5);
 
+  // Chart start month (YYYY-MM). Defaults to the current month.
+  const chartTodayMonth = new Date().toISOString().slice(0, 7);
+  const [chartStartMonth, setChartStartMonth] = useState<string>(chartTodayMonth);
+  const chartStartDate = useMemo(() => {
+    const [y, m] = chartStartMonth.split("-").map(Number);
+    return y && m ? new Date(Date.UTC(y, m - 1, 1)) : new Date();
+  }, [chartStartMonth]);
+
   // Build series in displayCurrency (so all chart axes/tooltips match the selector)
   const seriesByScenario = useMemo(() => {
     const out: Record<string, ReturnType<typeof buildNetWorthSeries>> = {};
@@ -190,11 +222,11 @@ export default function ProjectionsPage() {
         properties: data.properties,
         scenario: sc,
         settings: settingsForDisplay,
-        config: { horizon_years: horizonYears, step_months: 1 },
+        config: { horizon_years: horizonYears, step_months: 1, start: chartStartDate },
       });
     }
     return out;
-  }, [chosen, data.stocks, data.properties, settings, displayCurrency, horizonYears]);
+  }, [chosen, data.stocks, data.properties, settings, displayCurrency, horizonYears, chartStartDate]);
 
   const ccy = displayCurrency;
 
@@ -228,24 +260,24 @@ export default function ProjectionsPage() {
     const dates = new Set<string>();
     for (const sc of chosen) (seriesByScenario[sc.id] ?? []).forEach((r) => dates.add(r.date));
     const sorted = Array.from(dates).sort();
-    const firstId = chosen[0]?.id;
     return sorted.map((date) => {
       const row: Record<string, number | string> = { date };
       for (const sc of chosen) {
         const r = (seriesByScenario[sc.id] ?? []).find((x) => x.date === date);
         if (r) {
-          // total = vested + unvested + property + realised cash; mask out
-          // whichever asset class is filtered off. Cash from planned sales
-          // is always counted (it's neither a stock nor a property line).
+          // total = vested + unvested + property + realised cash + pending
+          // (released-not-sold, keeps the line continuous). Mask out whichever
+          // asset class is filtered off; cash/pending always count.
           const stockTotal = (lineShowStocks ? 1 : 0) * (r.liquid_equity_total + r.unvested_equity_total);
           const stockVested = (lineShowStocks ? 1 : 0) * r.liquid_equity_total;
           const property = (lineShowProperty ? 1 : 0) * r.property_equity_total;
-          row[sc.name] = Math.round(stockTotal + property + r.cash_total);
-          row[`${sc.name} vested`] = Math.round(stockVested + property + r.cash_total);
-          // Sale bar — proceeds realised this step, for the first selected
-          // scenario only (keeps the axis readable across scenarios).
-          if (sc.id === firstId && r.sale_proceeds_step > 0) {
-            row.__sale = Math.round(r.sale_proceeds_step);
+          const cash = r.cash_total + r.pending_sale_total;
+          row[sc.name] = Math.round(stockTotal + property + cash);
+          row[`${sc.name} vested`] = Math.round(stockVested + property + cash);
+          // One bar series per scenario so they don't get lost when several
+          // scenarios are selected; coloured to match the scenario line.
+          if (r.sale_proceeds_step > 0) {
+            row[`${sc.name} sold`] = Math.round(r.sale_proceeds_step);
           }
         }
       }
@@ -321,6 +353,22 @@ export default function ProjectionsPage() {
             );
           })}
           <div className="ml-auto flex items-center gap-2">
+            <Label className="text-xs text-muted-foreground">Start</Label>
+            <Input
+              type="month"
+              value={chartStartMonth}
+              onChange={(e) => setChartStartMonth(e.target.value || chartTodayMonth)}
+              className="h-8 w-[140px] text-xs"
+            />
+            {chartStartMonth !== chartTodayMonth ? (
+              <button
+                type="button"
+                className="text-[11px] text-muted-foreground hover:underline"
+                onClick={() => setChartStartMonth(chartTodayMonth)}
+              >
+                today
+              </button>
+            ) : null}
             <Label className="text-xs text-muted-foreground">Horizon</Label>
             <Select
               value={String(horizonYears)}
@@ -356,7 +404,7 @@ export default function ProjectionsPage() {
             <CardHeader>
               <CardTitle>Net (post-tax) worth over time ({ccy})</CardTitle>
               <CardDescription>
-                Solid line = total (vested + unvested + property + realised cash). Dashed line = vested + property + cash only. Amber bars mark planned sales (post-tax proceeds, first selected scenario). RSU income tax (per scenario) is already applied. {chosen.map((s) => s.name).join(" · ") || "—"}
+                Solid line = total (vested + unvested + property + realised/pending cash). Dashed line = vested + property + cash only. Bars mark planned sales (post-tax proceeds), coloured to match each scenario&apos;s line. RSU income tax (per scenario) is already applied. {chosen.map((s) => s.name).join(" · ") || "—"}
               </CardDescription>
               <div className="mt-2 flex flex-wrap items-center gap-1">
                 <span className="text-[11px] text-muted-foreground mr-1">Show</span>
@@ -389,13 +437,6 @@ export default function ProjectionsPage() {
                 <ResponsiveContainer>
                   <ComposedChart data={lineData} margin={{ top: 10, right: 16, left: 0, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                    <Bar
-                      dataKey="__sale"
-                      name="Sale proceeds (post-tax)"
-                      fill="#f59e0b"
-                      barSize={10}
-                      isAnimationActive={false}
-                    />
                     <XAxis
                       dataKey="date"
                       tick={{ fontSize: 11 }}
@@ -421,6 +462,15 @@ export default function ProjectionsPage() {
                       // solid line covers the dashed one, so a fully-vested
                       // tail reads as a single solid line.
                       return [
+                        <Bar
+                          key={`${s.id}-sold`}
+                          dataKey={`${s.name} sold`}
+                          fill={colour}
+                          fillOpacity={0.55}
+                          barSize={8}
+                          isAnimationActive={false}
+                          legendType="none"
+                        />,
                         <Line
                           key={`${s.id}-total`}
                           type="monotone"
@@ -503,7 +553,9 @@ function Kpi({
   );
 }
 
-type Slice = { name: string; value: number; kind: "stock" | "property" };
+type Slice = { name: string; value: number; kind: "stock" | "property" | "cash" };
+
+const SALE_CASH_LABEL = "Cash from sales";
 
 type TooltipPayloadEntry = {
   dataKey?: string | number;
@@ -527,28 +579,35 @@ function LesserOfTooltip({
   ccy: string;
 }) {
   if (!active || !payload?.length) return null;
-  const byScenario = new Map<string, { total?: number; vested?: number; color: string }>();
-  let saleValue: number | undefined;
+  const byScenario = new Map<string, { total?: number; vested?: number; sold?: number; color: string }>();
   for (const p of payload) {
     const key = String(p.dataKey ?? "");
     if (!key) continue;
-    if (key === "__sale") {
-      if (typeof p.value === "number" && p.value > 0) saleValue = p.value;
-      continue;
+    let sc = key;
+    let field: "total" | "vested" | "sold" = "total";
+    if (key.endsWith(" sold")) {
+      sc = key.slice(0, -" sold".length);
+      field = "sold";
+    } else if (key.endsWith(" vested")) {
+      sc = key.slice(0, -" vested".length);
+      field = "vested";
     }
-    const isVested = key.endsWith(" vested");
-    const sc = isVested ? key.slice(0, -" vested".length) : key;
     const cur = byScenario.get(sc) ?? { color: p.color ?? "#000" };
-    if (isVested) cur.vested = p.value;
-    else cur.total = p.value;
+    if (field === "sold") {
+      if (typeof p.value === "number" && p.value > 0) cur.sold = p.value;
+    } else if (field === "vested") {
+      cur.vested = p.value;
+    } else {
+      cur.total = p.value;
+    }
     byScenario.set(sc, cur);
   }
   const rows = [...byScenario.entries()].flatMap(([name, v]) => {
     const candidates = [v.total, v.vested].filter((x): x is number => typeof x === "number");
-    if (candidates.length === 0) return [];
-    return [{ name, value: Math.min(...candidates), color: v.color }];
+    if (candidates.length === 0 && v.sold === undefined) return [];
+    return [{ name, value: candidates.length ? Math.min(...candidates) : undefined, sold: v.sold, color: v.color }];
   });
-  if (rows.length === 0 && saleValue === undefined) return null;
+  if (rows.length === 0) return null;
   return (
     <div className="rounded-md border bg-background/95 px-2 py-1 text-xs shadow">
       <p className="font-medium mb-0.5">As of {label ? formatMmmYY(label) : ""}</p>
@@ -558,15 +617,10 @@ function LesserOfTooltip({
             className="mr-1 inline-block h-2 w-2 rounded-sm align-middle"
             style={{ background: r.color }}
           />
-          {r.name}: {formatMoney(r.value, ccy)}
+          {r.name}: {r.value !== undefined ? formatMoney(r.value, ccy) : "—"}
+          {r.sold !== undefined ? ` · sold ${formatMoney(r.sold, ccy)}` : ""}
         </p>
       ))}
-      {saleValue !== undefined ? (
-        <p className="tabular-nums">
-          <span className="mr-1 inline-block h-2 w-2 rounded-sm align-middle" style={{ background: "#f59e0b" }} />
-          Sold (post-tax): {formatMoney(saleValue, ccy)}
-        </p>
-      ) : null}
     </div>
   );
 }
@@ -652,7 +706,9 @@ function NestedAllocationCard({
   const [showProperty, setShowProperty] = useState(true);
 
   const passes = (s: Slice) =>
-    (s.kind === "stock" && showStocks) || (s.kind === "property" && showProperty);
+    s.kind === "cash" ||
+    (s.kind === "stock" && showStocks) ||
+    (s.kind === "property" && showProperty);
 
   const realisedFiltered = realised.filter(passes);
   const comingFiltered = coming.filter(passes);
@@ -678,17 +734,18 @@ function NestedAllocationCard({
   // inner slice), then coming's assets — each tagged with its bucket so
   // tooltip/legend can show "ACME (today)" vs "ACME (coming)".
   type OuterSlice = { name: string; value: number; fill: string; bucket: "today" | "coming" };
+  const SALE_CASH_FILL = "#f59e0b"; // amber, matches the sale bars
   const outerData: OuterSlice[] = [
     ...todaySorted.map((s, i) => ({
       name: s.name,
       value: s.value,
-      fill: TODAY_COLORS[(i + 1) % TODAY_COLORS.length],
+      fill: s.name === SALE_CASH_LABEL ? SALE_CASH_FILL : TODAY_COLORS[(i + 1) % TODAY_COLORS.length],
       bucket: "today" as const,
     })),
     ...comingSorted.map((s, i) => ({
       name: s.name,
       value: s.value,
-      fill: COMING_COLORS[(i + 1) % COMING_COLORS.length],
+      fill: s.name === SALE_CASH_LABEL ? SALE_CASH_FILL : COMING_COLORS[(i + 1) % COMING_COLORS.length],
       bucket: "coming" as const,
     })),
   ];

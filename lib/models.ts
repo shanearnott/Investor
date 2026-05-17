@@ -134,15 +134,25 @@ export const ScenarioSchema = z.object({
    *  "I relocate, so RSUs vesting from 2028 are taxed in the new place".
    *  Empty = pure flat-rate behaviour (unchanged). */
   rsu_tax_year_overrides: z.record(z.string(), z.number().min(0).max(100)).default({}),
-  /** Planned stock sales within the scenario. Each sale liquidates a number
-   *  of *already-vested* shares of one holding on a date, taxed at its own
-   *  rate. Post-tax proceeds become cash that adds to net worth from the
-   *  sale date on; the sold shares leave the equity line. Multiple sales
-   *  over time are allowed. */
+  /** Planned stock sales within the scenario.
+   *  - release_date: when the shares leave the holding's equity projection
+   *    (they stop growing with the stock).
+   *  - sell_date (optional): when post-tax cash is added to net worth.
+   *    Defaults to release_date. Between release and sell the gross value is
+   *    held as a flat "pending" amount so net worth stays continuous.
+   *  - sale_price (optional): per-share price in the stock's native currency
+   *    to use for proceeds. If unset, the projected price at sell_date.
+   *  - `date` is the legacy single-date field, still read as a fallback for
+   *    both release_date and sell_date.
+   *  Shares are capped at those vested by release_date and not already
+   *  earmarked by an earlier sale. Multiple sales over time are allowed. */
   stock_sales: z.array(z.object({
     id: z.string(),
     stock_id: z.string(),
-    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    release_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    sell_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    sale_price: z.number().nonnegative().optional(),
     shares: z.number().nonnegative().default(0),
     tax_rate_pct: z.number().min(0).max(100).default(0),
   })).default([]),
