@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Label, Select, Textarea } from "@/components/ui/input";
 import { newId, RSU_DEFAULT_TAX_RATES, Scenario, ScenarioSchema, SUPPORTED_JURISDICTIONS } from "@/lib/models";
-import { formatMoney } from "@/lib/utils";
+import { cn, formatMoney } from "@/lib/utils";
 
 /** Scroll an inline edit form into view on mount. */
 function useScrollIntoViewOnMount<T extends HTMLElement>() {
@@ -134,6 +134,20 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
   const [d, setD] = useState<Scenario>(draft);
   const [error, setError] = useState<string | null>(null);
   const cardRef = useScrollIntoViewOnMount<HTMLDivElement>();
+
+  // Per-year RSU tax mode. On when the scenario already carries year
+  // overrides, or when the user explicitly toggles it.
+  const [perYearTax, setPerYearTax] = useState<boolean>(
+    () => Object.keys(draft.rsu_tax_year_overrides ?? {}).length > 0,
+  );
+  const setYearRate = (year: number, pct: number | undefined) => {
+    setD((p) => {
+      const next = { ...(p.rsu_tax_year_overrides ?? {}) };
+      if (pct === undefined) delete next[String(year)];
+      else next[String(year)] = pct;
+      return { ...p, rsu_tax_year_overrides: next };
+    });
+  };
 
   // Which per-asset override rows are expanded. Rows that already have an
   // override start expanded; everything else is collapsed to a one-line
@@ -548,7 +562,7 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
                 ))}
               </Select>
             </Field>
-            <Field label="Tax rate" hint="Applied to RSU value (vested + unvested) in projections.">
+            <Field label="Flat tax rate" hint="Default rate for any year without a per-year override.">
               <SuffixedInput
                 suffix="%"
                 type="number"
@@ -560,6 +574,67 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
               />
             </Field>
           </div>
+
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={perYearTax}
+              onChange={(e) => {
+                const on = e.target.checked;
+                setPerYearTax(on);
+                if (!on) {
+                  // Leaving per-year mode discards the year overrides so the
+                  // scenario goes back to pure flat-rate behaviour.
+                  setD((p) => ({ ...p, rsu_tax_year_overrides: {} }));
+                }
+              }}
+            />
+            <span>Use per-year rates (shares vesting in a year are taxed at that year&apos;s rate)</span>
+          </label>
+
+          {perYearTax ? (
+            <div className="rounded-md border p-2 space-y-2">
+              <p className="text-[11px] text-muted-foreground">
+                One row per year from now to the horizon. A year left at the flat
+                rate isn&apos;t stored as an override; set it to model a relocation
+                (e.g. set 2028 onward to 0% for UAE). Shares vesting that calendar
+                year use that year&apos;s rate.
+              </p>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {Array.from({ length: d.horizon_years + 1 }, (_, i) => {
+                  const year = new Date().getUTCFullYear() + i;
+                  const ov = d.rsu_tax_year_overrides?.[String(year)];
+                  const effective = ov !== undefined ? ov : d.rsu_tax_rate_pct;
+                  return (
+                    <div key={year} className="space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-medium">{year}</span>
+                        {ov !== undefined ? (
+                          <button
+                            type="button"
+                            className="text-[10px] text-muted-foreground hover:underline"
+                            onClick={() => setYearRate(year, undefined)}
+                          >
+                            use flat
+                          </button>
+                        ) : null}
+                      </div>
+                      <SuffixedInput
+                        suffix="%"
+                        type="number"
+                        step="0.5"
+                        min={0}
+                        max={100}
+                        value={effective}
+                        className={ov !== undefined ? "border-primary" : ""}
+                        onChange={(e) => setYearRate(year, Number(e.target.value))}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
         </div>
 
         {error ? <p className="text-sm text-destructive">{error}</p> : null}
@@ -574,11 +649,12 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
 
 function SuffixedInput({
   suffix,
+  className,
   ...props
 }: { suffix: string } & React.InputHTMLAttributes<HTMLInputElement>) {
   return (
     <div className="relative">
-      <Input className="pr-12" {...props} />
+      <Input className={cn("pr-12", className)} {...props} />
       <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-muted-foreground">
         {suffix}
       </span>

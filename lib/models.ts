@@ -128,6 +128,12 @@ export const ScenarioSchema = z.object({
    *  Pre-fills from a per-jurisdiction default when the dropdown changes,
    *  but stays user-editable so individual circumstances can override. */
   rsu_tax_rate_pct: z.number().min(0).max(100).default(37),
+  /** Optional per-calendar-year RSU tax overrides, keyed by 4-digit year
+   *  string ("2028" -> 0). Shares that vest in an overridden year are taxed
+   *  at that year's rate instead of the flat rsu_tax_rate_pct — models
+   *  "I relocate, so RSUs vesting from 2028 are taxed in the new place".
+   *  Empty = pure flat-rate behaviour (unchanged). */
+  rsu_tax_year_overrides: z.record(z.string(), z.number().min(0).max(100)).default({}),
 });
 
 /** Typical top-marginal-on-RSU defaults used to pre-fill the rate input
