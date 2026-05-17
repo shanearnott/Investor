@@ -44,6 +44,15 @@ export default function HomePage() {
   const todayPrimary = Object.values(allocation).reduce((s, v) => s + v, 0);
   const today = convert(todayPrimary, data.settings.primary_currency, displayCurrency, data.settings);
 
+  // Split the gross-pre-tax total into property vs shares. Property entries
+  // are keyed "<name> (property)"; everything else is share/equity value.
+  const propertyGrossPrimary = Object.entries(allocation)
+    .filter(([k]) => k.endsWith(" (property)"))
+    .reduce((s, [, v]) => s + v, 0);
+  const sharesGrossPrimary = todayPrimary - propertyGrossPrimary;
+  const propertyGross = convert(propertyGrossPrimary, data.settings.primary_currency, displayCurrency, data.settings);
+  const sharesGross = convert(sharesGrossPrimary, data.settings.primary_currency, displayCurrency, data.settings);
+
   // Vested RSU value (gross, in displayCurrency) — needed to derive the
   // post-tax tiles below. RSU income tax hits the value of vested RSU
   // shares at vest; non-RSU equity and property equity are untouched.
@@ -173,6 +182,24 @@ export default function HomePage() {
                   </p>
                 );
               })()}
+              <div className="mt-4 grid grid-cols-2 gap-2">
+                <div className="rounded-md border p-2">
+                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                    📊 Shares (gross)
+                  </div>
+                  <div className="text-lg font-semibold tabular-nums">
+                    {formatMoney(sharesGross, displayCurrency)}
+                  </div>
+                </div>
+                <div className="rounded-md border p-2">
+                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                    🏠 Property (gross)
+                  </div>
+                  <div className="text-lg font-semibold tabular-nums">
+                    {formatMoney(propertyGross, displayCurrency)}
+                  </div>
+                </div>
+              </div>
               {vestedRsuDisplay > 0 ? (
                 <div className="mt-4">
                   <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">
