@@ -255,21 +255,70 @@ export function resolveScenarioSales(
   return out;
 }
 
-/** Cash/pending/share-removal state from resolved sales as of a date. */
-export function saleStateAt(resolved: ResolvedSale[], asOf: Date) {
-  let cash = 0;
+export type HoldingSaleAccrual = {
+  /** Vested shares to take out of the scenario-priced pool (sold, released,
+   *  or vested-and-earmarked-but-not-yet-released). */
+  scenarioRemovedShares: number;
+  /** Gross value of vested-but-not-yet-released earmarked shares, held flat
+   *  at the sale price. These stay *in* the equity line — the shares are
+   *  still held, just locked to the agreed sale price rather than tracking
+   *  the scenario price, so there is no jump when the sale happens. */
+  lockedLiquid: number;
+  /** Gross of released-but-not-yet-sold shares (continuous net-worth bucket
+   *  between the release and sell dates). */
+  pending: number;
+  /** Net (post sale-tax) proceeds of sold shares. */
+  cash: number;
+};
+
+/** Per-holding sale accrual at `asOf`. Earmarked shares are valued at the
+ *  resolved sale price (override or projected-at-sell) for the whole
+ *  projection — they never track the scenario price — so the only net-worth
+ *  step a sale produces is the sale tax on the sell date. A sale's shares
+ *  only start counting once they have vested (walked in release order). */
+export function holdingSaleAccrual(
+  resolvedForHolding: ResolvedSale[],
+  vestedNow: number,
+  asOf: Date,
+): HoldingSaleAccrual {
+  let scenarioRemovedShares = 0;
+  let lockedLiquid = 0;
   let pending = 0;
-  const soldByHolding: Record<string, number> = {};
-  for (const r of resolved) {
-    const released = monthStart(r.releaseDate) <= asOf;
+  let cash = 0;
+  let cum = 0;
+  for (const r of resolvedForHolding) {
+    const vestedPortion = Math.max(0, Math.min(r.shares, vestedNow - cum));
+    cum += r.shares;
+    if (r.shares <= 0) continue;
     const sold = monthStart(r.sellDate) <= asOf;
-    if (released) {
-      soldByHolding[r.stockId] = (soldByHolding[r.stockId] ?? 0) + r.shares;
+    const released = monthStart(r.releaseDate) <= asOf;
+    if (sold) {
+      cash += r.netPrimary;
+      scenarioRemovedShares += r.shares;
+    } else if (released) {
+      pending += r.grossPrimary;
+      scenarioRemovedShares += r.shares;
+    } else {
+      lockedLiquid += r.grossPrimary * (vestedPortion / r.shares);
+      scenarioRemovedShares += vestedPortion;
     }
-    if (sold) cash += r.netPrimary;
-    else if (released) pending += r.grossPrimary;
   }
-  return { cash, pending, soldByHolding };
+  return { scenarioRemovedShares, lockedLiquid, pending, cash };
+}
+
+/** Group resolved sales by holding id, each list sorted by release date so
+ *  cumulative vesting is walked in the right order. */
+export function resolvedByHolding(resolved: ResolvedSale[]): Map<string, ResolvedSale[]> {
+  const m = new Map<string, ResolvedSale[]>();
+  for (const r of resolved) {
+    const arr = m.get(r.stockId);
+    if (arr) arr.push(r);
+    else m.set(r.stockId, [r]);
+  }
+  for (const arr of m.values()) {
+    arr.sort((a, b) => a.releaseDate.getTime() - b.releaseDate.getTime());
+  }
+  return m;
 }
 
 export function buildNetWorthSeries(args: {
@@ -291,14 +340,14 @@ export function buildNetWorthSeries(args: {
     : 0;
 
   const resolvedSales = resolveScenarioSales(scenario, holdings, settings);
+  const salesByHolding = resolvedByHolding(resolvedSales);
 
   for (let i = 0; i <= totalMonths; i += step) {
     const asOf = addMonths(startMonth, i);
     const prevAsOf = addMonths(startMonth, Math.max(0, i - step));
     const perAsset: Record<string, number> = {};
-    let liquid = 0, unvested = 0, propEq = 0, propGross = 0;
+    let liquid = 0, unvested = 0, propEq = 0, propGross = 0, cashTotal = 0, pendingTotal = 0;
 
-    const { cash: cashTotal, pending: pendingTotal, soldByHolding } = saleStateAt(resolvedSales, asOf);
     // Bar slice: proceeds whose sell date lands in this step.
     let saleStep = 0;
     for (const r of resolvedSales) {
@@ -308,14 +357,20 @@ export function buildNetWorthSeries(args: {
 
     for (const h of holdings) {
       const v = projectStockValueAt(h, scenario, asOf, settings.primary_currency, settings);
-      const sold = soldByHolding[h.id] ?? 0;
-      // Sold shares come out of the vested pool at the blended current value.
-      const scale = v.shares_vested > 0 ? Math.max(0, v.shares_vested - sold) / v.shares_vested : 0;
-      const liquidAdj = v.liquid * scale;
+      const acc = holdingSaleAccrual(salesByHolding.get(h.id) ?? [], v.shares_vested, asOf);
+      // Free (non-earmarked) vested shares track the scenario price; earmarked
+      // shares are valued at the locked sale price (lockedLiquid here, then
+      // pending, then cash) so the sale never causes a scenario-vs-override
+      // jump — the only step is the sale tax on the sell date.
+      const free = Math.max(0, v.shares_vested - acc.scenarioRemovedShares);
+      const liquidFree = v.shares_vested > 0 ? v.liquid * (free / v.shares_vested) : 0;
+      const liquidAdj = liquidFree + acc.lockedLiquid;
       const label = `stock:${h.ticker || h.company_name || h.id}`;
       perAsset[label] = liquidAdj + v.unvested;
       liquid += liquidAdj;
       unvested += v.unvested;
+      cashTotal += acc.cash;
+      pendingTotal += acc.pending;
     }
     for (const p of properties) {
       const v = projectPropertyValueAt(p, scenario, asOf, settings.primary_currency, settings);

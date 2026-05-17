@@ -24,10 +24,11 @@ import { convert } from "@/lib/fx";
 import { Property, Scenario, ScenarioSchema, StockHolding, vestedSharesAt } from "@/lib/models";
 import {
   buildNetWorthSeries,
+  holdingSaleAccrual,
   projectPropertyValueAt,
   projectStockValueAt,
   resolveScenarioSales,
-  saleStateAt,
+  resolvedByHolding,
 } from "@/lib/projections";
 import { formatMoney, formatNumber } from "@/lib/utils";
 
@@ -96,15 +97,18 @@ function realisedAtDateByAsset(args: {
     primary_currency: args.ccy as typeof args.settings.primary_currency,
   };
   const resolved = resolveScenarioSales(args.scenario, args.holdings, settingsForCcy);
-  const { cash, pending, soldByHolding } = saleStateAt(resolved, args.asOf);
+  const byHolding = resolvedByHolding(resolved);
+  let saleCash = 0;
   for (const h of args.holdings) {
     const v = projectStockValueAt(h, args.scenario, args.asOf, args.ccy, settingsForCcy);
-    const sold = soldByHolding[h.id] ?? 0;
-    const scale = v.shares_vested > 0 ? Math.max(0, v.shares_vested - sold) / v.shares_vested : 0;
-    const liquidAdj = v.liquid * scale;
+    const acc = holdingSaleAccrual(byHolding.get(h.id) ?? [], v.shares_vested, args.asOf);
+    const free = Math.max(0, v.shares_vested - acc.scenarioRemovedShares);
+    const liquidFree = v.shares_vested > 0 ? v.liquid * (free / v.shares_vested) : 0;
+    const liquidAdj = liquidFree + acc.lockedLiquid;
     if (liquidAdj > 0) {
       out.push({ name: h.ticker || h.company_name || h.id, value: Math.round(liquidAdj), kind: "stock" });
     }
+    saleCash += acc.cash + acc.pending;
   }
   for (const p of args.properties) {
     const v = projectPropertyValueAt(p, args.scenario, args.asOf, args.ccy, settingsForCcy);
@@ -112,7 +116,6 @@ function realisedAtDateByAsset(args: {
       out.push({ name: `${p.name} (property)`, value: Math.round(v.equity), kind: "property" });
     }
   }
-  const saleCash = cash + pending;
   if (saleCash > 0) {
     out.push({ name: SALE_CASH_LABEL, value: Math.round(saleCash), kind: "cash" });
   }
@@ -140,20 +143,26 @@ function comingByAsset(args: {
     primary_currency: args.ccy as typeof args.settings.primary_currency,
   };
   const resolved = resolveScenarioSales(args.scenario, args.holdings, settingsForCcy);
-  const sNow = saleStateAt(resolved, args.asOf);
-  const sHor = saleStateAt(resolved, horizon);
+  const byHolding = resolvedByHolding(resolved);
+  let cashNow = 0;
+  let cashHor = 0;
 
   for (const h of args.holdings) {
+    const sales = byHolding.get(h.id) ?? [];
     const now = projectStockValueAt(h, args.scenario, args.asOf, args.ccy, settingsForCcy);
-    const soldNow = sNow.soldByHolding[h.id] ?? 0;
-    const scaleNow = now.shares_vested > 0 ? Math.max(0, now.shares_vested - soldNow) / now.shares_vested : 0;
-    const realisedNow = now.liquid * scaleNow;
+    const accNow = holdingSaleAccrual(sales, now.shares_vested, args.asOf);
+    const freeNow = Math.max(0, now.shares_vested - accNow.scenarioRemovedShares);
+    const realisedNow =
+      (now.shares_vested > 0 ? now.liquid * (freeNow / now.shares_vested) : 0) + accNow.lockedLiquid;
     const v = projectStockValueAt(h, args.scenario, horizon, args.ccy, settingsForCcy);
-    const soldHor = sHor.soldByHolding[h.id] ?? 0;
-    const scaleHor = v.shares_vested > 0 ? Math.max(0, v.shares_vested - soldHor) / v.shares_vested : 0;
-    const horizonTotal = v.liquid * scaleHor + v.unvested;
+    const accHor = holdingSaleAccrual(sales, v.shares_vested, horizon);
+    const freeHor = Math.max(0, v.shares_vested - accHor.scenarioRemovedShares);
+    const horizonTotal =
+      (v.shares_vested > 0 ? v.liquid * (freeHor / v.shares_vested) : 0) + accHor.lockedLiquid + v.unvested;
     const coming = Math.max(0, horizonTotal - realisedNow);
     if (coming > 0) out.push({ name: h.ticker || h.company_name || h.id, value: Math.round(coming), kind: "stock" });
+    cashNow += accNow.cash + accNow.pending;
+    cashHor += accHor.cash + accHor.pending;
   }
   for (const p of args.properties) {
     const realisedNow = projectPropertyValueAt(p, args.scenario, args.asOf, args.ccy, settingsForCcy).equity;
@@ -162,7 +171,7 @@ function comingByAsset(args: {
     if (coming > 0) out.push({ name: `${p.name} (property)`, value: Math.round(coming), kind: "property" });
   }
   // Cash from sales that land between asOf and horizon.
-  const comingCash = Math.max(0, sHor.cash + sHor.pending - (sNow.cash + sNow.pending));
+  const comingCash = Math.max(0, cashHor - cashNow);
   if (comingCash > 0) {
     out.push({ name: SALE_CASH_LABEL, value: Math.round(comingCash), kind: "cash" });
   }
@@ -405,7 +414,7 @@ export default function ProjectionsPage() {
             <CardHeader>
               <CardTitle>Net (post-tax) worth over time ({ccy})</CardTitle>
               <CardDescription>
-                Solid line = total (vested + unvested + property + realised/pending cash). Dashed line = vested + property + cash only. Bars mark planned sales (post-tax proceeds), coloured to match each scenario&apos;s line. RSU income tax (per scenario) is already applied. {chosen.map((s) => s.name).join(" · ") || "—"}
+                Solid line = shares + property + cash combined (vested + unvested + realised/pending cash). Dashed line = vested + property + cash only. Bars mark planned sales (post-tax proceeds), coloured to match each scenario&apos;s line. RSU income tax (per scenario) is already applied. {chosen.map((s) => s.name).join(" · ") || "—"}
               </CardDescription>
               <div className="mt-2 flex flex-wrap items-center gap-1">
                 <span className="text-[11px] text-muted-foreground mr-1">Show</span>
@@ -469,9 +478,9 @@ export default function ProjectionsPage() {
                     <Legend />
                     {chosen.map((s, i) => {
                       const colour = PIE_COLORS[i % PIE_COLORS.length];
-                      // Order matters: draw the dashed total first, then the
-                      // solid vested line on top. Where the two converge the
-                      // solid line covers the dashed one, so a fully-vested
+                      // Order matters: draw the dashed vested line first, then
+                      // the solid combined line on top. Where the two converge
+                      // the solid line covers the dashed one, so a fully-vested
                       // tail reads as a single solid line.
                       return [
                         <Bar
@@ -484,22 +493,22 @@ export default function ProjectionsPage() {
                           legendType="none"
                         />,
                         <Line
-                          key={`${s.id}-total`}
-                          type="monotone"
-                          dataKey={s.name}
-                          stroke={colour}
-                          strokeWidth={2}
-                          strokeDasharray="4 3"
-                          dot={false}
-                        />,
-                        <Line
                           key={`${s.id}-vested`}
                           type="monotone"
                           dataKey={`${s.name} vested`}
                           stroke={colour}
                           strokeWidth={2}
+                          strokeDasharray="4 3"
                           dot={false}
                           legendType="none"
+                        />,
+                        <Line
+                          key={`${s.id}-total`}
+                          type="monotone"
+                          dataKey={s.name}
+                          stroke={colour}
+                          strokeWidth={2}
+                          dot={false}
                         />,
                       ];
                     })}
