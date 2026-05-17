@@ -20,7 +20,6 @@ import { parseISO, vestedSharesAt, type Property, type StockHolding } from "@/li
 const POST_TAX_RATES: ReadonlyArray<{ label: string; rate: number }> = [
   { label: "US", rate: 37 },
   { label: "AUS", rate: 51 },
-  { label: "UAE", rate: 0 },
 ];
 
 const LOOKAHEAD_OPTIONS = [3, 6, 9, 12, 18, 24] as const;
@@ -205,7 +204,7 @@ export default function HomePage() {
                   <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">
                     Post-tax (RSU income tax applied today)
                   </p>
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-2 gap-2">
                     {POST_TAX_RATES.map(({ label, rate }) => {
                       const value = today - vestedRsuDisplay * (rate / 100);
                       const subCcy = [data.settings.primary_currency, data.settings.secondary_currency]
