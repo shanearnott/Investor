@@ -64,7 +64,10 @@ export type Tranche = z.infer<typeof TrancheSchema>;
  *  Mirrors the scenario `stock_sales` shape so the UI is familiar, but
  *  these sit on the holding itself (real data, not what-ifs). On the
  *  `release_date` the shares come out of the vested count; on the
- *  `sell_date` (defaults to release_date) the net proceeds become cash. */
+ *  `sell_date` the rest are sold (if blank, the non-cover shares are held
+ *  outright). `sell_to_cover_shares` is an alternative to `tax_rate_pct`:
+ *  the number of shares the broker auto-sold to pay tax (those shares
+ *  always leave at release_date, regardless of sell_date). */
 export const StockHoldingSaleSchema = z.object({
   id: z.string(),
   release_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -74,6 +77,10 @@ export const StockHoldingSaleSchema = z.object({
   sale_price: z.number().nonnegative().optional(),
   shares: z.number().nonnegative().default(0),
   tax_rate_pct: z.number().min(0).max(100).default(0),
+  /** Optional: number of shares sold-to-cover for tax. When > 0 this is
+   *  the source of truth for the tax amount (= cover × price), and the
+   *  effective tax rate is derived (cover / shares). */
+  sell_to_cover_shares: z.number().nonnegative().default(0),
   notes: z.string().default(""),
 });
 export type StockHoldingSale = z.infer<typeof StockHoldingSaleSchema>;
@@ -257,18 +264,48 @@ export function todayISO(): string {
 }
 
 // Stock helpers
-/** Total shares minus shares already sold (release_date passed for any
- *  asOf — i.e. ever sold). Sold shares are out of the holding for good. */
+
+/** Shares that actually left the holding from a sale event by `asOf`.
+ *  sell_to_cover shares leave at release_date (they paid the tax);
+ *  remaining shares leave at sell_date if it's set, else they stay
+ *  (the user still owns them — treat as owned outright). */
+function saleSharesGoneBy(s: StockHoldingSale, asOf: Date): number {
+  const release = parseISO(s.release_date);
+  if (!release || release > asOf) return 0;
+  const cover = Math.min(s.sell_to_cover_shares ?? 0, s.shares);
+  const sellD = s.sell_date ? parseISO(s.sell_date) : null;
+  if (sellD && sellD <= asOf) return s.shares;
+  return cover;
+}
+
+/** Shares from a sale event that are now held outright (released but
+ *  not sold, minus the cover portion). */
+function saleSharesHeldOutrightAt(s: StockHoldingSale, asOf: Date): number {
+  const release = parseISO(s.release_date);
+  if (!release || release > asOf) return 0;
+  if (s.sell_date) return 0; // sell_date set means the remainder was also sold
+  const cover = Math.min(s.sell_to_cover_shares ?? 0, s.shares);
+  return Math.max(0, s.shares - cover);
+}
+
+/** Total shares minus shares already sold (forever — independent of asOf).
+ *  Same rule as `vestedSharesAt`: sell_to_cover always counts as sold;
+ *  the rest only count as sold if a sell_date is set. */
 export function totalGrantedShares(h: StockHolding): number {
   let total = h.shares_owned_outright;
   for (const t of h.tranches) {
     for (const ev of t.vest_events) total += ev.shares;
   }
-  for (const s of h.sales ?? []) total -= s.shares;
+  for (const s of h.sales ?? []) {
+    const cover = Math.min(s.sell_to_cover_shares ?? 0, s.shares);
+    total -= s.sell_date ? s.shares : cover;
+  }
   return Math.max(0, total);
 }
 
-/** Vested shares as of `asOf`, net of sales whose release_date has passed. */
+/** Vested-or-outright shares as of `asOf`, net of sales that have actually
+ *  left the holding. A sale with no sell_date keeps its non-cover shares
+ *  in the count (they're now owned outright). */
 export function vestedSharesAt(h: StockHolding, asOf: Date): number {
   let v = h.shares_owned_outright;
   for (const t of h.tranches) {
@@ -278,10 +315,20 @@ export function vestedSharesAt(h: StockHolding, asOf: Date): number {
     }
   }
   for (const s of h.sales ?? []) {
-    const d = parseISO(s.release_date);
-    if (d && d <= asOf) v -= s.shares;
+    v -= saleSharesGoneBy(s, asOf);
   }
   return Math.max(0, v);
+}
+
+/** "Owned outright" total as displayed to the user: the manually-entered
+ *  base plus any sale-event shares that have been released but not sold
+ *  (excluding their sell-to-cover portion). */
+export function effectiveSharesOwnedOutright(h: StockHolding, asOf: Date): number {
+  let n = h.shares_owned_outright;
+  for (const s of h.sales ?? []) {
+    n += saleSharesHeldOutrightAt(s, asOf);
+  }
+  return n;
 }
 
 /** Flatten all vest events across all tranches into a single list with the

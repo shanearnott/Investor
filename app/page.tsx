@@ -65,10 +65,15 @@ export default function HomePage() {
       for (const s of sales) {
         const price = s.sale_price !== undefined && s.sale_price > 0 ? s.sale_price : h.current_share_price;
         const g = s.shares * price;
-        const taxRate = Math.min(100, Math.max(0, s.tax_rate_pct)) / 100;
+        const cover = Math.min(s.sell_to_cover_shares ?? 0, s.shares);
+        // sell_to_cover (when > 0) is the source of truth for tax; else
+        // fall back to the percent rate.
+        const taxNativeForEvent = cover > 0
+          ? cover * price
+          : g * (Math.min(100, Math.max(0, s.tax_rate_pct)) / 100);
         shares += s.shares;
         grossNative += g;
-        taxNative += g * taxRate;
+        taxNative += taxNativeForEvent;
       }
       if (shares === 0) return null;
       const gross = convert(grossNative, h.currency, displayCurrency, data.settings);
@@ -345,6 +350,35 @@ export default function HomePage() {
         <CardContent className="space-y-3 text-sm">
           {lookahead.hasAny ? (
             <>
+              {lookahead.vestingByStock.length > 0 ? (
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground mb-1">
+                    Vesting by stock
+                  </p>
+                  <ul className="text-xs space-y-1">
+                    {lookahead.vestingByStock.map((s) => (
+                      <li
+                        key={s.ticker}
+                        className="flex justify-between gap-2 border-b pb-1 last:border-0"
+                      >
+                        <span>
+                          <b>{s.ticker}</b>{" "}
+                          <span className="text-muted-foreground">
+                            · {s.events} event{s.events === 1 ? "" : "s"} ·{" "}
+                            {s.firstDate === s.lastDate
+                              ? s.firstDate
+                              : `${s.firstDate} → ${s.lastDate}`}
+                          </span>
+                        </span>
+                        <span className="tabular-nums">
+                          {formatNumber(s.shares)} sh · {formatMoney(s.value, displayCurrency)}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+
               {lookahead.vestingEvents.length > 0 ? (
                 <div>
                   <p className="text-xs font-medium text-muted-foreground mb-1">Vesting events</p>
@@ -455,6 +489,14 @@ type VestingEvent = {
   shares: number;
   value: number; // in displayCurrency
 };
+type VestingByStock = {
+  ticker: string;
+  events: number;
+  shares: number;
+  value: number; // in displayCurrency
+  firstDate: string;
+  lastDate: string;
+};
 type PropertyGain = {
   name: string;
   gain: number; // in displayCurrency
@@ -474,6 +516,7 @@ function computeLookahead(args: {
   totalVestingValue: number;
   totalPropertyGain: number;
   vestingEvents: VestingEvent[];
+  vestingByStock: VestingByStock[];
   propertyGains: PropertyGain[];
 } {
   const today = new Date();
@@ -506,6 +549,30 @@ function computeLookahead(args: {
   }
   events.sort((a, b) => a.date.localeCompare(b.date));
 
+  // Per-stock rollup of upcoming vests so the user can see at a glance how
+  // many shares each ticker is expected to vest over the window.
+  const byStockMap = new Map<string, VestingByStock>();
+  for (const e of events) {
+    const cur = byStockMap.get(e.ticker);
+    if (!cur) {
+      byStockMap.set(e.ticker, {
+        ticker: e.ticker,
+        events: 1,
+        shares: e.shares,
+        value: e.value,
+        firstDate: e.date,
+        lastDate: e.date,
+      });
+    } else {
+      cur.events += 1;
+      cur.shares += e.shares;
+      cur.value += e.value;
+      if (e.date < cur.firstDate) cur.firstDate = e.date;
+      if (e.date > cur.lastDate) cur.lastDate = e.date;
+    }
+  }
+  const vestingByStock = Array.from(byStockMap.values()).sort((a, b) => b.value - a.value);
+
   const propertyGains: PropertyGain[] = [];
   let totalGain = 0;
   for (const p of args.properties) {
@@ -532,6 +599,7 @@ function computeLookahead(args: {
     totalVestingValue: totalValue,
     totalPropertyGain: totalGain,
     vestingEvents: events,
+    vestingByStock,
     propertyGains,
   };
 }
