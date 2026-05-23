@@ -55,3 +55,20 @@ body {
     min-height: 40px;
   }
 }
+
+/* Native date inputs render with extra internal padding in WebKit/Blink,
+ * which makes them visually taller and wider than text inputs alongside.
+ * Trim the inner padding and the calendar picker indicator so they line
+ * up with the rest of the form fields. */
+input[type="date"] {
+  font-family: inherit;
+  line-height: 1.25rem;
+}
+input[type="date"]::-webkit-datetime-edit { padding: 0; }
+input[type="date"]::-webkit-datetime-edit-fields-wrapper { padding: 0; }
+input[type="date"]::-webkit-calendar-picker-indicator {
+  padding: 0;
+  margin-inline-start: 0.25rem;
+  opacity: 0.55;
+  cursor: pointer;
+}

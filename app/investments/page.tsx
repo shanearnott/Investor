@@ -21,6 +21,7 @@ import {
   Tranche,
   VestEvent,
   newId,
+  parseISO,
   todayISO,
   totalGrantedShares,
   vestedSharesAt,
@@ -325,6 +326,7 @@ function StockForm({
           release_date: todayISO(),
           shares: 0,
           tax_rate_pct: 0,
+          sell_to_cover_shares: 0,
           notes: "",
         },
       ],
@@ -338,6 +340,7 @@ function StockForm({
       sale_price: number | undefined;
       shares: number;
       tax_rate_pct: number;
+      sell_to_cover_shares: number;
       notes: string;
     }>,
   ) =>
@@ -406,8 +409,28 @@ function StockForm({
           <Field label="Cost basis / share">
             <Input type="number" step="0.01" value={d.cost_basis_per_share} onChange={(e) => update("cost_basis_per_share", Number(e.target.value))} />
           </Field>
-          <Field label="Shares owned outright">
-            <Input type="number" step="1" value={d.shares_owned_outright} onChange={(e) => update("shares_owned_outright", Number(e.target.value))} />
+          <Field
+            label="Shares owned outright"
+            hint={(() => {
+              const today = new Date();
+              const extra = (d.sales ?? []).reduce((acc, s) => {
+                if (s.sell_date) return acc;
+                const release = parseISO(s.release_date);
+                if (!release || release > today) return acc;
+                const cover = Math.min(s.sell_to_cover_shares ?? 0, s.shares);
+                return acc + Math.max(0, s.shares - cover);
+              }, 0);
+              if (extra <= 0) return undefined;
+              const total = d.shares_owned_outright + extra;
+              return `Base ${formatNumber(d.shares_owned_outright)} + ${formatNumber(extra)} from un-sold releases = ${formatNumber(total)} total.`;
+            })()}
+          >
+            <Input
+              type="number"
+              step="1"
+              value={d.shares_owned_outright}
+              onChange={(e) => update("shares_owned_outright", Number(e.target.value))}
+            />
           </Field>
         </div>
 
@@ -472,6 +495,7 @@ function StockForm({
                   key={s.id}
                   sale={s}
                   currency={d.currency}
+                  currentSharePrice={d.current_share_price}
                   onChange={(patch) => updateSale(s.id, patch)}
                   onDelete={() => removeSale(s.id)}
                 />
@@ -706,43 +730,58 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 function SaleEditor({
   sale,
   currency,
+  currentSharePrice,
   onChange,
   onDelete,
 }: {
   sale: StockHoldingSale;
   currency: string;
+  currentSharePrice: number;
   onChange: (patch: Partial<{
     release_date: string;
     sell_date: string;
     sale_price: number | undefined;
     shares: number;
     tax_rate_pct: number;
+    sell_to_cover_shares: number;
     notes: string;
   }>) => void;
   onDelete: () => void;
 }) {
+  // Tax can be specified two ways: a percent rate, or a count of shares
+  // sold-to-cover. Sell-to-cover takes precedence when > 0.
+  const coverMode = (sale.sell_to_cover_shares ?? 0) > 0;
+  const [taxMode, setTaxMode] = useState<"pct" | "cover">(coverMode ? "cover" : "pct");
+  const price = sale.sale_price && sale.sale_price > 0 ? sale.sale_price : currentSharePrice;
+  const effectiveRate = coverMode && sale.shares > 0
+    ? (Math.min(sale.sell_to_cover_shares ?? 0, sale.shares) / sale.shares) * 100
+    : sale.tax_rate_pct;
+  const heldOutright = !sale.sell_date
+    ? Math.max(0, sale.shares - Math.min(sale.sell_to_cover_shares ?? 0, sale.shares))
+    : 0;
   return (
     <div className="rounded-md border p-3 space-y-3">
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <Field label="Release date" hint="When the shares left the vested count.">
+        <Field label="Release date" hint="When the shares came off vesting.">
           <Input
             type="date"
-            className="min-w-[9rem]"
             value={sale.release_date}
             onChange={(e) => onChange({ release_date: e.target.value })}
           />
         </Field>
-        <Field label="Sell date" hint="When cash hit. Blank = same as release date.">
+        <Field
+          label="Sell date"
+          hint="Blank = the non-cover shares were kept (owned outright)."
+        >
           <Input
             type="date"
-            className="min-w-[9rem]"
             value={sale.sell_date ?? ""}
             onChange={(e) => onChange({ sell_date: e.target.value })}
           />
         </Field>
       </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <Field label="Shares">
+        <Field label="Shares" hint="Total shares released in this event.">
           <Input
             type="number"
             step="1"
@@ -762,17 +801,68 @@ function SaleEditor({
             }
           />
         </Field>
-        <Field label="Tax on sale (%)" hint="Effective tax rate on the gross proceeds.">
-          <Input
-            type="number"
-            step="0.5"
-            min={0}
-            max={100}
-            value={sale.tax_rate_pct}
-            onChange={(e) => onChange({ tax_rate_pct: Number(e.target.value) })}
-          />
-        </Field>
+        <div className="space-y-1">
+          <div className="flex items-center justify-between gap-2">
+            <Label>Tax for this event</Label>
+            <Select
+              className="h-7 w-auto text-xs"
+              value={taxMode}
+              onChange={(e) => {
+                const next = e.target.value as "pct" | "cover";
+                setTaxMode(next);
+                if (next === "pct") {
+                  onChange({ sell_to_cover_shares: 0 });
+                } else {
+                  onChange({ tax_rate_pct: 0 });
+                }
+              }}
+            >
+              <option value="pct">% rate</option>
+              <option value="cover">Sell to cover</option>
+            </Select>
+          </div>
+          {taxMode === "pct" ? (
+            <>
+              <Input
+                type="number"
+                step="0.5"
+                min={0}
+                max={100}
+                value={sale.tax_rate_pct}
+                onChange={(e) =>
+                  onChange({ tax_rate_pct: Number(e.target.value), sell_to_cover_shares: 0 })
+                }
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Tax ≈ {formatMoney(sale.shares * price * (sale.tax_rate_pct / 100), currency)} on{" "}
+                {formatMoney(sale.shares * price, currency)} gross.
+              </p>
+            </>
+          ) : (
+            <>
+              <Input
+                type="number"
+                step="1"
+                min={0}
+                value={sale.sell_to_cover_shares ?? 0}
+                onChange={(e) =>
+                  onChange({ sell_to_cover_shares: Number(e.target.value), tax_rate_pct: 0 })
+                }
+              />
+              <p className="text-[11px] text-muted-foreground">
+                ≈ {formatMoney((sale.sell_to_cover_shares ?? 0) * price, currency)} tax
+                ({effectiveRate.toFixed(1)}% effective).
+              </p>
+            </>
+          )}
+        </div>
       </div>
+      {heldOutright > 0 ? (
+        <p className="text-[11px] text-muted-foreground">
+          {formatNumber(heldOutright)} share{heldOutright === 1 ? "" : "s"} held outright after
+          this event (sell date blank, cover taken out).
+        </p>
+      ) : null}
       <Field label="Notes (optional)">
         <Input
           value={sale.notes ?? ""}
