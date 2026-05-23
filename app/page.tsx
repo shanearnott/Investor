@@ -533,16 +533,21 @@ function computeLookahead(args: {
         const d = parseISO(ev.vest_date);
         if (!d) continue;
         if (d <= today || d > end) continue;
-        const valueNative = ev.shares * h.current_share_price;
+        // Net of any broker-side sell-to-cover for tax: the user only ever
+        // receives `shares - cover` from a vest event.
+        const cover = Math.min(ev.sell_to_cover_shares ?? 0, ev.shares);
+        const netShares = Math.max(0, ev.shares - cover);
+        if (netShares === 0) continue;
+        const valueNative = netShares * h.current_share_price;
         const valueDisplay = convert(valueNative, h.currency, args.displayCurrency, args.settings);
         events.push({
           date: ev.vest_date,
           ticker: h.ticker || h.company_name || h.id,
           trancheName: tr.name || "Grant",
-          shares: ev.shares,
+          shares: netShares,
           value: valueDisplay,
         });
-        totalShares += ev.shares;
+        totalShares += netShares;
         totalValue += valueDisplay;
       }
     }

@@ -71,7 +71,10 @@ function blankTranche(): Tranche {
 }
 
 function trancheTotalShares(t: Tranche): number {
-  return t.vest_events.reduce((s, ev) => s + ev.shares, 0);
+  return t.vest_events.reduce((s, ev) => {
+    const cover = Math.min(ev.sell_to_cover_shares ?? 0, ev.shares);
+    return s + Math.max(0, ev.shares - cover);
+  }, 0);
 }
 
 function blankProperty(defaultJurisdiction: string): PropertyDraft {
@@ -290,7 +293,7 @@ function StockForm({
       ...prev,
       tranches: prev.tranches.map((t) =>
         t.id === trancheId
-          ? { ...t, vest_events: [...t.vest_events, { vest_date: todayISO(), shares: 0 }] }
+          ? { ...t, vest_events: [...t.vest_events, { vest_date: todayISO(), shares: 0, sell_to_cover_shares: 0 }] }
           : t,
       ),
     }));
@@ -776,7 +779,7 @@ function SaleEditor({
           <Input
             type="date"
             value={sale.sell_date ?? ""}
-            onChange={(e) => onChange({ sell_date: e.target.value })}
+            onChange={(e) => onChange({ sell_date: e.target.value || undefined })}
           />
         </Field>
       </div>
@@ -1000,8 +1003,16 @@ function TrancheEditor({
 
       {tranche.vest_events.length > 0 ? (
         <div className="space-y-1">
+          <div className="grid grid-cols-[minmax(7rem,12rem)_1fr_1fr_auto] gap-2 text-[10px] uppercase tracking-wide text-muted-foreground px-1">
+            <div>Vest date</div>
+            <div>Shares</div>
+            <div title="Shares the broker auto-sold to cover tax at vest.">
+              Sell to cover
+            </div>
+            <div />
+          </div>
           {tranche.vest_events.map((ev, idx) => (
-            <div key={idx} className="flex gap-2">
+            <div key={idx} className="grid grid-cols-[minmax(7rem,12rem)_1fr_1fr_auto] gap-2 items-center">
               <Input
                 type="date"
                 value={ev.vest_date}
@@ -1012,6 +1023,15 @@ function TrancheEditor({
                 step="1"
                 value={ev.shares}
                 onChange={(e) => onUpdateEvent(idx, { ...ev, shares: Number(e.target.value) })}
+              />
+              <Input
+                type="number"
+                step="1"
+                min={0}
+                value={ev.sell_to_cover_shares ?? 0}
+                onChange={(e) =>
+                  onUpdateEvent(idx, { ...ev, sell_to_cover_shares: Number(e.target.value) })
+                }
               />
               <Button size="icon" variant="ghost" onClick={() => onRemoveEvent(idx)}>
                 <Trash2 className="h-4 w-4" />
@@ -1077,7 +1097,7 @@ function ScheduleGenerator({
     for (let i = 0; i < totalPeriods; i++) {
       const d = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + i * monthsStep, start.getUTCDate()));
       const shares = i === totalPeriods - 1 ? baseShares + remainder : baseShares;
-      events.push({ vest_date: d.toISOString().slice(0, 10), shares });
+      events.push({ vest_date: d.toISOString().slice(0, 10), shares, sell_to_cover_shares: 0 });
     }
     onGenerate(events);
     setOpen(false);

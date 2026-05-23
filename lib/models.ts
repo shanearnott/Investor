@@ -45,6 +45,10 @@ const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD").option
 export const VestEventSchema = z.object({
   vest_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   shares: z.number().nonnegative(),
+  /** Optional: number of shares the broker auto-sold to cover tax at the
+   *  vest. Counts as "released but immediately gone" — the user only ever
+   *  receives `shares - sell_to_cover_shares` from this event. */
+  sell_to_cover_shares: z.number().nonnegative().default(0),
 });
 export type VestEvent = z.infer<typeof VestEventSchema>;
 
@@ -294,7 +298,10 @@ function saleSharesHeldOutrightAt(s: StockHoldingSale, asOf: Date): number {
 export function totalGrantedShares(h: StockHolding): number {
   let total = h.shares_owned_outright;
   for (const t of h.tranches) {
-    for (const ev of t.vest_events) total += ev.shares;
+    for (const ev of t.vest_events) {
+      const cover = Math.min(ev.sell_to_cover_shares ?? 0, ev.shares);
+      total += Math.max(0, ev.shares - cover);
+    }
   }
   for (const s of h.sales ?? []) {
     const cover = Math.min(s.sell_to_cover_shares ?? 0, s.shares);
@@ -311,7 +318,10 @@ export function vestedSharesAt(h: StockHolding, asOf: Date): number {
   for (const t of h.tranches) {
     for (const ev of t.vest_events) {
       const d = parseISO(ev.vest_date);
-      if (d && d <= asOf) v += ev.shares;
+      if (d && d <= asOf) {
+        const cover = Math.min(ev.sell_to_cover_shares ?? 0, ev.shares);
+        v += Math.max(0, ev.shares - cover);
+      }
     }
   }
   for (const s of h.sales ?? []) {
