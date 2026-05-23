@@ -21,7 +21,7 @@ import { useData } from "@/components/data-provider";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Label, Select } from "@/components/ui/input";
 import { convert } from "@/lib/fx";
-import { Property, Scenario, ScenarioSchema, StockHolding, vestedSharesAt } from "@/lib/models";
+import { Property, Scenario, ScenarioSchema, StockHolding, holdingCashFromSalesNativeAt, vestedSharesAt } from "@/lib/models";
 import {
   buildNetWorthSeries,
   holdingSaleAccrual,
@@ -109,6 +109,10 @@ function realisedAtDateByAsset(args: {
       out.push({ name: h.ticker || h.company_name || h.id, value: Math.round(liquidAdj), kind: "stock" });
     }
     saleCash += acc.cash + acc.pending;
+    const holdingCashNative = holdingCashFromSalesNativeAt(h, args.asOf);
+    if (holdingCashNative > 0) {
+      saleCash += convert(holdingCashNative, h.currency, args.ccy, settingsForCcy);
+    }
   }
   for (const p of args.properties) {
     const v = projectPropertyValueAt(p, args.scenario, args.asOf, args.ccy, settingsForCcy);
@@ -163,6 +167,10 @@ function comingByAsset(args: {
     if (coming > 0) out.push({ name: h.ticker || h.company_name || h.id, value: Math.round(coming), kind: "stock" });
     cashNow += accNow.cash + accNow.pending;
     cashHor += accHor.cash + accHor.pending;
+    const holdingCashNow = holdingCashFromSalesNativeAt(h, args.asOf);
+    if (holdingCashNow > 0) cashNow += convert(holdingCashNow, h.currency, args.ccy, settingsForCcy);
+    const holdingCashHor = holdingCashFromSalesNativeAt(h, horizon);
+    if (holdingCashHor > 0) cashHor += convert(holdingCashHor, h.currency, args.ccy, settingsForCcy);
   }
   for (const p of args.properties) {
     const realisedNow = projectPropertyValueAt(p, args.scenario, args.asOf, args.ccy, settingsForCcy).equity;
@@ -248,13 +256,13 @@ export default function ProjectionsPage() {
   const propertyToday = todayRow?.property_equity_total ?? 0;
 
   // Gross (pre-tax) snapshot today — same definition as the home page hero,
-  // so the two pages match: vested shares × current price + property equity,
-  // no RSU income-tax haircut, no unvested.
+  // so the two pages match: vested shares × current price + property equity +
+  // cash from any recorded sales, no RSU income-tax haircut, no unvested.
   const todayDate = new Date();
   const grossTodayPretax =
     data.stocks.reduce((sum, h) => {
       const vested = vestedSharesAt(h, todayDate);
-      const native = vested * h.current_share_price;
+      const native = vested * h.current_share_price + holdingCashFromSalesNativeAt(h, todayDate);
       return sum + convert(native, h.currency, ccy, settings);
     }, 0) +
     data.properties.reduce((sum, p) => {

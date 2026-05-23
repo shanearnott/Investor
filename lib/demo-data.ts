@@ -57,6 +57,7 @@ export function buildDemoData(): CollectionsMap {
             notes: "Refresher grant, vests 1y from now over 4y quarterly.",
           },
         ],
+        sales: [],
         notes: "Demo: RSUs across two tranches (initial hire + refresher).",
       },
       {
@@ -70,6 +71,7 @@ export function buildDemoData(): CollectionsMap {
         cost_basis_per_share: 280.0,
         shares_owned_outright: 200,
         tranches: [],
+        sales: [],
         notes: "Demo: public-stock holding, long-term cap gains eligible.",
       },
     ],
