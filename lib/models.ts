@@ -60,6 +60,24 @@ export const TrancheSchema = z.object({
 });
 export type Tranche = z.infer<typeof TrancheSchema>;
 
+/** A recorded sale of shares from a holding — historical or committed.
+ *  Mirrors the scenario `stock_sales` shape so the UI is familiar, but
+ *  these sit on the holding itself (real data, not what-ifs). On the
+ *  `release_date` the shares come out of the vested count; on the
+ *  `sell_date` (defaults to release_date) the net proceeds become cash. */
+export const StockHoldingSaleSchema = z.object({
+  id: z.string(),
+  release_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  sell_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  /** Per-share price in the holding's native currency. Blank = use the
+   *  holding's `current_share_price`. */
+  sale_price: z.number().nonnegative().optional(),
+  shares: z.number().nonnegative().default(0),
+  tax_rate_pct: z.number().min(0).max(100).default(0),
+  notes: z.string().default(""),
+});
+export type StockHoldingSale = z.infer<typeof StockHoldingSaleSchema>;
+
 export const StockHoldingSchema = z.object({
   id: z.string(),
   ticker: z.string().default(""),
@@ -72,6 +90,9 @@ export const StockHoldingSchema = z.object({
   shares_owned_outright: z.number().nonnegative().default(0),
   /** Multiple tranches per stock; each has its own vesting schedule. */
   tranches: z.array(TrancheSchema).default([]),
+  /** Recorded sales — shares actually sold (or committed to be sold) out
+   *  of this holding. */
+  sales: z.array(StockHoldingSaleSchema).default([]),
   notes: z.string().default(""),
 });
 export type StockHolding = z.infer<typeof StockHoldingSchema>;
@@ -236,14 +257,18 @@ export function todayISO(): string {
 }
 
 // Stock helpers
+/** Total shares minus shares already sold (release_date passed for any
+ *  asOf — i.e. ever sold). Sold shares are out of the holding for good. */
 export function totalGrantedShares(h: StockHolding): number {
   let total = h.shares_owned_outright;
   for (const t of h.tranches) {
     for (const ev of t.vest_events) total += ev.shares;
   }
-  return total;
+  for (const s of h.sales ?? []) total -= s.shares;
+  return Math.max(0, total);
 }
 
+/** Vested shares as of `asOf`, net of sales whose release_date has passed. */
 export function vestedSharesAt(h: StockHolding, asOf: Date): number {
   let v = h.shares_owned_outright;
   for (const t of h.tranches) {
@@ -252,7 +277,27 @@ export function vestedSharesAt(h: StockHolding, asOf: Date): number {
       if (d && d <= asOf) v += ev.shares;
     }
   }
-  return v;
+  for (const s of h.sales ?? []) {
+    const d = parseISO(s.release_date);
+    if (d && d <= asOf) v -= s.shares;
+  }
+  return Math.max(0, v);
+}
+
+/** Net (post sale-tax) cash from sales of this holding whose sell_date has
+ *  passed, in the holding's native currency. Sale price falls back to
+ *  the holding's current_share_price when no override is recorded. */
+export function holdingCashFromSalesNativeAt(h: StockHolding, asOf: Date): number {
+  let cash = 0;
+  for (const s of h.sales ?? []) {
+    const sellD = parseISO(s.sell_date ?? s.release_date);
+    if (!sellD || sellD > asOf) continue;
+    const price = s.sale_price !== undefined && s.sale_price > 0 ? s.sale_price : h.current_share_price;
+    const gross = s.shares * price;
+    const net = gross * (1 - Math.min(100, Math.max(0, s.tax_rate_pct)) / 100);
+    cash += net;
+  }
+  return cash;
 }
 
 /** Flatten all vest events across all tranches into a single list with the

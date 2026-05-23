@@ -14,6 +14,7 @@ import {
   Property,
   PropertySchema,
   StockHolding,
+  StockHoldingSale,
   StockHoldingSchema,
   SUPPORTED_CURRENCIES,
   SUPPORTED_JURISDICTIONS,
@@ -314,6 +315,43 @@ function StockForm({
       ),
     }));
 
+  const addSale = () =>
+    setD((prev) => ({
+      ...prev,
+      sales: [
+        ...(prev.sales ?? []),
+        {
+          id: newId(),
+          release_date: todayISO(),
+          shares: 0,
+          tax_rate_pct: 0,
+          notes: "",
+        },
+      ],
+    }));
+
+  const updateSale = (
+    id: string,
+    patch: Partial<{
+      release_date: string;
+      sell_date: string;
+      sale_price: number | undefined;
+      shares: number;
+      tax_rate_pct: number;
+      notes: string;
+    }>,
+  ) =>
+    setD((prev) => ({
+      ...prev,
+      sales: (prev.sales ?? []).map((s) => (s.id === id ? { ...s, ...patch } : s)),
+    }));
+
+  const removeSale = (id: string) =>
+    setD((prev) => ({
+      ...prev,
+      sales: (prev.sales ?? []).filter((s) => s.id !== id),
+    }));
+
   const submit = async () => {
     setError(null);
     // Drop empty events; keep tranches even if they have no events (user may
@@ -402,6 +440,40 @@ function StockForm({
                   onAddEvent={() => addEvent(t.id)}
                   onUpdateEvent={(idx, ev) => updateEvent(t.id, idx, ev)}
                   onRemoveEvent={(idx) => removeEvent(t.id, idx)}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <Label>Recorded sales</Label>
+              <p className="text-[11px] text-muted-foreground">
+                Sales of vested shares — historical or committed. On the release
+                date shares come out of the vested count; on the sell date the
+                net proceeds become cash and add to net worth.
+              </p>
+            </div>
+            <Button size="sm" variant="outline" onClick={addSale}>
+              <Plus className="h-3 w-3" /> Add sale
+            </Button>
+          </div>
+
+          {(d.sales ?? []).length === 0 ? (
+            <p className="text-xs text-muted-foreground">
+              No sales recorded — click <b>Add sale</b> to log one.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {(d.sales ?? []).map((s) => (
+                <SaleEditor
+                  key={s.id}
+                  sale={s}
+                  currency={d.currency}
+                  onChange={(patch) => updateSale(s.id, patch)}
+                  onDelete={() => removeSale(s.id)}
                 />
               ))}
             </div>
@@ -627,6 +699,91 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
       <Label>{label}</Label>
       {children}
       {hint ? <p className="text-[11px] text-muted-foreground">{hint}</p> : null}
+    </div>
+  );
+}
+
+function SaleEditor({
+  sale,
+  currency,
+  onChange,
+  onDelete,
+}: {
+  sale: StockHoldingSale;
+  currency: string;
+  onChange: (patch: Partial<{
+    release_date: string;
+    sell_date: string;
+    sale_price: number | undefined;
+    shares: number;
+    tax_rate_pct: number;
+    notes: string;
+  }>) => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div className="rounded-md border p-3 space-y-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Field label="Release date" hint="When the shares left the vested count.">
+          <Input
+            type="date"
+            className="min-w-[9rem]"
+            value={sale.release_date}
+            onChange={(e) => onChange({ release_date: e.target.value })}
+          />
+        </Field>
+        <Field label="Sell date" hint="When cash hit. Blank = same as release date.">
+          <Input
+            type="date"
+            className="min-w-[9rem]"
+            value={sale.sell_date ?? ""}
+            onChange={(e) => onChange({ sell_date: e.target.value })}
+          />
+        </Field>
+      </div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <Field label="Shares">
+          <Input
+            type="number"
+            step="1"
+            min={0}
+            value={sale.shares}
+            onChange={(e) => onChange({ shares: Number(e.target.value) })}
+          />
+        </Field>
+        <Field label={`Share price (${currency})`} hint="Blank = current share price.">
+          <Input
+            type="number"
+            step="0.01"
+            min={0}
+            value={sale.sale_price ?? ""}
+            onChange={(e) =>
+              onChange({ sale_price: e.target.value === "" ? undefined : Number(e.target.value) })
+            }
+          />
+        </Field>
+        <Field label="Tax on sale (%)" hint="Effective tax rate on the gross proceeds.">
+          <Input
+            type="number"
+            step="0.5"
+            min={0}
+            max={100}
+            value={sale.tax_rate_pct}
+            onChange={(e) => onChange({ tax_rate_pct: Number(e.target.value) })}
+          />
+        </Field>
+      </div>
+      <Field label="Notes (optional)">
+        <Input
+          value={sale.notes ?? ""}
+          onChange={(e) => onChange({ notes: e.target.value })}
+        />
+      </Field>
+      <div className="flex justify-end">
+        <Button size="sm" variant="ghost" onClick={onDelete}>
+          <Trash2 className="h-4 w-4" /> Remove
+        </Button>
+      </div>
     </div>
   );
 }
