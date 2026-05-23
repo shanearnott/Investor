@@ -18,7 +18,7 @@ import { parseISO, vestedSharesAt, type Property, type StockHolding } from "@/li
  *  tiles. Mirrors the scenarios page defaults — gives a quick at-a-glance
  *  read of net worth if you were taxed in each jurisdiction at vest. */
 const POST_TAX_RATES: ReadonlyArray<{ label: string; rate: number }> = [
-  { label: "US", rate: 37 },
+  { label: "US", rate: 50 },
   { label: "AUS", rate: 51 },
 ];
 

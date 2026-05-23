@@ -127,7 +127,7 @@ export const ScenarioSchema = z.object({
   /** Income-tax % applied to RSU value (vested + unvested) in this scenario.
    *  Pre-fills from a per-jurisdiction default when the dropdown changes,
    *  but stays user-editable so individual circumstances can override. */
-  rsu_tax_rate_pct: z.number().min(0).max(100).default(37),
+  rsu_tax_rate_pct: z.number().min(0).max(100).default(50),
   /** Optional per-calendar-year RSU tax overrides, keyed by 4-digit year
    *  string ("2028" -> 0). Shares that vest in an overridden year are taxed
    *  at that year's rate instead of the flat rsu_tax_rate_pct — models
@@ -162,7 +162,7 @@ export type StockSale = z.infer<typeof ScenarioSchema>["stock_sales"][number];
 /** Typical top-marginal-on-RSU defaults used to pre-fill the rate input
  *  when the user picks a new jurisdiction in a scenario. Editable after. */
 export const RSU_DEFAULT_TAX_RATES: Partial<Record<typeof SUPPORTED_JURISDICTIONS[number], number>> = {
-  "California": 37,
+  "California": 50,
   "US-Federal-Only": 37,
   "Australia": 51,
   "UAE": 0,
