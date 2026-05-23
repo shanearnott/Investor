@@ -47,10 +47,30 @@ export const VestEventSchema = z.object({
   shares: z.number().nonnegative(),
   /** Optional: number of shares the broker auto-sold to cover tax at the
    *  vest. Counts as "released but immediately gone" — the user only ever
-   *  receives `shares - sell_to_cover_shares` from this event. */
+   *  receives `shares - sell_to_cover_shares` from this event. Takes
+   *  precedence over `tax_rate_pct` when > 0. */
   sell_to_cover_shares: z.number().nonnegative().default(0),
+  /** Optional: tax rate applied to this vest, expressed as a percentage
+   *  of the granted shares. shares × rate% are removed from the net
+   *  share count (equivalent to sell-to-cover but specified as a rate). */
+  tax_rate_pct: z.number().min(0).max(100).default(0),
 });
 export type VestEvent = z.infer<typeof VestEventSchema>;
+
+/** Shares from a vest event that are lost to tax — either an explicit
+ *  sell-to-cover count (precedence) or shares × tax_rate_pct%. */
+export function vestEventTaxShares(ev: VestEvent): number {
+  const cover = Math.min(ev.sell_to_cover_shares ?? 0, ev.shares);
+  if (cover > 0) return cover;
+  const rate = Math.min(100, Math.max(0, ev.tax_rate_pct ?? 0));
+  return (ev.shares * rate) / 100;
+}
+
+/** Shares the user actually receives from a vest event, net of any
+ *  cover/tax. */
+export function vestEventNetShares(ev: VestEvent): number {
+  return Math.max(0, ev.shares - vestEventTaxShares(ev));
+}
 
 /** A tranche / grant — a logical group of vest events (e.g. "2024 hire grant",
  *  "2025 refresher"). A stock can have multiple tranches; each has its own
@@ -299,8 +319,7 @@ export function totalGrantedShares(h: StockHolding): number {
   let total = h.shares_owned_outright;
   for (const t of h.tranches) {
     for (const ev of t.vest_events) {
-      const cover = Math.min(ev.sell_to_cover_shares ?? 0, ev.shares);
-      total += Math.max(0, ev.shares - cover);
+      total += vestEventNetShares(ev);
     }
   }
   for (const s of h.sales ?? []) {
@@ -318,10 +337,7 @@ export function vestedSharesAt(h: StockHolding, asOf: Date): number {
   for (const t of h.tranches) {
     for (const ev of t.vest_events) {
       const d = parseISO(ev.vest_date);
-      if (d && d <= asOf) {
-        const cover = Math.min(ev.sell_to_cover_shares ?? 0, ev.shares);
-        v += Math.max(0, ev.shares - cover);
-      }
+      if (d && d <= asOf) v += vestEventNetShares(ev);
     }
   }
   for (const s of h.sales ?? []) {

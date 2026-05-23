@@ -12,7 +12,7 @@ import { convert } from "@/lib/fx";
 import { lookupGrowthRate } from "@/lib/growth";
 import { formatMoney, formatNumber } from "@/lib/utils";
 import { currentAllocationBreakdown } from "@/lib/projections";
-import { parseISO, vestedSharesAt, type Property, type StockHolding } from "@/lib/models";
+import { parseISO, vestEventNetShares, vestedSharesAt, type Property, type StockHolding } from "@/lib/models";
 
 /** RSU income-tax rates applied to the home-page "post-tax" net-worth
  *  tiles. Mirrors the scenarios page defaults — gives a quick at-a-glance
@@ -51,55 +51,6 @@ export default function HomePage() {
   const sharesGrossPrimary = todayPrimary - propertyGrossPrimary;
   const propertyGross = convert(propertyGrossPrimary, data.settings.primary_currency, displayCurrency, data.settings);
   const sharesGross = convert(sharesGrossPrimary, data.settings.primary_currency, displayCurrency, data.settings);
-
-  // Recorded sales summary — for each stock with logged sales, sum shares,
-  // gross, tax, and net (all in display currency). Pure record-keeping; the
-  // numbers don't roll into the gross/net-worth totals above.
-  const salesSummary = data.stocks
-    .map((h) => {
-      const sales = h.sales ?? [];
-      if (sales.length === 0) return null;
-      let shares = 0;
-      let grossNative = 0;
-      let taxNative = 0;
-      for (const s of sales) {
-        const price = s.sale_price !== undefined && s.sale_price > 0 ? s.sale_price : h.current_share_price;
-        const g = s.shares * price;
-        const cover = Math.min(s.sell_to_cover_shares ?? 0, s.shares);
-        // sell_to_cover (when > 0) is the source of truth for tax; else
-        // fall back to the percent rate.
-        const taxNativeForEvent = cover > 0
-          ? cover * price
-          : g * (Math.min(100, Math.max(0, s.tax_rate_pct)) / 100);
-        shares += s.shares;
-        grossNative += g;
-        taxNative += taxNativeForEvent;
-      }
-      if (shares === 0) return null;
-      const gross = convert(grossNative, h.currency, displayCurrency, data.settings);
-      const tax = convert(taxNative, h.currency, displayCurrency, data.settings);
-      const net = gross - tax;
-      const ratePct = grossNative > 0 ? (taxNative / grossNative) * 100 : 0;
-      return {
-        id: h.id,
-        label: h.ticker || h.company_name || "—",
-        shares,
-        gross,
-        tax,
-        net,
-        ratePct,
-      };
-    })
-    .filter((x): x is NonNullable<typeof x> => x !== null);
-  const salesTotal = salesSummary.reduce(
-    (acc, r) => ({
-      shares: acc.shares + r.shares,
-      gross: acc.gross + r.gross,
-      tax: acc.tax + r.tax,
-      net: acc.net + r.net,
-    }),
-    { shares: 0, gross: 0, tax: 0, net: 0 },
-  );
 
   // Vested RSU value (gross, in displayCurrency) — needed to derive the
   // post-tax tiles below. RSU income tax hits the value of vested RSU
@@ -248,48 +199,6 @@ export default function HomePage() {
                   </div>
                 </div>
               </div>
-              {salesSummary.length > 0 ? (
-                <div className="mt-4">
-                  <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">
-                    Recorded sales (info — not in totals above)
-                  </p>
-                  <div className="rounded-md border divide-y">
-                    <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-3 px-2 py-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-                      <div>Stock</div>
-                      <div className="text-right">Shares</div>
-                      <div className="text-right">Gross</div>
-                      <div className="text-right">Tax</div>
-                      <div className="text-right">Net</div>
-                    </div>
-                    {salesSummary.map((r) => (
-                      <div
-                        key={r.id}
-                        className="grid grid-cols-[1fr_auto_auto_auto_auto] items-baseline gap-3 px-2 py-1.5 text-xs tabular-nums"
-                      >
-                        <div className="font-medium">{r.label}</div>
-                        <div className="text-right">{formatNumber(r.shares)}</div>
-                        <div className="text-right">{formatMoney(r.gross, displayCurrency)}</div>
-                        <div className="text-right text-muted-foreground">
-                          −{formatMoney(r.tax, displayCurrency)}
-                          <span className="ml-1 text-[10px]">({r.ratePct.toFixed(1)}%)</span>
-                        </div>
-                        <div className="text-right font-semibold">{formatMoney(r.net, displayCurrency)}</div>
-                      </div>
-                    ))}
-                    {salesSummary.length > 1 ? (
-                      <div className="grid grid-cols-[1fr_auto_auto_auto_auto] items-baseline gap-3 px-2 py-1.5 text-xs tabular-nums bg-muted/40">
-                        <div className="font-medium">Total</div>
-                        <div className="text-right">{formatNumber(salesTotal.shares)}</div>
-                        <div className="text-right">{formatMoney(salesTotal.gross, displayCurrency)}</div>
-                        <div className="text-right text-muted-foreground">
-                          −{formatMoney(salesTotal.tax, displayCurrency)}
-                        </div>
-                        <div className="text-right font-semibold">{formatMoney(salesTotal.net, displayCurrency)}</div>
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-              ) : null}
               {vestedRsuDisplay > 0 ? (
                 <div className="mt-4">
                   <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">
@@ -533,10 +442,9 @@ function computeLookahead(args: {
         const d = parseISO(ev.vest_date);
         if (!d) continue;
         if (d <= today || d > end) continue;
-        // Net of any broker-side sell-to-cover for tax: the user only ever
-        // receives `shares - cover` from a vest event.
-        const cover = Math.min(ev.sell_to_cover_shares ?? 0, ev.shares);
-        const netShares = Math.max(0, ev.shares - cover);
+        // Net of any tax / broker-side sell-to-cover: the user only
+        // receives the post-tax share count from the vest.
+        const netShares = vestEventNetShares(ev);
         if (netShares === 0) continue;
         const valueNative = netShares * h.current_share_price;
         const valueDisplay = convert(valueNative, h.currency, args.displayCurrency, args.settings);
