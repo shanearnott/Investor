@@ -452,8 +452,8 @@ function StockForm({
               <Label>Recorded sales</Label>
               <p className="text-[11px] text-muted-foreground">
                 Sales of vested shares — historical or committed. On the release
-                date shares come out of the vested count; on the sell date the
-                net proceeds become cash and add to net worth.
+                date the shares come out of the vested count. The cash proceeds
+                are recorded here for reference but don&apos;t roll into net worth.
               </p>
             </div>
             <Button size="sm" variant="outline" onClick={addSale}>

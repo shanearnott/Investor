@@ -6,7 +6,6 @@
 import { convert } from "./fx";
 import { lookupGrowthRate } from "./growth";
 import {
-  holdingCashFromSalesNativeAt,
   parseISO,
   totalGrantedShares,
   vestedSharesAt,
@@ -373,12 +372,6 @@ export function buildNetWorthSeries(args: {
       unvested += v.unvested;
       cashTotal += acc.cash;
       pendingTotal += acc.pending;
-      // Cash from holding-level recorded sales (real sales the user has
-      // logged on the Investments page). Already net of the sale's tax.
-      const holdingCashNative = holdingCashFromSalesNativeAt(h, asOf);
-      if (holdingCashNative > 0) {
-        cashTotal += convert(holdingCashNative, h.currency, settings.primary_currency, settings);
-      }
     }
     for (const p of properties) {
       const v = projectPropertyValueAt(p, scenario, asOf, settings.primary_currency, settings);
@@ -437,12 +430,6 @@ export function currentAllocationBreakdown(args: {
     if (cur > 0) {
       const key = `${h.ticker || h.company_name} (vested)`;
       out[key] = (out[key] ?? 0) + cur;
-    }
-    const cashNative = holdingCashFromSalesNativeAt(h, today);
-    if (cashNative > 0) {
-      const cashPrimary = convert(cashNative, h.currency, args.settings.primary_currency, args.settings);
-      const key = `${h.ticker || h.company_name} (cash)`;
-      out[key] = (out[key] ?? 0) + cashPrimary;
     }
   }
   for (const p of args.properties) {
