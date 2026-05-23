@@ -7,6 +7,7 @@ import { useData } from "@/components/data-provider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Label, Select, Textarea } from "@/components/ui/input";
+import { convert } from "@/lib/fx";
 import { formatMoney, formatNumber } from "@/lib/utils";
 import {
   EQUITY_TYPES,
@@ -22,8 +23,10 @@ import {
   VestEvent,
   newId,
   parseISO,
+  type Settings,
   todayISO,
   totalGrantedShares,
+  vestEventNetShares,
   vestedSharesAt,
 } from "@/lib/models";
 import { lookupGrowthRate } from "@/lib/growth";
@@ -71,10 +74,7 @@ function blankTranche(): Tranche {
 }
 
 function trancheTotalShares(t: Tranche): number {
-  return t.vest_events.reduce((s, ev) => {
-    const cover = Math.min(ev.sell_to_cover_shares ?? 0, ev.shares);
-    return s + Math.max(0, ev.shares - cover);
-  }, 0);
+  return t.vest_events.reduce((s, ev) => s + vestEventNetShares(ev), 0);
 }
 
 function blankProperty(defaultJurisdiction: string): PropertyDraft {
@@ -132,6 +132,8 @@ export default function InvestmentsPage() {
           }}
           onDelete={async (id) => setStocks(data.stocks.filter((s) => s.id !== id))}
         />
+
+        <RecordedSalesSummary stocks={data.stocks} settings={data.settings} />
       </section>
 
       <section className="space-y-4">
@@ -162,6 +164,105 @@ export default function InvestmentsPage() {
         />
       </section>
     </div>
+  );
+}
+
+function RecordedSalesSummary({
+  stocks,
+  settings,
+}: {
+  stocks: StockHolding[];
+  settings: Settings;
+}) {
+  const display = settings.primary_currency;
+  const rows = stocks
+    .map((h) => {
+      const sales = h.sales ?? [];
+      if (sales.length === 0) return null;
+      let shares = 0;
+      let grossNative = 0;
+      let taxNative = 0;
+      for (const s of sales) {
+        const price = s.sale_price !== undefined && s.sale_price > 0 ? s.sale_price : h.current_share_price;
+        const g = s.shares * price;
+        const cover = Math.min(s.sell_to_cover_shares ?? 0, s.shares);
+        const taxForEvent = cover > 0
+          ? cover * price
+          : g * (Math.min(100, Math.max(0, s.tax_rate_pct)) / 100);
+        shares += s.shares;
+        grossNative += g;
+        taxNative += taxForEvent;
+      }
+      if (shares === 0) return null;
+      const gross = convert(grossNative, h.currency, display, settings);
+      const tax = convert(taxNative, h.currency, display, settings);
+      return {
+        id: h.id,
+        label: h.ticker || h.company_name || "—",
+        shares,
+        gross,
+        tax,
+        net: gross - tax,
+        ratePct: grossNative > 0 ? (taxNative / grossNative) * 100 : 0,
+      };
+    })
+    .filter((x): x is NonNullable<typeof x> => x !== null);
+  if (rows.length === 0) return null;
+  const total = rows.reduce(
+    (acc, r) => ({
+      shares: acc.shares + r.shares,
+      gross: acc.gross + r.gross,
+      tax: acc.tax + r.tax,
+      net: acc.net + r.net,
+    }),
+    { shares: 0, gross: 0, tax: 0, net: 0 },
+  );
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Recorded sales</CardTitle>
+        <CardDescription>
+          Sale events you&apos;ve logged on each stock. Informational only — cash isn&apos;t rolled into net worth.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="rounded-md border divide-y">
+          <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-3 px-3 py-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+            <div>Stock</div>
+            <div className="text-right">Shares</div>
+            <div className="text-right">Gross</div>
+            <div className="text-right">Tax</div>
+            <div className="text-right">Net</div>
+          </div>
+          {rows.map((r) => (
+            <div
+              key={r.id}
+              className="grid grid-cols-[1fr_auto_auto_auto_auto] items-baseline gap-3 px-3 py-1.5 text-xs tabular-nums"
+            >
+              <div className="font-medium">{r.label}</div>
+              <div className="text-right">{formatNumber(r.shares)}</div>
+              <div className="text-right">{formatMoney(r.gross, display)}</div>
+              <div className="text-right text-muted-foreground">
+                −{formatMoney(r.tax, display)}
+                <span className="ml-1 text-[10px]">({r.ratePct.toFixed(1)}%)</span>
+              </div>
+              <div className="text-right font-semibold">{formatMoney(r.net, display)}</div>
+            </div>
+          ))}
+          {rows.length > 1 ? (
+            <div className="grid grid-cols-[1fr_auto_auto_auto_auto] items-baseline gap-3 px-3 py-1.5 text-xs tabular-nums bg-muted/40">
+              <div className="font-medium">Total</div>
+              <div className="text-right">{formatNumber(total.shares)}</div>
+              <div className="text-right">{formatMoney(total.gross, display)}</div>
+              <div className="text-right text-muted-foreground">
+                −{formatMoney(total.tax, display)}
+              </div>
+              <div className="text-right font-semibold">{formatMoney(total.net, display)}</div>
+            </div>
+          ) : null}
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -293,7 +394,7 @@ function StockForm({
       ...prev,
       tranches: prev.tranches.map((t) =>
         t.id === trancheId
-          ? { ...t, vest_events: [...t.vest_events, { vest_date: todayISO(), shares: 0, sell_to_cover_shares: 0 }] }
+          ? { ...t, vest_events: [...t.vest_events, { vest_date: todayISO(), shares: 0, sell_to_cover_shares: 0, tax_rate_pct: 0 }] }
           : t,
       ),
     }));
@@ -1003,41 +1104,66 @@ function TrancheEditor({
 
       {tranche.vest_events.length > 0 ? (
         <div className="space-y-1">
-          <div className="grid grid-cols-[minmax(7rem,12rem)_1fr_1fr_auto] gap-2 text-[10px] uppercase tracking-wide text-muted-foreground px-1">
+          <div className="grid grid-cols-[minmax(7rem,12rem)_1fr_1fr_1fr_1fr_auto] gap-2 text-[10px] uppercase tracking-wide text-muted-foreground px-1">
             <div>Vest date</div>
             <div>Shares</div>
-            <div title="Shares the broker auto-sold to cover tax at vest.">
+            <div title="Shares the broker auto-sold to cover tax at vest. Takes precedence over Tax %.">
               Sell to cover
+            </div>
+            <div title="Tax rate as % of gross shares — applied when Sell-to-cover is 0.">
+              Tax %
+            </div>
+            <div className="text-right" title="Shares the user actually receives (shares − cover or − shares × tax%).">
+              Net
             </div>
             <div />
           </div>
-          {tranche.vest_events.map((ev, idx) => (
-            <div key={idx} className="grid grid-cols-[minmax(7rem,12rem)_1fr_1fr_auto] gap-2 items-center">
-              <Input
-                type="date"
-                value={ev.vest_date}
-                onChange={(e) => onUpdateEvent(idx, { ...ev, vest_date: e.target.value })}
-              />
-              <Input
-                type="number"
-                step="1"
-                value={ev.shares}
-                onChange={(e) => onUpdateEvent(idx, { ...ev, shares: Number(e.target.value) })}
-              />
-              <Input
-                type="number"
-                step="1"
-                min={0}
-                value={ev.sell_to_cover_shares ?? 0}
-                onChange={(e) =>
-                  onUpdateEvent(idx, { ...ev, sell_to_cover_shares: Number(e.target.value) })
-                }
-              />
-              <Button size="icon" variant="ghost" onClick={() => onRemoveEvent(idx)}>
-                <Trash2 className="h-4 w-4" />
-              </Button>
-            </div>
-          ))}
+          {tranche.vest_events.map((ev, idx) => {
+            const net = vestEventNetShares(ev);
+            return (
+              <div
+                key={idx}
+                className="grid grid-cols-[minmax(7rem,12rem)_1fr_1fr_1fr_1fr_auto] gap-2 items-center"
+              >
+                <Input
+                  type="date"
+                  value={ev.vest_date}
+                  onChange={(e) => onUpdateEvent(idx, { ...ev, vest_date: e.target.value })}
+                />
+                <Input
+                  type="number"
+                  step="1"
+                  value={ev.shares}
+                  onChange={(e) => onUpdateEvent(idx, { ...ev, shares: Number(e.target.value) })}
+                />
+                <Input
+                  type="number"
+                  step="1"
+                  min={0}
+                  value={ev.sell_to_cover_shares ?? 0}
+                  onChange={(e) =>
+                    onUpdateEvent(idx, { ...ev, sell_to_cover_shares: Number(e.target.value) })
+                  }
+                />
+                <Input
+                  type="number"
+                  step="0.5"
+                  min={0}
+                  max={100}
+                  value={ev.tax_rate_pct ?? 0}
+                  onChange={(e) =>
+                    onUpdateEvent(idx, { ...ev, tax_rate_pct: Number(e.target.value) })
+                  }
+                />
+                <div className="text-right text-xs tabular-nums text-muted-foreground px-1">
+                  {formatNumber(Math.round(net))}
+                </div>
+                <Button size="icon" variant="ghost" onClick={() => onRemoveEvent(idx)}>
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+            );
+          })}
         </div>
       ) : null}
 
@@ -1097,7 +1223,7 @@ function ScheduleGenerator({
     for (let i = 0; i < totalPeriods; i++) {
       const d = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + i * monthsStep, start.getUTCDate()));
       const shares = i === totalPeriods - 1 ? baseShares + remainder : baseShares;
-      events.push({ vest_date: d.toISOString().slice(0, 10), shares, sell_to_cover_shares: 0 });
+      events.push({ vest_date: d.toISOString().slice(0, 10), shares, sell_to_cover_shares: 0, tax_rate_pct: 0 });
     }
     onGenerate(events);
     setOpen(false);
