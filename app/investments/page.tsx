@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Plus, Trash2, X } from "lucide-react";
 
 import { useData } from "@/components/data-provider";
 import { Button } from "@/components/ui/button";
@@ -877,11 +877,23 @@ function SaleEditor({
           label="Sell date"
           hint="Blank = the non-cover shares were kept (owned outright)."
         >
-          <Input
-            type="date"
-            value={sale.sell_date ?? ""}
-            onChange={(e) => onChange({ sell_date: e.target.value || undefined })}
-          />
+          <div className="flex items-center gap-1">
+            <Input
+              type="date"
+              value={sale.sell_date ?? ""}
+              onChange={(e) => onChange({ sell_date: e.target.value || undefined })}
+            />
+            {sale.sell_date ? (
+              <Button
+                size="icon"
+                variant="ghost"
+                title="Clear sell date"
+                onClick={() => onChange({ sell_date: undefined })}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            ) : null}
+          </div>
         </Field>
       </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
