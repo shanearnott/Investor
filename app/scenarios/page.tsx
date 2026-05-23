@@ -689,12 +689,14 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
             </Button>
           </div>
           <p className="text-[11px] text-muted-foreground">
-            Sell already-vested shares under a chosen tax rate. On the release
-            date the shares leave the equity line; on the sell date the post-tax
-            proceeds become cash that adds to net worth. Between the two the
-            gross value is held flat. The chart marks each sale with a bar in
-            the scenario&apos;s colour. Sales are capped at shares vested by the
-            release date.
+            Sell already-vested shares under a chosen tax rate. Earmarked shares
+            are valued at the post-tax sale proceeds (override price or projected
+            price at sell, less this tax) for the whole projection, so the line
+            is fully static through both the release and sell dates — no step at
+            the sale itself. On the release date the shares leave the equity
+            line into a pending bucket; on the sell date they become cash. The
+            chart marks each sale with a bar in the scenario&apos;s colour. Sales
+            are capped at shares vested by the release date.
           </p>
           {data.stocks.length === 0 ? (
             <p className="text-[11px] text-muted-foreground">Add a stock first to plan a sale.</p>

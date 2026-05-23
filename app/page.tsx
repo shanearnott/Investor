@@ -18,8 +18,8 @@ import { parseISO, vestedSharesAt, type Property, type StockHolding } from "@/li
  *  tiles. Mirrors the scenarios page defaults — gives a quick at-a-glance
  *  read of net worth if you were taxed in each jurisdiction at vest. */
 const POST_TAX_RATES: ReadonlyArray<{ label: string; rate: number }> = [
-  { label: "US", rate: 50 },
-  { label: "AUS", rate: 51 },
+  { label: "Federal Only", rate: 37 },
+  { label: "California", rate: 50 },
 ];
 
 const LOOKAHEAD_OPTIONS = [3, 6, 9, 12, 18, 24] as const;
@@ -184,7 +184,7 @@ export default function HomePage() {
               <div className="mt-4 grid grid-cols-2 gap-2">
                 <div className="rounded-md border p-2">
                   <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                    📊 Shares (gross)
+                    📊 Shares (pre-tax)
                   </div>
                   <div className="text-lg font-semibold tabular-nums">
                     {formatMoney(sharesGross, displayCurrency)}
@@ -192,7 +192,7 @@ export default function HomePage() {
                 </div>
                 <div className="rounded-md border p-2">
                   <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                    🏠 Property (gross)
+                    🏠 Property (pre-tax)
                   </div>
                   <div className="text-lg font-semibold tabular-nums">
                     {formatMoney(propertyGross, displayCurrency)}
