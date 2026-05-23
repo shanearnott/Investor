@@ -22,11 +22,13 @@ export function buildDemoData(): CollectionsMap {
   const hireVests = Array.from({ length: 16 }, (_, i) => ({
     vest_date: isoDateOffset(0, i * 3 - 12), // some past, some future
     shares: 250,
+    sell_to_cover_shares: 0,
   }));
   // Refresher grant — 16 quarterly vests of 100 shares, starting 1y in the future
   const refresherVests = Array.from({ length: 16 }, (_, i) => ({
     vest_date: isoDateOffset(0, i * 3 + 12),
     shares: 100,
+    sell_to_cover_shares: 0,
   }));
 
   return {
