@@ -43,19 +43,14 @@ export default function HomePage() {
   const todayPrimary = Object.values(allocation).reduce((s, v) => s + v, 0);
   const today = convert(todayPrimary, data.settings.primary_currency, displayCurrency, data.settings);
 
-  // Split the gross-pre-tax total into property, cash-from-sales, and shares.
-  // Property keys end in "(property)", cash from completed sales ends in
-  // "(cash)"; everything else is share/equity value.
+  // Split the gross-pre-tax total into property vs shares. Property entries
+  // are keyed "<name> (property)"; everything else is share/equity value.
   const propertyGrossPrimary = Object.entries(allocation)
     .filter(([k]) => k.endsWith(" (property)"))
     .reduce((s, [, v]) => s + v, 0);
-  const cashFromSalesPrimary = Object.entries(allocation)
-    .filter(([k]) => k.endsWith(" (cash)"))
-    .reduce((s, [, v]) => s + v, 0);
-  const sharesGrossPrimary = todayPrimary - propertyGrossPrimary - cashFromSalesPrimary;
+  const sharesGrossPrimary = todayPrimary - propertyGrossPrimary;
   const propertyGross = convert(propertyGrossPrimary, data.settings.primary_currency, displayCurrency, data.settings);
   const sharesGross = convert(sharesGrossPrimary, data.settings.primary_currency, displayCurrency, data.settings);
-  const cashFromSales = convert(cashFromSalesPrimary, data.settings.primary_currency, displayCurrency, data.settings);
 
   // Vested RSU value (gross, in displayCurrency) — needed to derive the
   // post-tax tiles below. RSU income tax hits the value of vested RSU
@@ -186,7 +181,7 @@ export default function HomePage() {
                   </p>
                 );
               })()}
-              <div className={`mt-4 grid gap-2 ${cashFromSales > 0 ? "grid-cols-2 sm:grid-cols-3" : "grid-cols-2"}`}>
+              <div className="mt-4 grid grid-cols-2 gap-2">
                 <div className="rounded-md border p-2">
                   <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
                     📊 Shares (pre-tax)
@@ -203,16 +198,6 @@ export default function HomePage() {
                     {formatMoney(propertyGross, displayCurrency)}
                   </div>
                 </div>
-                {cashFromSales > 0 ? (
-                  <div className="rounded-md border p-2">
-                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                      💵 Cash (post-tax)
-                    </div>
-                    <div className="text-lg font-semibold tabular-nums">
-                      {formatMoney(cashFromSales, displayCurrency)}
-                    </div>
-                  </div>
-                ) : null}
               </div>
               {vestedRsuDisplay > 0 ? (
                 <div className="mt-4">

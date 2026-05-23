@@ -284,22 +284,6 @@ export function vestedSharesAt(h: StockHolding, asOf: Date): number {
   return Math.max(0, v);
 }
 
-/** Net (post sale-tax) cash from sales of this holding whose sell_date has
- *  passed, in the holding's native currency. Sale price falls back to
- *  the holding's current_share_price when no override is recorded. */
-export function holdingCashFromSalesNativeAt(h: StockHolding, asOf: Date): number {
-  let cash = 0;
-  for (const s of h.sales ?? []) {
-    const sellD = parseISO(s.sell_date ?? s.release_date);
-    if (!sellD || sellD > asOf) continue;
-    const price = s.sale_price !== undefined && s.sale_price > 0 ? s.sale_price : h.current_share_price;
-    const gross = s.shares * price;
-    const net = gross * (1 - Math.min(100, Math.max(0, s.tax_rate_pct)) / 100);
-    cash += net;
-  }
-  return cash;
-}
-
 /** Flatten all vest events across all tranches into a single list with the
  *  parent tranche name/id attached. Useful for dashboards that want a single
  *  per-stock event stream. Sorted by date ascending. */
