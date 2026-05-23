@@ -407,7 +407,7 @@ export default function ProjectionsPage() {
             <Kpi label="Gross (pre-tax) worth today" valueNum={grossTodayPretax} ccy={ccy} settings={settings} />
             <Kpi label="Vested equity (post-tax)" valueNum={liquidToday} ccy={ccy} settings={settings} />
             <Kpi label="Unvested equity (post-tax)" valueNum={unvestedToday} ccy={ccy} settings={settings} />
-            <Kpi label="Property equity" valueNum={propertyToday} ccy={ccy} settings={settings} />
+            <Kpi label="Property equity (pre-tax)" valueNum={propertyToday} ccy={ccy} settings={settings} />
           </div>
 
           <Card>
