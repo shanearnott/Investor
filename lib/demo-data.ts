@@ -22,6 +22,7 @@ export function buildDemoData(): CollectionsMap {
   const hireVests = Array.from({ length: 16 }, (_, i) => ({
     vest_date: isoDateOffset(0, i * 3 - 12), // some past, some future
     shares: 250,
+    release_price: 0,
     sell_to_cover_shares: 0,
     tax_rate_pct: 0,
   }));
@@ -29,6 +30,7 @@ export function buildDemoData(): CollectionsMap {
   const refresherVests = Array.from({ length: 16 }, (_, i) => ({
     vest_date: isoDateOffset(0, i * 3 + 12),
     shares: 100,
+    release_price: 0,
     sell_to_cover_shares: 0,
     tax_rate_pct: 0,
   }));
