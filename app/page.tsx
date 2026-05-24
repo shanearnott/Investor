@@ -12,7 +12,7 @@ import { convert } from "@/lib/fx";
 import { lookupGrowthRate } from "@/lib/growth";
 import { formatMoney, formatNumber } from "@/lib/utils";
 import { currentAllocationBreakdown } from "@/lib/projections";
-import { parseISO, vestEventNetShares, vestedSharesAt, type Property, type StockHolding } from "@/lib/models";
+import { parseISO, vestedSharesAt, type Property, type StockHolding } from "@/lib/models";
 
 /** RSU income-tax rates applied to the home-page "post-tax" net-worth
  *  tiles. Mirrors the scenarios page defaults — gives a quick at-a-glance
@@ -442,20 +442,16 @@ function computeLookahead(args: {
         const d = parseISO(ev.vest_date);
         if (!d) continue;
         if (d <= today || d > end) continue;
-        // Net of any tax / broker-side sell-to-cover: the user only
-        // receives the post-tax share count from the vest.
-        const netShares = vestEventNetShares(ev);
-        if (netShares === 0) continue;
-        const valueNative = netShares * h.current_share_price;
+        const valueNative = ev.shares * h.current_share_price;
         const valueDisplay = convert(valueNative, h.currency, args.displayCurrency, args.settings);
         events.push({
           date: ev.vest_date,
           ticker: h.ticker || h.company_name || h.id,
           trancheName: tr.name || "Grant",
-          shares: netShares,
+          shares: ev.shares,
           value: valueDisplay,
         });
-        totalShares += netShares;
+        totalShares += ev.shares;
         totalValue += valueDisplay;
       }
     }

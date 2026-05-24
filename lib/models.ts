@@ -45,36 +45,8 @@ const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD").option
 export const VestEventSchema = z.object({
   vest_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   shares: z.number().nonnegative(),
-  /** Per-share fair-market value at vest. The income-tax basis for the
-   *  shares; also used as the cost basis when computing capital gains on
-   *  later sale events. Blank/0 falls back to the holding's
-   *  `cost_basis_per_share`. */
-  release_price: z.number().nonnegative().default(0),
-  /** Number of shares the broker auto-sold to cover income tax at vest.
-   *  Always leaves the holding. Takes precedence over `tax_rate_pct` when
-   *  > 0. */
-  sell_to_cover_shares: z.number().nonnegative().default(0),
-  /** Income-tax rate applied to this vest, as a % of the gross shares.
-   *  shares × rate% are removed from the net share count (equivalent to
-   *  sell-to-cover, but specified as a rate instead of an explicit count). */
-  tax_rate_pct: z.number().min(0).max(100).default(0),
 });
 export type VestEvent = z.infer<typeof VestEventSchema>;
-
-/** Shares from a vest event that are lost to tax — either an explicit
- *  sell-to-cover count (precedence) or shares × tax_rate_pct%. */
-export function vestEventTaxShares(ev: VestEvent): number {
-  const cover = Math.min(ev.sell_to_cover_shares ?? 0, ev.shares);
-  if (cover > 0) return cover;
-  const rate = Math.min(100, Math.max(0, ev.tax_rate_pct ?? 0));
-  return (ev.shares * rate) / 100;
-}
-
-/** Shares the user actually receives from a vest event, net of any
- *  cover/tax. */
-export function vestEventNetShares(ev: VestEvent): number {
-  return Math.max(0, ev.shares - vestEventTaxShares(ev));
-}
 
 /** A tranche / grant — a logical group of vest events (e.g. "2024 hire grant",
  *  "2025 refresher"). A stock can have multiple tranches; each has its own
@@ -88,27 +60,56 @@ export const TrancheSchema = z.object({
 });
 export type Tranche = z.infer<typeof TrancheSchema>;
 
-/** A recorded sale event — shares the user actually sold from the
- *  holding (separate from the release/vest event that earlier put the
- *  shares in their hands). All sale shares leave the holding on the
- *  sell date; the tax is capital-gains-style on the difference between
- *  sale price and cost basis (the release price). */
+/** A combined release + (optional) sale event on a holding.
+ *
+ *  Release portion (always present): the date a batch of shares came
+ *  off vesting, the gross share count, the per-share fair-market value
+ *  at release (the cost basis for any later sale), and the income-tax
+ *  withholding — either an explicit sell-to-cover share count or an
+ *  equivalent percentage rate. The post-withholding shares are kept
+ *  by the user.
+ *
+ *  Sale portion (optional): if the user has also sold those shares,
+ *  fill in the sell date, sell price, and cap-gains tax rate. When a
+ *  sale is present the *kept* shares from the release leave the
+ *  holding on the sell date. */
 export const StockHoldingSaleSchema = z.object({
   id: z.string(),
+  // Release piece — always required.
+  release_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  shares: z.number().nonnegative().default(0),
+  release_price: z.number().nonnegative().default(0),
+  /** Number of shares the broker auto-sold to cover income tax at the
+   *  release. Takes precedence over `tax_rate_pct` when > 0. */
+  sell_to_cover_shares: z.number().nonnegative().default(0),
+  /** Income-tax rate, % of release shares. Used when sell-to-cover is 0.
+   *  shares × rate% are subtracted from the kept count. */
+  tax_rate_pct: z.number().min(0).max(100).default(0),
+  // Sale piece — optional.
   sell_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   /** Per-share sale price in the holding's native currency. Blank = use
    *  the holding's `current_share_price`. */
   sale_price: z.number().nonnegative().optional(),
-  shares: z.number().nonnegative().default(0),
-  /** Optional cost-basis override (native currency, per share). Blank =
-   *  use the holding's `cost_basis_per_share`. */
-  cost_basis_per_share: z.number().nonnegative().optional(),
-  /** Capital-gains tax rate applied to the gain (sale_price − basis),
-   *  not the gross. */
-  tax_rate_pct: z.number().min(0).max(100).default(0),
+  /** Capital-gains tax rate applied to the gain (sale_price − release_price)
+   *  on the kept shares. Defaults via `defaultSaleTaxRate(jurisdiction)`. */
+  sale_tax_rate_pct: z.number().min(0).max(100).default(0),
   notes: z.string().default(""),
 });
 export type StockHoldingSale = z.infer<typeof StockHoldingSaleSchema>;
+
+/** Shares lost at release to either explicit sell-to-cover or an
+ *  equivalent tax rate. Capped at the gross release shares. */
+export function eventWithholdingShares(s: StockHoldingSale): number {
+  const cover = Math.min(s.sell_to_cover_shares ?? 0, s.shares);
+  if (cover > 0) return cover;
+  const rate = Math.min(100, Math.max(0, s.tax_rate_pct ?? 0));
+  return Math.min(s.shares, (s.shares * rate) / 100);
+}
+
+/** Net shares the user keeps from a release (after withholding). */
+export function eventNetReleaseShares(s: StockHoldingSale): number {
+  return Math.max(0, s.shares - eventWithholdingShares(s));
+}
 
 /** Approximate default capital-gains rate by jurisdiction. Used to
  *  pre-populate new sale events; the user can override. */
@@ -303,71 +304,93 @@ export function todayISO(): string {
 
 // Stock helpers
 
-/** Shares that have actually left the holding from a sale event by
- *  `asOf` — all of them, on the sell date. Incomplete sales (no sell
- *  date) have no effect. */
-function saleSharesGoneBy(s: StockHoldingSale, asOf: Date): number {
-  if (!s.sell_date) return 0;
+/** Has this event's sale piece settled by `asOf`? */
+function eventSold(s: StockHoldingSale, asOf: Date): boolean {
+  if (!s.sell_date) return false;
   const d = parseISO(s.sell_date);
-  if (!d || d > asOf) return 0;
-  return s.shares;
+  return !!d && d <= asOf;
 }
 
-/** Total shares the holding has ever held minus the shares already sold
- *  out via release-event cover/tax and sale events. */
+/** Has this event's release piece happened by `asOf`? */
+function eventReleased(s: StockHoldingSale, asOf: Date): boolean {
+  const d = parseISO(s.release_date);
+  return !!d && d <= asOf;
+}
+
+/** Total shares the holding currently holds — outright base + planned
+ *  vests from tranches + net release shares the user has kept on
+ *  explicit events. Independent of asOf (treats all tranche vests +
+ *  events as in scope). */
 export function totalGrantedShares(h: StockHolding): number {
   let total = h.shares_owned_outright;
   for (const t of h.tranches) {
-    for (const ev of t.vest_events) {
-      total += vestEventNetShares(ev);
-    }
+    for (const ev of t.vest_events) total += ev.shares;
   }
   for (const s of h.sales ?? []) {
-    if (s.sell_date) total -= s.shares;
+    if (s.sell_date) continue; // released-and-sold contributes nothing to held total
+    total += eventNetReleaseShares(s);
   }
   return Math.max(0, total);
 }
 
-/** Vested-or-outright shares as of `asOf`, net of any sale events whose
- *  sell date has passed. */
+/** Vested-or-outright shares as of `asOf`. Sums:
+ *   - outright base
+ *   - tranche vest_events whose date has passed
+ *   - net release shares from explicit events that have released and
+ *     have NOT settled a sale (the user still holds them)
+ *  Shares from sold events are excluded entirely once the sale settles. */
 export function vestedSharesAt(h: StockHolding, asOf: Date): number {
   let v = h.shares_owned_outright;
   for (const t of h.tranches) {
     for (const ev of t.vest_events) {
       const d = parseISO(ev.vest_date);
-      if (d && d <= asOf) v += vestEventNetShares(ev);
+      if (d && d <= asOf) v += ev.shares;
     }
   }
   for (const s of h.sales ?? []) {
-    v -= saleSharesGoneBy(s, asOf);
+    if (!eventReleased(s, asOf)) continue;
+    if (eventSold(s, asOf)) continue;
+    v += eventNetReleaseShares(s);
   }
   return Math.max(0, v);
 }
 
-/** Total shares sold out of this holding by `asOf` (across all complete
- *  sale events). */
+/** Total shares sold out via explicit events whose sale has settled by `asOf`. */
 export function totalSoldShares(h: StockHolding, asOf: Date): number {
   let n = 0;
-  for (const s of h.sales ?? []) n += saleSharesGoneBy(s, asOf);
+  for (const s of h.sales ?? []) {
+    if (eventSold(s, asOf)) n += eventNetReleaseShares(s);
+  }
   return n;
 }
 
-/** Native-currency cost basis and tax math for a single sale event,
- *  using the holding's cost_basis_per_share as the fallback basis when
- *  the sale doesn't override it. */
+/** Native-currency math for the sale piece of a release event. The cost
+ *  basis is the release_price (per share); the cap-gains tax is on
+ *  (sale_price − release_price) × kept shares. */
 export function saleEventMath(s: StockHoldingSale, h: StockHolding): {
-  price: number; gross: number; basis: number; cost: number; gain: number; tax: number; net: number;
+  price: number; sharesSold: number; gross: number; basis: number; cost: number; gain: number; tax: number; net: number;
 } {
   const price = s.sale_price !== undefined && s.sale_price > 0 ? s.sale_price : h.current_share_price;
-  const basis = s.cost_basis_per_share !== undefined && s.cost_basis_per_share > 0
-    ? s.cost_basis_per_share
-    : h.cost_basis_per_share;
-  const gross = s.shares * price;
-  const cost = s.shares * basis;
+  const basis = s.release_price && s.release_price > 0 ? s.release_price : h.cost_basis_per_share;
+  const sharesSold = eventNetReleaseShares(s);
+  const gross = sharesSold * price;
+  const cost = sharesSold * basis;
   const gain = Math.max(0, gross - cost);
-  const tax = gain * (Math.min(100, Math.max(0, s.tax_rate_pct)) / 100);
+  const tax = gain * (Math.min(100, Math.max(0, s.sale_tax_rate_pct ?? 0)) / 100);
   const net = gross - tax;
-  return { price, gross, basis, cost, gain, tax, net };
+  return { price, sharesSold, gross, basis, cost, gain, tax, net };
+}
+
+/** Native-currency math for the release piece of an event. */
+export function releaseEventMath(s: StockHoldingSale, h: StockHolding): {
+  price: number; gross: number; withheldShares: number; withheldValue: number; kept: number;
+} {
+  const price = s.release_price && s.release_price > 0 ? s.release_price : h.cost_basis_per_share;
+  const gross = s.shares * price;
+  const withheldShares = eventWithholdingShares(s);
+  const withheldValue = withheldShares * price;
+  const kept = eventNetReleaseShares(s);
+  return { price, gross, withheldShares, withheldValue, kept };
 }
 
 /** Flatten all vest events across all tranches into a single list with the
