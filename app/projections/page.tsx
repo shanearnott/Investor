@@ -810,7 +810,7 @@ function NestedAllocationCard({
           <div className="flex w-full flex-col items-stretch gap-1 sm:w-auto sm:min-w-[18rem]">
             <div className="flex items-center justify-between gap-2">
               <Label className="text-[11px] text-muted-foreground">As-of</Label>
-              <span className="text-xs tabular-nums font-medium">{asOfMonth}</span>
+              <span className="text-xs tabular-nums font-medium">{formatMmmYY(`${asOfMonth}-01`)}</span>
               {!isToday ? (
                 <button
                   type="button"
