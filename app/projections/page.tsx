@@ -754,7 +754,14 @@ function NestedAllocationCard({
   const todaySorted = [...realisedFiltered].filter((s) => s.value > 0).sort((a, b) => b.value - a.value);
   const comingSorted = [...comingFiltered].filter((s) => s.value > 0).sort((a, b) => b.value - a.value);
 
-  const todayLabel = isToday ? "Today" : asOfMonth;
+  const todayLabel = isToday ? "Today" : formatMmmYY(`${asOfMonth}-01`);
+  // Horizon = asOfDate + horizonYears, rendered in the same MMM-YY format
+  // as the rest of the pie. No mixed "+5y" vs "May-30" labels.
+  const horizonLabel = (() => {
+    const [y, m] = asOfMonth.split("-").map(Number);
+    const d = new Date(Date.UTC(y, m - 1 + horizonYears * 12, 1));
+    return formatMmmYY(d.toISOString().slice(0, 10));
+  })();
 
   // INNER ring: the headline split — only two slices.
   // Both pies' values must sum to grandTotal so arcs align between rings.
@@ -792,7 +799,7 @@ function NestedAllocationCard({
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div>
             <CardTitle className="text-sm">
-              Wealth allocation — {todayLabel} vs +{horizonYears}y · {scenarioName} ({ccy})
+              Wealth allocation — {todayLabel} vs {horizonLabel} · {scenarioName} ({ccy})
             </CardTitle>
             <CardDescription className="text-[11px]">
               <span className="inline-flex items-center gap-1">
@@ -802,7 +809,7 @@ function NestedAllocationCard({
               ·{" "}
               <span className="inline-flex items-center gap-1">
                 <span className="inline-block h-3 w-3 rounded-sm" style={{ background: COMING_COLORS[0] }} />
-                <b>Coming ({horizonYears}y)</b> {comingPct.toFixed(0)}%
+                <b>Coming ({horizonLabel})</b> {comingPct.toFixed(0)}%
               </span>
               {" "}— inner ring is the headline split; outer breaks each side down by asset.
             </CardDescription>
@@ -824,7 +831,7 @@ function NestedAllocationCard({
             <input
               type="range"
               min={-60}
-              max={120}
+              max={60}
               step={1}
               value={(() => {
                 const [y, m] = asOfMonth.split("-").map(Number);
@@ -843,7 +850,7 @@ function NestedAllocationCard({
             <div className="flex justify-between text-[10px] text-muted-foreground tabular-nums">
               <span>−5y</span>
               <span>Today</span>
-              <span>+10y</span>
+              <span>+5y</span>
             </div>
           </div>
         </div>
