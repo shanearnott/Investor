@@ -7,8 +7,10 @@ import { convert } from "./fx";
 import { lookupGrowthRate } from "./growth";
 import {
   eventNetReleaseShares,
+  eventWithholdingShares,
   parseISO,
   totalGrantedShares,
+  unvestedSharesAt,
   vestedSharesAt,
   type Property,
   type Scenario,
@@ -120,13 +122,8 @@ function rsuValueNative(
   const flatFactor = Math.max(0, 1 - (scenario.rsu_tax_rate_pct ?? 0) / 100);
   let vested = h.shares_owned_outright * projectedPrice * flatFactor;
   let unvested = 0;
-  // Past tranche vests whose date matches an explicit release event are
-  // shadowed by that event — the user's explicit record is the source
-  // of truth, so skip them to avoid double-counting.
-  const dropDates = new Set((h.sales ?? []).map((s) => s.release_date));
   for (const t of h.tranches) {
     for (const ev of t.vest_events) {
-      if (dropDates.has(ev.vest_date)) continue;
       const d = parseISO(ev.vest_date);
       if (!d) continue;
       const factor = Math.max(0, 1 - rsuRateForYear(scenario, d.getUTCFullYear()) / 100);
@@ -135,21 +132,23 @@ function rsuValueNative(
       else unvested += val;
     }
   }
-  // Kept shares from explicit release events. Income tax was already
-  // paid at release (the user only has shares − withholding in their
-  // hands), so no RSU-rate haircut here — value them at the full
-  // projected price. Sold ones contribute nothing here (their value
-  // left the holding on sell_date).
+  // Release events represent the income tax taken at vest — deduct the
+  // withheld portion from vested. Sale events sell the kept portion on
+  // their sell date — deduct that too. Both are full-price deductions
+  // (no RSU-rate haircut: those shares left the holding entirely).
   for (const s of h.sales ?? []) {
     const release = parseISO(s.release_date);
-    if (!release || release > asOf) continue;
+    if (release && release <= asOf) {
+      vested -= eventWithholdingShares(s) * projectedPrice;
+    }
     if (s.sell_date) {
       const sellD = parseISO(s.sell_date);
-      if (sellD && sellD <= asOf) continue;
+      if (sellD && sellD <= asOf) {
+        vested -= eventNetReleaseShares(s) * projectedPrice;
+      }
     }
-    vested += eventNetReleaseShares(s) * projectedPrice;
   }
-  return { vested, unvested };
+  return { vested: Math.max(0, vested), unvested };
 }
 
 export function projectStockValueAt(
@@ -170,8 +169,10 @@ export function projectStockValueAt(
   const projectedPrice = startPrice * Math.pow(1 + monthlyGrowth, monthsForward);
 
   const vested = vestedSharesAt(h, asOf);
-  const granted = totalGrantedShares(h);
-  const unvested = Math.max(0, granted - vested);
+  // unvested = future tranche vests only. Don't infer it from
+  // granted − vested: release/sale deductions on past vests would
+  // otherwise leak into the "unvested" bucket.
+  const unvested = unvestedSharesAt(h, asOf);
 
   // RSUs: tax per vest year (override or flat). Non-RSU: untaxed here.
   let vestedNative: number;

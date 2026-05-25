@@ -304,80 +304,70 @@ export function todayISO(): string {
 
 // Stock helpers
 
-/** Has this event's sale piece settled by `asOf`? */
-function eventSold(s: StockHoldingSale, asOf: Date): boolean {
-  if (!s.sell_date) return false;
-  const d = parseISO(s.sell_date);
-  return !!d && d <= asOf;
-}
-
-/** Has this event's release piece happened by `asOf`? */
-function eventReleased(s: StockHoldingSale, asOf: Date): boolean {
-  const d = parseISO(s.release_date);
-  return !!d && d <= asOf;
-}
-
-/** Set of release dates the user has logged explicit events for. Any
- *  tranche vest_event whose date matches one of these is treated as
- *  "already represented" by the explicit event — we don't double-count
- *  it in share totals. */
-function explicitReleaseDates(h: StockHolding): Set<string> {
-  const out = new Set<string>();
-  for (const s of h.sales ?? []) out.add(s.release_date);
-  return out;
-}
-
-/** Total shares the holding currently holds — outright base + planned
- *  vests from tranches (suppressing any that an explicit event covers)
- *  + net release shares the user has kept on explicit events.
- *  Independent of asOf. */
+/** Total shares the company has ever granted to this holding —
+ *  outright base + every tranche vest_event, regardless of date. */
 export function totalGrantedShares(h: StockHolding): number {
-  const dropDates = explicitReleaseDates(h);
   let total = h.shares_owned_outright;
   for (const t of h.tranches) {
-    for (const ev of t.vest_events) {
-      if (dropDates.has(ev.vest_date)) continue;
-      total += ev.shares;
-    }
-  }
-  for (const s of h.sales ?? []) {
-    if (s.sell_date) continue; // released-and-sold contributes nothing to held total
-    total += eventNetReleaseShares(s);
+    for (const ev of t.vest_events) total += ev.shares;
   }
   return Math.max(0, total);
 }
 
-/** Vested-or-outright shares as of `asOf`. Sums:
- *   - outright base
- *   - tranche vest_events whose date has passed AND aren't shadowed by
- *     a matching explicit release event (otherwise the explicit event
- *     is the source of truth)
- *   - net release shares from explicit events that have released and
- *     have NOT settled a sale (the user still holds them)
- *  Shares from sold events are excluded entirely once the sale settles. */
+/** Future (unvested) shares as of `asOf` — sum of tranche vest_events
+ *  whose date is still ahead. */
+export function unvestedSharesAt(h: StockHolding, asOf: Date): number {
+  let n = 0;
+  for (const t of h.tranches) {
+    for (const ev of t.vest_events) {
+      const d = parseISO(ev.vest_date);
+      if (d && d > asOf) n += ev.shares;
+    }
+  }
+  return n;
+}
+
+/** Vested-or-outright shares currently held as of `asOf`.
+ *
+ *  Model: tranche vest_events grant shares as they pass. Release events
+ *  represent the income-tax taken at vest (cover or rate% deducted from
+ *  the holding) — they REDUCE the count by the withheld portion. Sale
+ *  events sell the kept portion of a release on their sell date —
+ *  reducing the count by `shares − cover`.
+ *
+ *  Net: vested = outright + past tranche vests − cover at past releases
+ *               − kept-sold at past sales.
+ */
 export function vestedSharesAt(h: StockHolding, asOf: Date): number {
-  const dropDates = explicitReleaseDates(h);
   let v = h.shares_owned_outright;
   for (const t of h.tranches) {
     for (const ev of t.vest_events) {
-      if (dropDates.has(ev.vest_date)) continue;
       const d = parseISO(ev.vest_date);
       if (d && d <= asOf) v += ev.shares;
     }
   }
   for (const s of h.sales ?? []) {
-    if (!eventReleased(s, asOf)) continue;
-    if (eventSold(s, asOf)) continue;
-    v += eventNetReleaseShares(s);
+    const release = parseISO(s.release_date);
+    if (release && release <= asOf) {
+      v -= eventWithholdingShares(s);
+    }
+    if (s.sell_date) {
+      const sellD = parseISO(s.sell_date);
+      if (sellD && sellD <= asOf) {
+        v -= eventNetReleaseShares(s);
+      }
+    }
   }
   return Math.max(0, v);
 }
 
-/** Total shares sold out via explicit events whose sale has settled by `asOf`. */
+/** Total shares sold out via sale events whose sale has settled by `asOf`. */
 export function totalSoldShares(h: StockHolding, asOf: Date): number {
   let n = 0;
   for (const s of h.sales ?? []) {
-    if (eventSold(s, asOf)) n += eventNetReleaseShares(s);
+    if (!s.sell_date) continue;
+    const d = parseISO(s.sell_date);
+    if (d && d <= asOf) n += eventNetReleaseShares(s);
   }
   return n;
 }
