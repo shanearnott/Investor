@@ -251,16 +251,16 @@ export default function ProjectionsPage() {
   // so the two pages match: vested shares × current price + property equity,
   // no RSU income-tax haircut, no unvested.
   const todayDate = new Date();
-  const grossTodayPretax =
-    data.stocks.reduce((sum, h) => {
-      const vested = vestedSharesAt(h, todayDate);
-      const native = vested * h.current_share_price;
-      return sum + convert(native, h.currency, ccy, settings);
-    }, 0) +
-    data.properties.reduce((sum, p) => {
-      const native = p.current_value - p.mortgage_balance;
-      return sum + convert(native, p.currency, ccy, settings);
-    }, 0);
+  const stocksPretaxToday = data.stocks.reduce((sum, h) => {
+    const vested = vestedSharesAt(h, todayDate);
+    const native = vested * h.current_share_price;
+    return sum + convert(native, h.currency, ccy, settings);
+  }, 0);
+  const propertyPretaxToday = data.properties.reduce((sum, p) => {
+    const native = p.current_value - p.mortgage_balance;
+    return sum + convert(native, p.currency, ccy, settings);
+  }, 0);
+  const grossTodayPretax = stocksPretaxToday + propertyPretaxToday;
 
   // For each scenario the chart shows two lines: total (smooth, vested + unvested
   // + property — only changes with price) and "{name} vested" (vested + property
@@ -403,8 +403,9 @@ export default function ProjectionsPage() {
 
       {!noData ? (
         <>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
             <Kpi label="Gross (pre-tax) worth today" valueNum={grossTodayPretax} ccy={ccy} settings={settings} />
+            <Kpi label="Vested equity (pre-tax)" valueNum={stocksPretaxToday} ccy={ccy} settings={settings} />
             <Kpi label="Vested equity (post-tax)" valueNum={liquidToday} ccy={ccy} settings={settings} />
             <Kpi label="Unvested equity (post-tax)" valueNum={unvestedToday} ccy={ccy} settings={settings} />
             <Kpi label="Property equity (pre-tax)" valueNum={propertyToday} ccy={ccy} settings={settings} />
