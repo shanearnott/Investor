@@ -120,8 +120,13 @@ function rsuValueNative(
   const flatFactor = Math.max(0, 1 - (scenario.rsu_tax_rate_pct ?? 0) / 100);
   let vested = h.shares_owned_outright * projectedPrice * flatFactor;
   let unvested = 0;
+  // Past tranche vests whose date matches an explicit release event are
+  // shadowed by that event — the user's explicit record is the source
+  // of truth, so skip them to avoid double-counting.
+  const dropDates = new Set((h.sales ?? []).map((s) => s.release_date));
   for (const t of h.tranches) {
     for (const ev of t.vest_events) {
+      if (dropDates.has(ev.vest_date)) continue;
       const d = parseISO(ev.vest_date);
       if (!d) continue;
       const factor = Math.max(0, 1 - rsuRateForYear(scenario, d.getUTCFullYear()) / 100);

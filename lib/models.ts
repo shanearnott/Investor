@@ -317,14 +317,28 @@ function eventReleased(s: StockHoldingSale, asOf: Date): boolean {
   return !!d && d <= asOf;
 }
 
+/** Set of release dates the user has logged explicit events for. Any
+ *  tranche vest_event whose date matches one of these is treated as
+ *  "already represented" by the explicit event — we don't double-count
+ *  it in share totals. */
+function explicitReleaseDates(h: StockHolding): Set<string> {
+  const out = new Set<string>();
+  for (const s of h.sales ?? []) out.add(s.release_date);
+  return out;
+}
+
 /** Total shares the holding currently holds — outright base + planned
- *  vests from tranches + net release shares the user has kept on
- *  explicit events. Independent of asOf (treats all tranche vests +
- *  events as in scope). */
+ *  vests from tranches (suppressing any that an explicit event covers)
+ *  + net release shares the user has kept on explicit events.
+ *  Independent of asOf. */
 export function totalGrantedShares(h: StockHolding): number {
+  const dropDates = explicitReleaseDates(h);
   let total = h.shares_owned_outright;
   for (const t of h.tranches) {
-    for (const ev of t.vest_events) total += ev.shares;
+    for (const ev of t.vest_events) {
+      if (dropDates.has(ev.vest_date)) continue;
+      total += ev.shares;
+    }
   }
   for (const s of h.sales ?? []) {
     if (s.sell_date) continue; // released-and-sold contributes nothing to held total
@@ -335,14 +349,18 @@ export function totalGrantedShares(h: StockHolding): number {
 
 /** Vested-or-outright shares as of `asOf`. Sums:
  *   - outright base
- *   - tranche vest_events whose date has passed
+ *   - tranche vest_events whose date has passed AND aren't shadowed by
+ *     a matching explicit release event (otherwise the explicit event
+ *     is the source of truth)
  *   - net release shares from explicit events that have released and
  *     have NOT settled a sale (the user still holds them)
  *  Shares from sold events are excluded entirely once the sale settles. */
 export function vestedSharesAt(h: StockHolding, asOf: Date): number {
+  const dropDates = explicitReleaseDates(h);
   let v = h.shares_owned_outright;
   for (const t of h.tranches) {
     for (const ev of t.vest_events) {
+      if (dropDates.has(ev.vest_date)) continue;
       const d = parseISO(ev.vest_date);
       if (d && d <= asOf) v += ev.shares;
     }
