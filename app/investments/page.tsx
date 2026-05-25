@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Label, Select, Textarea } from "@/components/ui/input";
 import { convert } from "@/lib/fx";
-import { formatMoney, formatNumber } from "@/lib/utils";
+import { formatMoney, formatMoneyCompact, formatNumber, formatNumberCompact } from "@/lib/utils";
 import {
   EQUITY_TYPES,
   PROPERTY_COUNTRIES,
@@ -190,30 +190,28 @@ function ReleaseEventsSummary({
       });
       if (events.length === 0) return null;
       let shares = 0;
-      let kept = 0;
       let covered = 0;
       let grossNative = 0;
       let withheldNative = 0;
       for (const e of events) {
         const m = releaseEventMath(e, h);
         shares += e.shares;
-        kept += m.kept;
         covered += m.withheldShares;
         grossNative += m.gross;
         withheldNative += m.withheldValue;
       }
       if (shares === 0) return null;
+      const remaining = vestedSharesAt(h, today);
       const gross = convert(grossNative, h.currency, display, settings);
       const withheld = convert(withheldNative, h.currency, display, settings);
       return {
         id: h.id,
         label: h.ticker || h.company_name || "—",
         shares,
-        kept,
         covered,
+        remaining,
         gross,
         withheld,
-        net: gross - withheld,
       };
     })
     .filter((x): x is NonNullable<typeof x> => x !== null);
@@ -221,56 +219,58 @@ function ReleaseEventsSummary({
   const total = rows.reduce(
     (acc, r) => ({
       shares: acc.shares + r.shares,
-      kept: acc.kept + r.kept,
       covered: acc.covered + r.covered,
+      remaining: acc.remaining + r.remaining,
       gross: acc.gross + r.gross,
       withheld: acc.withheld + r.withheld,
-      net: acc.net + r.net,
     }),
-    { shares: 0, kept: 0, covered: 0, gross: 0, withheld: 0, net: 0 },
+    { shares: 0, covered: 0, remaining: 0, gross: 0, withheld: 0 },
   );
   return (
     <Card>
       <CardHeader>
         <CardTitle className="text-base">Release events</CardTitle>
         <CardDescription>
-          Released shares aggregated across events whose release date has passed. The user keeps <b>shares − withholding</b> from each release.
+          Per stock: shares the user still holds after release events have
+          deducted withholding (and sale events, if any). Money totals are
+          compact (e.g. 2.1M).
         </CardDescription>
       </CardHeader>
-      <CardContent>
-        <div className="rounded-md border divide-y">
-          <div className="grid grid-cols-[1fr_auto_auto_auto_auto_auto] gap-3 px-3 py-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-            <div>Stock</div>
-            <div className="text-right">Released</div>
-            <div className="text-right">Withheld</div>
-            <div className="text-right">Gross</div>
-            <div className="text-right">Tax</div>
-            <div className="text-right">Net kept</div>
-          </div>
-          {rows.map((r) => (
-            <div
-              key={r.id}
-              className="grid grid-cols-[1fr_auto_auto_auto_auto_auto] items-baseline gap-3 px-3 py-1.5 text-xs tabular-nums"
-            >
-              <div className="font-medium">{r.label}</div>
-              <div className="text-right">{formatNumber(r.shares)}</div>
-              <div className="text-right text-muted-foreground">−{formatNumber(Math.round(r.covered))}</div>
-              <div className="text-right">{formatMoney(r.gross, display)}</div>
-              <div className="text-right text-muted-foreground">−{formatMoney(r.withheld, display)}</div>
-              <div className="text-right font-semibold">{formatNumber(Math.round(r.kept))} sh</div>
-            </div>
-          ))}
-          {rows.length > 1 ? (
-            <div className="grid grid-cols-[1fr_auto_auto_auto_auto_auto] items-baseline gap-3 px-3 py-1.5 text-xs tabular-nums bg-muted/40">
-              <div className="font-medium">Total</div>
-              <div className="text-right">{formatNumber(total.shares)}</div>
-              <div className="text-right text-muted-foreground">−{formatNumber(Math.round(total.covered))}</div>
-              <div className="text-right">{formatMoney(total.gross, display)}</div>
-              <div className="text-right text-muted-foreground">−{formatMoney(total.withheld, display)}</div>
-              <div className="text-right font-semibold">{formatNumber(Math.round(total.kept))} sh</div>
-            </div>
-          ) : null}
-        </div>
+      <CardContent className="overflow-x-auto">
+        <table className="w-full text-xs tabular-nums">
+          <thead>
+            <tr className="text-[10px] uppercase tracking-wide text-muted-foreground border-b">
+              <th className="text-left font-normal px-2 py-1.5">Stock</th>
+              <th className="text-right font-normal px-2 py-1.5">Remaining</th>
+              <th className="text-right font-normal px-2 py-1.5">Released</th>
+              <th className="text-right font-normal px-2 py-1.5">Withheld</th>
+              <th className="text-right font-normal px-2 py-1.5">Gross</th>
+              <th className="text-right font-normal px-2 py-1.5">Tax</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.id} className="border-b last:border-0">
+                <td className="px-2 py-1.5 font-medium">{r.label}</td>
+                <td className="px-2 py-1.5 text-right font-semibold">{formatNumberCompact(Math.round(r.remaining))} sh</td>
+                <td className="px-2 py-1.5 text-right">{formatNumberCompact(r.shares)}</td>
+                <td className="px-2 py-1.5 text-right text-muted-foreground">−{formatNumberCompact(Math.round(r.covered))}</td>
+                <td className="px-2 py-1.5 text-right">{formatMoneyCompact(r.gross, display)}</td>
+                <td className="px-2 py-1.5 text-right text-muted-foreground">−{formatMoneyCompact(r.withheld, display)}</td>
+              </tr>
+            ))}
+            {rows.length > 1 ? (
+              <tr className="bg-muted/40">
+                <td className="px-2 py-1.5 font-medium">Total</td>
+                <td className="px-2 py-1.5 text-right font-semibold">{formatNumberCompact(Math.round(total.remaining))} sh</td>
+                <td className="px-2 py-1.5 text-right">{formatNumberCompact(total.shares)}</td>
+                <td className="px-2 py-1.5 text-right text-muted-foreground">−{formatNumberCompact(Math.round(total.covered))}</td>
+                <td className="px-2 py-1.5 text-right">{formatMoneyCompact(total.gross, display)}</td>
+                <td className="px-2 py-1.5 text-right text-muted-foreground">−{formatMoneyCompact(total.withheld, display)}</td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
       </CardContent>
     </Card>
   );
@@ -344,43 +344,44 @@ function SaleEventsSummary({
           Sales settled to date. Tax is cap-gains on the gain (sell price − release price), not the gross. Informational only — cash isn&apos;t rolled into net worth.
         </CardDescription>
       </CardHeader>
-      <CardContent>
-        <div className="rounded-md border divide-y">
-          <div className="grid grid-cols-[1fr_auto_auto_auto_auto_auto] gap-3 px-3 py-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-            <div>Stock</div>
-            <div className="text-right">Shares</div>
-            <div className="text-right">Gross</div>
-            <div className="text-right">Gain</div>
-            <div className="text-right">Tax</div>
-            <div className="text-right">Net</div>
-          </div>
-          {rows.map((r) => (
-            <div
-              key={r.id}
-              className="grid grid-cols-[1fr_auto_auto_auto_auto_auto] items-baseline gap-3 px-3 py-1.5 text-xs tabular-nums"
-            >
-              <div className="font-medium">{r.label}</div>
-              <div className="text-right">{formatNumber(Math.round(r.shares))}</div>
-              <div className="text-right">{formatMoney(r.gross, display)}</div>
-              <div className="text-right">{formatMoney(r.gain, display)}</div>
-              <div className="text-right text-muted-foreground">
-                −{formatMoney(r.tax, display)}
-                <span className="ml-1 text-[10px]">({r.ratePct.toFixed(1)}%)</span>
-              </div>
-              <div className="text-right font-semibold">{formatMoney(r.net, display)}</div>
-            </div>
-          ))}
-          {rows.length > 1 ? (
-            <div className="grid grid-cols-[1fr_auto_auto_auto_auto_auto] items-baseline gap-3 px-3 py-1.5 text-xs tabular-nums bg-muted/40">
-              <div className="font-medium">Total</div>
-              <div className="text-right">{formatNumber(Math.round(total.shares))}</div>
-              <div className="text-right">{formatMoney(total.gross, display)}</div>
-              <div className="text-right">{formatMoney(total.gain, display)}</div>
-              <div className="text-right text-muted-foreground">−{formatMoney(total.tax, display)}</div>
-              <div className="text-right font-semibold">{formatMoney(total.net, display)}</div>
-            </div>
-          ) : null}
-        </div>
+      <CardContent className="overflow-x-auto">
+        <table className="w-full text-xs tabular-nums">
+          <thead>
+            <tr className="text-[10px] uppercase tracking-wide text-muted-foreground border-b">
+              <th className="text-left font-normal px-2 py-1.5">Stock</th>
+              <th className="text-right font-normal px-2 py-1.5">Shares</th>
+              <th className="text-right font-normal px-2 py-1.5">Gross</th>
+              <th className="text-right font-normal px-2 py-1.5">Gain</th>
+              <th className="text-right font-normal px-2 py-1.5">Tax</th>
+              <th className="text-right font-normal px-2 py-1.5">Net</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.id} className="border-b last:border-0">
+                <td className="px-2 py-1.5 font-medium">{r.label}</td>
+                <td className="px-2 py-1.5 text-right">{formatNumberCompact(Math.round(r.shares))}</td>
+                <td className="px-2 py-1.5 text-right">{formatMoneyCompact(r.gross, display)}</td>
+                <td className="px-2 py-1.5 text-right">{formatMoneyCompact(r.gain, display)}</td>
+                <td className="px-2 py-1.5 text-right text-muted-foreground">
+                  −{formatMoneyCompact(r.tax, display)}
+                  <span className="ml-1 text-[10px]">({r.ratePct.toFixed(1)}%)</span>
+                </td>
+                <td className="px-2 py-1.5 text-right font-semibold">{formatMoneyCompact(r.net, display)}</td>
+              </tr>
+            ))}
+            {rows.length > 1 ? (
+              <tr className="bg-muted/40">
+                <td className="px-2 py-1.5 font-medium">Total</td>
+                <td className="px-2 py-1.5 text-right">{formatNumberCompact(Math.round(total.shares))}</td>
+                <td className="px-2 py-1.5 text-right">{formatMoneyCompact(total.gross, display)}</td>
+                <td className="px-2 py-1.5 text-right">{formatMoneyCompact(total.gain, display)}</td>
+                <td className="px-2 py-1.5 text-right text-muted-foreground">−{formatMoneyCompact(total.tax, display)}</td>
+                <td className="px-2 py-1.5 text-right font-semibold">{formatMoneyCompact(total.net, display)}</td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
       </CardContent>
     </Card>
   );
