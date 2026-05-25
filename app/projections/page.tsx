@@ -247,20 +247,14 @@ export default function ProjectionsPage() {
   const unvestedToday = todayRow?.unvested_equity_total ?? 0;
   const propertyToday = todayRow?.property_equity_total ?? 0;
 
-  // Gross (pre-tax) snapshot today — same definition as the home page hero,
-  // so the two pages match: vested shares × current price + property equity,
-  // no RSU income-tax haircut, no unvested.
+  // Vested-equity (pre-tax) snapshot today — vested shares × current price,
+  // no RSU income-tax haircut. Used by the KPI tile.
   const todayDate = new Date();
   const stocksPretaxToday = data.stocks.reduce((sum, h) => {
     const vested = vestedSharesAt(h, todayDate);
     const native = vested * h.current_share_price;
     return sum + convert(native, h.currency, ccy, settings);
   }, 0);
-  const propertyPretaxToday = data.properties.reduce((sum, p) => {
-    const native = p.current_value - p.mortgage_balance;
-    return sum + convert(native, p.currency, ccy, settings);
-  }, 0);
-  const grossTodayPretax = stocksPretaxToday + propertyPretaxToday;
 
   // For each scenario the chart shows two lines: total (smooth, vested + unvested
   // + property — only changes with price) and "{name} vested" (vested + property
@@ -403,8 +397,7 @@ export default function ProjectionsPage() {
 
       {!noData ? (
         <>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-            <Kpi label="Gross (pre-tax) worth today" valueNum={grossTodayPretax} ccy={ccy} settings={settings} />
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <Kpi label="Vested equity (pre-tax)" valueNum={stocksPretaxToday} ccy={ccy} settings={settings} />
             <Kpi label="Vested equity (post-tax)" valueNum={liquidToday} ccy={ccy} settings={settings} />
             <Kpi label="Unvested equity (post-tax)" valueNum={unvestedToday} ccy={ccy} settings={settings} />
