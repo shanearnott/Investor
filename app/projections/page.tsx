@@ -482,7 +482,9 @@ export default function ProjectionsPage() {
                       // Order matters: draw the dashed vested line first, then
                       // the solid combined line on top. Where the two converge
                       // the solid line covers the dashed one, so a fully-vested
-                      // tail reads as a single solid line.
+                      // tail reads as a single solid line. Animation on all
+                      // marks so users can see where the line moved up vs down
+                      // when scenarios toggle or inputs change.
                       return [
                         <Bar
                           key={`${s.id}-sold`}
@@ -490,7 +492,9 @@ export default function ProjectionsPage() {
                           fill={colour}
                           fillOpacity={0.55}
                           barSize={8}
-                          isAnimationActive={false}
+                          isAnimationActive
+                          animationDuration={700}
+                          animationEasing="ease-out"
                           legendType="none"
                         />,
                         <Line
@@ -501,6 +505,9 @@ export default function ProjectionsPage() {
                           strokeWidth={2}
                           strokeDasharray="4 3"
                           dot={false}
+                          isAnimationActive
+                          animationDuration={700}
+                          animationEasing="ease-out"
                           legendType="none"
                         />,
                         <Line
@@ -510,6 +517,9 @@ export default function ProjectionsPage() {
                           stroke={colour}
                           strokeWidth={2}
                           dot={false}
+                          isAnimationActive
+                          animationDuration={700}
+                          animationEasing="ease-out"
                         />,
                       ];
                     })}
@@ -797,23 +807,44 @@ function NestedAllocationCard({
               {" "}— inner ring is the headline split; outer breaks each side down by asset.
             </CardDescription>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Label className="text-[11px] text-muted-foreground">As-of</Label>
-            <Input
-              type="month"
-              value={asOfMonth}
-              onChange={(e) => setAsOfMonth(e.target.value)}
-              className="h-8 w-[140px] text-xs"
+          <div className="flex w-full flex-col items-stretch gap-1 sm:w-auto sm:min-w-[18rem]">
+            <div className="flex items-center justify-between gap-2">
+              <Label className="text-[11px] text-muted-foreground">As-of</Label>
+              <span className="text-xs tabular-nums font-medium">{asOfMonth}</span>
+              {!isToday ? (
+                <button
+                  type="button"
+                  onClick={() => setAsOfMonth(todayMonthISO)}
+                  className="rounded-full border px-2 py-0.5 text-[10px] text-muted-foreground hover:bg-accent"
+                >
+                  Today
+                </button>
+              ) : null}
+            </div>
+            <input
+              type="range"
+              min={-60}
+              max={120}
+              step={1}
+              value={(() => {
+                const [y, m] = asOfMonth.split("-").map(Number);
+                const t = new Date();
+                return (y - t.getUTCFullYear()) * 12 + ((m - 1) - t.getUTCMonth());
+              })()}
+              onChange={(e) => {
+                const offset = Number(e.target.value);
+                const t = new Date();
+                const d = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth() + offset, 1));
+                setAsOfMonth(d.toISOString().slice(0, 7));
+              }}
+              className="h-6 w-full accent-foreground"
+              aria-label="As-of date"
             />
-            {!isToday ? (
-              <button
-                type="button"
-                onClick={() => setAsOfMonth(todayMonthISO)}
-                className="rounded-full border px-2 py-0.5 text-[10px] text-muted-foreground hover:bg-accent"
-              >
-                Reset to today
-              </button>
-            ) : null}
+            <div className="flex justify-between text-[10px] text-muted-foreground tabular-nums">
+              <span>−5y</span>
+              <span>Today</span>
+              <span>+10y</span>
+            </div>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-1">

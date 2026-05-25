@@ -182,22 +182,56 @@ export default function HomePage() {
                 );
               })()}
               <div className="mt-4 grid grid-cols-2 gap-2">
-                <div className="rounded-md border p-2">
-                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                    📊 Shares (pre-tax)
-                  </div>
-                  <div className="text-lg font-semibold tabular-nums">
-                    {formatMoney(sharesGross, displayCurrency)}
-                  </div>
-                </div>
-                <div className="rounded-md border p-2">
-                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                    🏠 Property (pre-tax)
-                  </div>
-                  <div className="text-lg font-semibold tabular-nums">
-                    {formatMoney(propertyGross, displayCurrency)}
-                  </div>
-                </div>
+                {(() => {
+                  // Use the same secondary-currency selection as the hero
+                  // total above: whatever the user picked in Settings,
+                  // swapped to the primary if it matches the display.
+                  const settingsPrimary = data.settings.primary_currency;
+                  const settingsSecondary = data.settings.secondary_currency;
+                  const secondary = displayCurrency === settingsSecondary
+                    ? settingsPrimary
+                    : settingsSecondary;
+                  const rates = data.settings.fx_rates ?? {};
+                  const haveRates = secondary !== displayCurrency
+                    && Boolean(rates[displayCurrency])
+                    && Boolean(rates[secondary]);
+                  const sharesAlt = haveRates
+                    ? convert(sharesGross, displayCurrency, secondary, data.settings)
+                    : null;
+                  const propertyAlt = haveRates
+                    ? convert(propertyGross, displayCurrency, secondary, data.settings)
+                    : null;
+                  return (
+                    <>
+                      <div className="rounded-md border p-2">
+                        <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                          📊 Shares (pre-tax)
+                        </div>
+                        <div className="text-lg font-semibold tabular-nums">
+                          {formatMoney(sharesGross, displayCurrency)}
+                        </div>
+                        {sharesAlt !== null ? (
+                          <div className="text-[10px] text-muted-foreground tabular-nums">
+                            ≈ {formatMoney(sharesAlt, secondary)}
+                          </div>
+                        ) : null}
+                      </div>
+                      <div className="rounded-md border p-2">
+                        <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                          🏠 Property (pre-tax)
+                        </div>
+                        <div className="text-lg font-semibold tabular-nums">
+                          {formatMoney(propertyGross, displayCurrency)}
+                        </div>
+                        {propertyAlt !== null ? (
+                          <div className="text-[10px] text-muted-foreground tabular-nums">
+                            ≈ {formatMoney(propertyAlt, secondary)}
+                          </div>
+                        ) : null}
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
               {vestedRsuDisplay > 0 ? (
                 <div className="mt-4">
