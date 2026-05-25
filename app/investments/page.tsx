@@ -444,11 +444,7 @@ function StocksSection(props: {
                 </CardHeader>
                 <CardContent className="text-xs space-y-1">
                   <div>
-                    Vested today: <b>{formatNumber(vestedSharesAt(h, today))}</b> sh · Cost basis:{" "}
-                    {formatMoney(h.cost_basis_per_share, h.currency, { fractionDigits: 2 })} / sh
-                  </div>
-                  <div className="text-muted-foreground">
-                    Owned outright: <b>{formatNumber(h.shares_owned_outright)}</b> sh
+                    Vested today: <b>{formatNumber(vestedSharesAt(h, today))}</b> sh
                     {totalSoldShares(h, today) > 0 ? (
                       <> · Sold to date: <b>{formatNumber(totalSoldShares(h, today))}</b> sh</>
                     ) : null}
@@ -639,30 +635,6 @@ function StockForm({
           </Field>
           <Field label="Current share price">
             <Input type="number" step="0.01" value={d.current_share_price} onChange={(e) => update("current_share_price", Number(e.target.value))} />
-          </Field>
-          <Field label="Cost basis / share">
-            <Input type="number" step="0.01" value={d.cost_basis_per_share} onChange={(e) => update("cost_basis_per_share", Number(e.target.value))} />
-          </Field>
-          <Field
-            label="Shares owned outright"
-            hint={(() => {
-              const today = new Date();
-              const sold = (d.sales ?? []).reduce((acc, s) => {
-                if (!s.sell_date) return acc;
-                const sd = parseISO(s.sell_date);
-                if (!sd || sd > today) return acc;
-                return acc + s.shares;
-              }, 0);
-              if (sold <= 0) return undefined;
-              return `${formatNumber(d.shares_owned_outright)} held · ${formatNumber(sold)} sold across sale events.`;
-            })()}
-          >
-            <Input
-              type="number"
-              step="1"
-              value={d.shares_owned_outright}
-              onChange={(e) => update("shares_owned_outright", Number(e.target.value))}
-            />
           </Field>
         </div>
 
