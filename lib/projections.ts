@@ -6,6 +6,7 @@
 import { convert } from "./fx";
 import { lookupGrowthRate } from "./growth";
 import {
+  eventNetReleaseShares,
   parseISO,
   totalGrantedShares,
   vestedSharesAt,
@@ -128,6 +129,20 @@ function rsuValueNative(
       if (d <= asOf) vested += val;
       else unvested += val;
     }
+  }
+  // Kept shares from explicit release events. Income tax was already
+  // paid at release (the user only has shares − withholding in their
+  // hands), so no RSU-rate haircut here — value them at the full
+  // projected price. Sold ones contribute nothing here (their value
+  // left the holding on sell_date).
+  for (const s of h.sales ?? []) {
+    const release = parseISO(s.release_date);
+    if (!release || release > asOf) continue;
+    if (s.sell_date) {
+      const sellD = parseISO(s.sell_date);
+      if (sellD && sellD <= asOf) continue;
+    }
+    vested += eventNetReleaseShares(s) * projectedPrice;
   }
   return { vested, unvested };
 }
