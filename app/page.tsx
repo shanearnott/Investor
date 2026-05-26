@@ -357,7 +357,7 @@ export default function HomePage() {
                         if (dist[0] === dist[dist.length - 1]) return "";
                         const rankIdx = dist.findIndex((v) => v >= shares);
                         const rank = rankIdx < 0 ? 1 : rankIdx / (dist.length - 1);
-                        if (rank >= 0.8) return "🔥 ";
+                        if (rank >= 0.9) return "🔥 ";
                         if (rank <= 0.2) return "🧊 ";
                         return "";
                       };
