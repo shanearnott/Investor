@@ -330,6 +330,34 @@ export default function HomePage() {
                       // Group adjacent events that share (date, ticker) so a stock
                       // with multiple tranches vesting the same day gets a subtotal.
                       const ev = lookahead.vestingEvents;
+                      // Highlight standout periods: any single event or
+                      // subtotal whose value lands in the top or bottom
+                      // 20% of the visible distribution gets an emoji
+                      // (🔥 = fattest periods, 🧊 = leanest). Requires at
+                      // least 3 distinct events for the percentile cuts
+                      // to be meaningful.
+                      const eventValues = ev.map((e) => e.value);
+                      const subtotalValues: number[] = [];
+                      {
+                        let i = 0;
+                        while (i < ev.length) {
+                          let j = i;
+                          while (j < ev.length && ev[j].date === ev[i].date && ev[j].ticker === ev[i].ticker) j++;
+                          if (j - i > 1) {
+                            subtotalValues.push(ev.slice(i, j).reduce((s, x) => s + x.value, 0));
+                          }
+                          i = j;
+                        }
+                      }
+                      const allValues = [...eventValues, ...subtotalValues].sort((a, b) => a - b);
+                      const emojiFor = (value: number): string => {
+                        if (allValues.length < 3) return "";
+                        const rankIdx = allValues.findIndex((v) => v >= value);
+                        const rank = rankIdx < 0 ? 1 : rankIdx / (allValues.length - 1);
+                        if (rank >= 0.8) return "🔥 ";
+                        if (rank <= 0.2) return "🧊 ";
+                        return "";
+                      };
                       const out: React.ReactNode[] = [];
                       let i = 0;
                       while (i < ev.length) {
@@ -344,7 +372,7 @@ export default function HomePage() {
                           out.push(
                             <li key={`e-${k}`} className="flex justify-between gap-2 border-b pb-1 last:border-0">
                               <span>
-                                <b>{e.date}</b> · {e.ticker} <span className="text-muted-foreground">· {e.trancheName}</span>
+                                <b>{e.date}</b> · {emojiFor(e.value)}{e.ticker} <span className="text-muted-foreground">· {e.trancheName}</span>
                               </span>
                               <span className="tabular-nums">
                                 {formatNumber(e.shares)} sh · {formatMoney(e.value, displayCurrency)}
@@ -361,7 +389,7 @@ export default function HomePage() {
                               className="flex justify-between gap-2 border-b pb-1 last:border-0 text-muted-foreground italic"
                             >
                               <span>
-                                ↳ Subtotal · {ev[i].ticker} on {ev[i].date}
+                                ↳ Subtotal · {emojiFor(value)}{ev[i].ticker} on {ev[i].date}
                               </span>
                               <span className="tabular-nums">
                                 {formatNumber(shares)} sh · {formatMoney(value, displayCurrency)}
