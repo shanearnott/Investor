@@ -330,28 +330,30 @@ export default function HomePage() {
                       // Group adjacent events that share (date, ticker) so a stock
                       // with multiple tranches vesting the same day gets a subtotal.
                       const ev = lookahead.vestingEvents;
-                      // Build the percentile distribution from ALL
-                      // (date, ticker) subtotals across the user's entire
-                      // vesting history — past and future, all stocks —
-                      // not just the visible window. This way 🔥/🧊
-                      // tags a period the same way regardless of which
-                      // look-ahead months are selected.
-                      const periodSubtotals: number[] = [];
+                      // Build a per-ticker percentile distribution from
+                      // every (date, ticker) subtotal in the user's
+                      // complete vesting schedule. Each stock is ranked
+                      // against its own vests only — cross-stock
+                      // comparison would mix grants of very different
+                      // sizes and isn't meaningful. 🔥/🧊 stays stable
+                      // as the look-ahead window changes.
+                      const distByTicker = new Map<string, number[]>();
                       for (const h of data.stocks) {
-                        const byKey = new Map<string, number>();
+                        const ticker = h.ticker || h.company_name || h.id;
+                        const byDate = new Map<string, number>();
                         for (const tr of h.tranches) {
                           for (const vev of tr.vest_events) {
-                            const key = `${vev.vest_date}|${h.ticker || h.company_name || h.id}`;
-                            byKey.set(key, (byKey.get(key) ?? 0) + vev.shares);
+                            byDate.set(vev.vest_date, (byDate.get(vev.vest_date) ?? 0) + vev.shares);
                           }
                         }
-                        for (const v of byKey.values()) periodSubtotals.push(v);
+                        const arr = Array.from(byDate.values()).sort((a, b) => a - b);
+                        distByTicker.set(ticker, arr);
                       }
-                      periodSubtotals.sort((a, b) => a - b);
-                      const emojiFor = (shares: number): string => {
-                        if (periodSubtotals.length < 3) return "";
-                        const rankIdx = periodSubtotals.findIndex((v) => v >= shares);
-                        const rank = rankIdx < 0 ? 1 : rankIdx / (periodSubtotals.length - 1);
+                      const emojiFor = (ticker: string, shares: number): string => {
+                        const dist = distByTicker.get(ticker);
+                        if (!dist || dist.length < 3) return "";
+                        const rankIdx = dist.findIndex((v) => v >= shares);
+                        const rank = rankIdx < 0 ? 1 : rankIdx / (dist.length - 1);
                         if (rank >= 0.8) return "🔥 ";
                         if (rank <= 0.2) return "🧊 ";
                         return "";
@@ -387,7 +389,7 @@ export default function HomePage() {
                               className="flex justify-between gap-2 border-b pb-1 last:border-0 text-muted-foreground italic"
                             >
                               <span>
-                                ↳ Subtotal · {emojiFor(shares)}{ev[i].ticker} on {ev[i].date}
+                                ↳ Subtotal · {emojiFor(ev[i].ticker, shares)}{ev[i].ticker} on {ev[i].date}
                               </span>
                               <span className="tabular-nums">
                                 {formatNumber(shares)} sh · {formatMoney(value, displayCurrency)}
