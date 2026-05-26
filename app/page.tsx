@@ -330,31 +330,28 @@ export default function HomePage() {
                       // Group adjacent events that share (date, ticker) so a stock
                       // with multiple tranches vesting the same day gets a subtotal.
                       const ev = lookahead.vestingEvents;
-                      // Highlight standout periods by SHARE COUNT (the
-                      // ticker's price isn't the measure of "fattest"
-                      // — share count is). Each visible event or
-                      // subtotal whose share count lands in the top or
-                      // bottom 20% of the distribution gets an emoji
-                      // (🔥 = fattest, 🧊 = leanest). Needs ≥3 distinct
-                      // values for the percentile cuts to be meaningful.
-                      const eventShares = ev.map((e) => e.shares);
-                      const subtotalShares: number[] = [];
-                      {
-                        let i = 0;
-                        while (i < ev.length) {
-                          let j = i;
-                          while (j < ev.length && ev[j].date === ev[i].date && ev[j].ticker === ev[i].ticker) j++;
-                          if (j - i > 1) {
-                            subtotalShares.push(ev.slice(i, j).reduce((s, x) => s + x.shares, 0));
+                      // Build the percentile distribution from ALL
+                      // (date, ticker) subtotals across the user's entire
+                      // vesting history — past and future, all stocks —
+                      // not just the visible window. This way 🔥/🧊
+                      // tags a period the same way regardless of which
+                      // look-ahead months are selected.
+                      const periodSubtotals: number[] = [];
+                      for (const h of data.stocks) {
+                        const byKey = new Map<string, number>();
+                        for (const tr of h.tranches) {
+                          for (const vev of tr.vest_events) {
+                            const key = `${vev.vest_date}|${h.ticker || h.company_name || h.id}`;
+                            byKey.set(key, (byKey.get(key) ?? 0) + vev.shares);
                           }
-                          i = j;
                         }
+                        for (const v of byKey.values()) periodSubtotals.push(v);
                       }
-                      const allShares = [...eventShares, ...subtotalShares].sort((a, b) => a - b);
+                      periodSubtotals.sort((a, b) => a - b);
                       const emojiFor = (shares: number): string => {
-                        if (allShares.length < 3) return "";
-                        const rankIdx = allShares.findIndex((v) => v >= shares);
-                        const rank = rankIdx < 0 ? 1 : rankIdx / (allShares.length - 1);
+                        if (periodSubtotals.length < 3) return "";
+                        const rankIdx = periodSubtotals.findIndex((v) => v >= shares);
+                        const rank = rankIdx < 0 ? 1 : rankIdx / (periodSubtotals.length - 1);
                         if (rank >= 0.8) return "🔥 ";
                         if (rank <= 0.2) return "🧊 ";
                         return "";
@@ -373,7 +370,7 @@ export default function HomePage() {
                           out.push(
                             <li key={`e-${k}`} className="flex justify-between gap-2 border-b pb-1 last:border-0">
                               <span>
-                                <b>{e.date}</b> · {emojiFor(e.shares)}{e.ticker} <span className="text-muted-foreground">· {e.trancheName}</span>
+                                <b>{e.date}</b> · {e.ticker} <span className="text-muted-foreground">· {e.trancheName}</span>
                               </span>
                               <span className="tabular-nums">
                                 {formatNumber(e.shares)} sh · {formatMoney(e.value, displayCurrency)}
