@@ -22,7 +22,7 @@ const POST_TAX_RATES: ReadonlyArray<{ label: string; rate: number }> = [
   { label: "California", rate: 50 },
 ];
 
-const LOOKAHEAD_OPTIONS = [3, 6, 9, 12, 18, 24] as const;
+const LOOKAHEAD_OPTIONS = [3, 6, 9, 12, 18, 24, 36, 48] as const;
 type LookaheadMonths = (typeof LOOKAHEAD_OPTIONS)[number];
 
 export default function HomePage() {
