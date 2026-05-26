@@ -352,6 +352,9 @@ export default function HomePage() {
                       const emojiFor = (ticker: string, shares: number): string => {
                         const dist = distByTicker.get(ticker);
                         if (!dist || dist.length < 3) return "";
+                        // If every vest on this ticker is the same size,
+                        // there's no "good" or "bad" period to highlight.
+                        if (dist[0] === dist[dist.length - 1]) return "";
                         const rankIdx = dist.findIndex((v) => v >= shares);
                         const rank = rankIdx < 0 ? 1 : rankIdx / (dist.length - 1);
                         if (rank >= 0.8) return "🔥 ";
