@@ -65,7 +65,7 @@ function monthStart(d: Date): Date {
 
 /** Effective today's price for a stock under a scenario — defaults to the
  *  holding's actual price unless the scenario overrides it. */
-function startingPriceForScenario(
+export function startingPriceForScenario(
   s: Scenario,
   holding: Pick<StockHolding, "id" | "current_share_price">,
 ): number {
