@@ -458,7 +458,10 @@ export default function ProjectionsPage() {
                     <XAxis
                       dataKey="date"
                       tick={{ fontSize: 11 }}
-                      minTickGap={50}
+                      minTickGap={20}
+                      ticks={lineData
+                        .map((r) => r.date as string)
+                        .filter((d) => d.endsWith("-01-01") || d.endsWith("-07-01"))}
                       tickFormatter={formatMmmYY}
                     />
                     <YAxis tick={{ fontSize: 11 }} tickFormatter={compactNumber} />
