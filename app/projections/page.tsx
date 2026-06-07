@@ -292,6 +292,15 @@ export default function ProjectionsPage() {
     });
   }, [chosen, seriesByScenario, lineShowStocks, lineShowProperty, lineShowCash]);
 
+  // Pin x-axis ticks to every Jan/Jul present in the line data so the
+  // user always gets a labelled six-month boundary. Memoised so Recharts
+  // sees a stable array reference across animation frames.
+  const janJulTicks = useMemo(() => {
+    return lineData
+      .map((r) => r.date as string)
+      .filter((d) => typeof d === "string" && (d.endsWith("-01-01") || d.endsWith("-07-01")));
+  }, [lineData]);
+
   // As-of date for the wealth-allocation pie chart. YYYY-MM is enough — pin
   // to the 1st of the chosen month. Defaults to today; user can slide it
   // forward to see "what would the realised vs coming split look like in 2y?"
@@ -459,9 +468,7 @@ export default function ProjectionsPage() {
                       dataKey="date"
                       tick={{ fontSize: 11 }}
                       minTickGap={20}
-                      ticks={lineData
-                        .map((r) => r.date as string)
-                        .filter((d) => d.endsWith("-01-01") || d.endsWith("-07-01"))}
+                      {...(janJulTicks.length > 0 ? { ticks: janJulTicks } : {})}
                       tickFormatter={formatMmmYY}
                     />
                     <YAxis tick={{ fontSize: 11 }} tickFormatter={compactNumber} />
