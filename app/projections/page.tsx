@@ -29,6 +29,7 @@ import {
   projectStockValueAt,
   resolveScenarioSales,
   resolvedByHolding,
+  startingPriceForScenario,
 } from "@/lib/projections";
 import { formatMoney, formatNumber } from "@/lib/utils";
 
@@ -250,11 +251,17 @@ export default function ProjectionsPage() {
   // Vested-equity (pre-tax) snapshot today — vested shares × current price,
   // no RSU income-tax haircut. Used by the KPI tile.
   const todayDate = new Date();
+  // The pre-tax tile follows the first selected scenario so it tracks
+  // assumed-price overrides as the user toggles bear/base/bull. Falls
+  // back to a stub scenario (no overrides → uses the holding's actual
+  // price) when nothing is selected.
+  const pretaxScenario: Scenario = chosen[0] ?? fallbackScenario();
   const stocksPretaxToday = data.stocks.reduce((sum, h) => {
+    const startPrice = startingPriceForScenario(pretaxScenario, h);
     const vested = vestedSharesAt(h, todayDate);
     const perShare = h.equity_type === "Stock Options"
-      ? Math.max(0, h.current_share_price - (h.strike_price ?? 0))
-      : h.current_share_price;
+      ? Math.max(0, startPrice - (h.strike_price ?? 0))
+      : startPrice;
     const native = vested * perShare;
     return sum + convert(native, h.currency, ccy, settings);
   }, 0);
