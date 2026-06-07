@@ -11,7 +11,7 @@ import {
 } from "react";
 
 import { buildDemoData } from "@/lib/demo-data";
-import { readFromDrive, writeToDrive } from "@/lib/drive-client";
+import { getAuthorisedEmail, readFromDrive, requestAccessToken, writeToDrive } from "@/lib/drive-client";
 import {
   COLLECTION_FILES,
   SettingsSchema,
@@ -69,6 +69,7 @@ export type AutoSyncStatus =
 const DISPLAY_CCY_KEY = "investor:displayCurrency";
 const DRIVE_TOKEN_KEY = "investor:driveToken";
 const DRIVE_EMAIL_KEY = "investor:driveEmail";
+const DRIVE_REMEMBER_KEY = "investor:driveRememberEmail";
 const DRIVE_LAST_SYNC_KEY = "investor:driveLastSync";
 const PUSH_DEBOUNCE_MS = 3000;
 
@@ -119,8 +120,14 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     setDriveEmailState(email);
     if (typeof window !== "undefined") {
       window.sessionStorage.setItem(DRIVE_TOKEN_KEY, token);
-      if (email) window.sessionStorage.setItem(DRIVE_EMAIL_KEY, email);
-      else window.sessionStorage.removeItem(DRIVE_EMAIL_KEY);
+      if (email) {
+        window.sessionStorage.setItem(DRIVE_EMAIL_KEY, email);
+        // Persist the Drive identity so subsequent loads can attempt a
+        // silent reconnect without a popup. Cleared by clearDriveAuth.
+        window.localStorage.setItem(DRIVE_REMEMBER_KEY, email);
+      } else {
+        window.sessionStorage.removeItem(DRIVE_EMAIL_KEY);
+      }
     }
   }, []);
 
@@ -130,6 +137,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     if (typeof window !== "undefined") {
       window.sessionStorage.removeItem(DRIVE_TOKEN_KEY);
       window.sessionStorage.removeItem(DRIVE_EMAIL_KEY);
+      window.localStorage.removeItem(DRIVE_REMEMBER_KEY);
     }
   }, []);
 
@@ -215,6 +223,41 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  // --- Auto-reconnect to Drive ---
+  // If the user previously connected (we remembered their email in
+  // localStorage) and the client ID is set in settings, try to obtain a
+  // fresh access token silently on app load. Google Identity Services'
+  // tokenClient with prompt:"" reuses the existing session without a
+  // popup when the user is still signed in and has previously granted
+  // the drive.file scope. Any failure is swallowed so the user can
+  // still hit "Connect Drive" manually.
+  const reconnectAttemptedRef = useRef(false);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (loading) return; // wait until settings are loaded
+    if (reconnectAttemptedRef.current) return;
+    if (driveToken) return; // already connected
+    const clientId = data.settings.google_oauth_client_id?.trim();
+    if (!clientId) return;
+    const remembered = window.localStorage.getItem(DRIVE_REMEMBER_KEY);
+    if (!remembered) return;
+    reconnectAttemptedRef.current = true;
+    let cancelled = false;
+    (async () => {
+      try {
+        const t = await requestAccessToken(clientId);
+        if (cancelled) return;
+        const e = await getAuthorisedEmail(t);
+        if (cancelled) return;
+        setDriveAuth(t, e);
+      } catch {
+        // Silent — user signed out of Google, popup blocked, or
+        // network issue. They can reconnect manually from Settings.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [loading, driveToken, data.settings.google_oauth_client_id, setDriveAuth]);
 
   // --- Auto-sync (Drive) ---
   // Debounced push triggered by user edits, pull on tab focus + on connect.
