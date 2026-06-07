@@ -252,7 +252,10 @@ export default function ProjectionsPage() {
   const todayDate = new Date();
   const stocksPretaxToday = data.stocks.reduce((sum, h) => {
     const vested = vestedSharesAt(h, todayDate);
-    const native = vested * h.current_share_price;
+    const perShare = h.equity_type === "Stock Options"
+      ? Math.max(0, h.current_share_price - (h.strike_price ?? 0))
+      : h.current_share_price;
+    const native = vested * perShare;
     return sum + convert(native, h.currency, ccy, settings);
   }, 0);
 

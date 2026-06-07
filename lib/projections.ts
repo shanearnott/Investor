@@ -181,6 +181,12 @@ export function projectStockValueAt(
     const v = rsuValueNative(h, scenario, asOf, projectedPrice);
     vestedNative = v.vested;
     unvestedNative = v.unvested;
+  } else if (h.equity_type === "Stock Options") {
+    // Per-option intrinsic value at the projected price; 0 when
+    // underwater (current < strike). Strike comes off the holding.
+    const intrinsic = Math.max(0, projectedPrice - (h.strike_price ?? 0));
+    vestedNative = vested * intrinsic;
+    unvestedNative = unvested * intrinsic;
   } else {
     vestedNative = vested * projectedPrice;
     unvestedNative = unvested * projectedPrice;

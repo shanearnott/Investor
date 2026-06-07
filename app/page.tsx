@@ -507,7 +507,12 @@ function computeLookahead(args: {
         const d = parseISO(ev.vest_date);
         if (!d) continue;
         if (d <= today || d > end) continue;
-        const valueNative = ev.shares * h.current_share_price;
+        // For Stock Options, value = intrinsic per option (= max(0,
+        // price − strike)) × count; everything else uses price directly.
+        const perShareNative = h.equity_type === "Stock Options"
+          ? Math.max(0, h.current_share_price - (h.strike_price ?? 0))
+          : h.current_share_price;
+        const valueNative = ev.shares * perShareNative;
         const valueDisplay = convert(valueNative, h.currency, args.displayCurrency, args.settings);
         events.push({
           date: ev.vest_date,
