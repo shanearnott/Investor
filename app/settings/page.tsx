@@ -378,6 +378,11 @@ function DriveSyncSection({
   const handleSyncToDrive = async () => {
     setErr(null); setNote(null);
     if (!token) { setErr("Connect to Drive first."); return; }
+    const lastSyncDesc = lastSync ? ` (replacing the copy from ${new Date(lastSync).toLocaleString()})` : "";
+    const ok = typeof window === "undefined" ? true : window.confirm(
+      `Upload current local data to Drive${lastSyncDesc}? The existing ${DRIVE_FILE_NAME} in your Drive will be overwritten.`,
+    );
+    if (!ok) return;
     setBusy("up");
     try {
       const exported_at = new Date().toISOString();
@@ -408,6 +413,10 @@ function DriveSyncSection({
   const handleRestoreFromDrive = async () => {
     setErr(null); setNote(null);
     if (!token) { setErr("Connect to Drive first."); return; }
+    const ok = typeof window === "undefined" ? true : window.confirm(
+      `Restore from Drive? This will REPLACE all local stocks, properties, scenarios, projects, and settings with whatever is in ${DRIVE_FILE_NAME}. The current local data cannot be recovered after this unless you've downloaded a file backup.`,
+    );
+    if (!ok) return;
     setBusy("down");
     try {
       const raw = await readFromDrive(token);
