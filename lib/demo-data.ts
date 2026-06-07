@@ -41,6 +41,7 @@ export function buildDemoData(): CollectionsMap {
         current_share_price: 48.5,
         cost_basis_per_share: 22.0,
         shares_owned_outright: 1500,
+        strike_price: 0,
         tranches: [
           {
             id: "demo-tranche-acme-hire",
@@ -70,6 +71,7 @@ export function buildDemoData(): CollectionsMap {
         current_share_price: 415.0,
         cost_basis_per_share: 280.0,
         shares_owned_outright: 200,
+        strike_price: 0,
         tranches: [],
         sales: [],
         notes: "Demo: public-stock holding, long-term cap gains eligible.",

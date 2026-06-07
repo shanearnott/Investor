@@ -637,6 +637,19 @@ function StockForm({
           <Field label="Current share price">
             <Input type="number" step="0.01" value={d.current_share_price} onChange={(e) => update("current_share_price", Number(e.target.value))} />
           </Field>
+          {d.equity_type === "Stock Options" ? (
+            <Field
+              label="Strike (grant) price"
+              hint={`Intrinsic value / option = max(0, current − strike) = ${formatMoney(Math.max(0, d.current_share_price - d.strike_price), d.currency, { fractionDigits: 2 })} today.`}
+            >
+              <Input
+                type="number"
+                step="0.01"
+                value={d.strike_price}
+                onChange={(e) => update("strike_price", Number(e.target.value))}
+              />
+            </Field>
+          ) : null}
         </div>
 
         <div className="space-y-3">

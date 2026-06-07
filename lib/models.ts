@@ -134,6 +134,10 @@ export const StockHoldingSchema = z.object({
   current_share_price: z.number().nonnegative().default(0),
   cost_basis_per_share: z.number().nonnegative().default(0),
   shares_owned_outright: z.number().nonnegative().default(0),
+  /** For Stock Options only: per-share strike (grant) price. Intrinsic
+   *  value per option = max(0, current_share_price − strike_price). For
+   *  RSU / Common Stock / ESPP this is unused. */
+  strike_price: z.number().nonnegative().default(0),
   /** Multiple tranches per stock; each has its own vesting schedule. */
   tranches: z.array(TrancheSchema).default([]),
   /** Recorded sales — shares actually sold (or committed to be sold) out
