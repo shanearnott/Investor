@@ -12,13 +12,12 @@ import { convert } from "@/lib/fx";
 import { lookupGrowthRate } from "@/lib/growth";
 import { formatMoney, formatNumber } from "@/lib/utils";
 import { currentAllocationBreakdown } from "@/lib/projections";
-import { parseISO, vestedSharesAt, type Property, type StockHolding } from "@/lib/models";
+import { parseISO, unvestedSharesAt, vestedSharesAt, type Property, type StockHolding } from "@/lib/models";
 
 /** RSU income-tax rates applied to the home-page "post-tax" net-worth
  *  tiles. Mirrors the scenarios page defaults — gives a quick at-a-glance
  *  read of net worth if you were taxed in each jurisdiction at vest. */
 const POST_TAX_RATES: ReadonlyArray<{ label: string; rate: number }> = [
-  { label: "Federal Only", rate: 37 },
   { label: "California", rate: 50 },
 ];
 
@@ -62,6 +61,17 @@ export default function HomePage() {
       const valueNative = vestedSharesAt(h, todayDate) * h.current_share_price;
       return sum + convert(valueNative, h.currency, displayCurrency, data.settings);
     }, 0);
+  // Unvested ("still to vest") gross value across all stocks, in display
+  // currency. Options use intrinsic so an underwater grant reads as 0
+  // rather than full-price.
+  const toVestGross = data.stocks.reduce((sum, h) => {
+    const unvested = unvestedSharesAt(h, todayDate);
+    const perShare = h.equity_type === "Stock Options"
+      ? Math.max(0, h.current_share_price - (h.strike_price ?? 0))
+      : h.current_share_price;
+    const native = unvested * perShare;
+    return sum + convert(native, h.currency, displayCurrency, data.settings);
+  }, 0);
 
   // Look-ahead window: equity tranches that will vest, plus expected property
   // growth between now and N months from now (user-selectable).
@@ -181,7 +191,7 @@ export default function HomePage() {
                   </p>
                 );
               })()}
-              <div className="mt-4 grid grid-cols-2 gap-2">
+              <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
                 {(() => {
                   // Use the same secondary-currency selection as the hero
                   // total above: whatever the user picked in Settings,
@@ -198,6 +208,9 @@ export default function HomePage() {
                   const sharesAlt = haveRates
                     ? convert(sharesGross, displayCurrency, secondary, data.settings)
                     : null;
+                  const toVestAlt = haveRates
+                    ? convert(toVestGross, displayCurrency, secondary, data.settings)
+                    : null;
                   const propertyAlt = haveRates
                     ? convert(propertyGross, displayCurrency, secondary, data.settings)
                     : null;
@@ -213,6 +226,19 @@ export default function HomePage() {
                         {sharesAlt !== null ? (
                           <div className="text-[10px] text-muted-foreground tabular-nums">
                             ≈ {formatMoney(sharesAlt, secondary)}
+                          </div>
+                        ) : null}
+                      </div>
+                      <div className="rounded-md border p-2">
+                        <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                          🌱 To vest (pre-tax)
+                        </div>
+                        <div className="text-lg font-semibold tabular-nums">
+                          {formatMoney(toVestGross, displayCurrency)}
+                        </div>
+                        {toVestAlt !== null ? (
+                          <div className="text-[10px] text-muted-foreground tabular-nums">
+                            ≈ {formatMoney(toVestAlt, secondary)}
                           </div>
                         ) : null}
                       </div>
@@ -238,7 +264,7 @@ export default function HomePage() {
                   <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">
                     Post-tax (RSU income tax applied today)
                   </p>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 gap-2">
                     {POST_TAX_RATES.map(({ label, rate }) => {
                       const value = today - vestedRsuDisplay * (rate / 100);
                       const subCcy = [data.settings.primary_currency, data.settings.secondary_currency]
