@@ -320,6 +320,22 @@ export default function ProjectionsPage() {
   }, [asOfMonth]);
   const isToday = asOfMonth === todayMonthISO;
 
+  // Pie as-of slider tracks the line chart's horizon, so the user can
+  // scrub ±horizonYears around today. Shrinking the horizon should pull
+  // the as-of back inside the new window if the user was at, say, +5y
+  // and just dropped horizon to 2y.
+  useEffect(() => {
+    const [y, m] = asOfMonth.split("-").map(Number);
+    if (!y || !m) return;
+    const t = new Date();
+    const offset = (y - t.getUTCFullYear()) * 12 + ((m - 1) - t.getUTCMonth());
+    const max = horizonYears * 12;
+    const clamped = Math.max(-max, Math.min(max, offset));
+    if (clamped === offset) return;
+    const d = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth() + clamped, 1));
+    setAsOfMonth(d.toISOString().slice(0, 7));
+  }, [horizonYears, asOfMonth]);
+
   const pieScenario = chosen[0];
   const realisedPie: Slice[] = pieScenario
     ? realisedAtDateByAsset({
@@ -843,8 +859,8 @@ function NestedAllocationCard({
             </div>
             <input
               type="range"
-              min={-60}
-              max={60}
+              min={-horizonYears * 12}
+              max={horizonYears * 12}
               step={1}
               value={(() => {
                 const [y, m] = asOfMonth.split("-").map(Number);
@@ -861,9 +877,9 @@ function NestedAllocationCard({
               aria-label="As-of date"
             />
             <div className="flex justify-between text-[10px] text-muted-foreground tabular-nums">
-              <span>−5y</span>
+              <span>−{horizonYears}y</span>
               <span>Today</span>
-              <span>+5y</span>
+              <span>+{horizonYears}y</span>
             </div>
           </div>
         </div>
