@@ -191,7 +191,7 @@ export default function HomePage() {
                   </p>
                 );
               })()}
-              <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
+              <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
                 {(() => {
                   // Use the same secondary-currency selection as the hero
                   // total above: whatever the user picked in Settings,
@@ -255,39 +255,33 @@ export default function HomePage() {
                           </div>
                         ) : null}
                       </div>
+                      {vestedRsuDisplay > 0
+                        ? POST_TAX_RATES.map(({ label, rate }) => {
+                            const value = today - vestedRsuDisplay * (rate / 100);
+                            const alt = haveRates
+                              ? convert(value, displayCurrency, secondary, data.settings)
+                              : null;
+                            return (
+                              <div key={label} className="rounded-md border p-2">
+                                <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                                  💸 {label} ({rate}% post-tax)
+                                </div>
+                                <div className="text-lg font-semibold tabular-nums">
+                                  {formatMoney(value, displayCurrency)}
+                                </div>
+                                {alt !== null ? (
+                                  <div className="text-[10px] text-muted-foreground tabular-nums">
+                                    ≈ {formatMoney(alt, secondary)}
+                                  </div>
+                                ) : null}
+                              </div>
+                            );
+                          })
+                        : null}
                     </>
                   );
                 })()}
               </div>
-              {vestedRsuDisplay > 0 ? (
-                <div className="mt-4">
-                  <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">
-                    Post-tax (RSU income tax applied today)
-                  </p>
-                  <div className="grid grid-cols-1 gap-2">
-                    {POST_TAX_RATES.map(({ label, rate }) => {
-                      const value = today - vestedRsuDisplay * (rate / 100);
-                      const subCcy = [data.settings.primary_currency, data.settings.secondary_currency]
-                        .find((c) => c && c !== displayCurrency);
-                      return (
-                        <div key={label} className="rounded-md border p-2">
-                          <div className="text-[11px] text-muted-foreground">
-                            {label} <span className="tabular-nums">{rate}%</span>
-                          </div>
-                          <div className="text-base font-semibold tabular-nums">
-                            {formatMoney(value, displayCurrency)}
-                          </div>
-                          {subCcy ? (
-                            <div className="text-[10px] text-muted-foreground tabular-nums">
-                              {formatMoney(convert(value, displayCurrency, subCcy, data.settings), subCcy)}
-                            </div>
-                          ) : null}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              ) : null}
             </CardContent>
           </Card>
         </Link>
