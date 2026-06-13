@@ -264,7 +264,7 @@ export default function HomePage() {
                             return (
                               <div key={label} className="rounded-md border p-2">
                                 <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                                  💸 Combined post-tax ({rate}%)
+                                  💸 Worth (post-tax)
                                 </div>
                                 <div className="text-lg font-semibold tabular-nums">
                                   {formatMoney(value, displayCurrency)}
