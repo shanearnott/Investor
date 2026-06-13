@@ -33,7 +33,7 @@ import {
 } from "@/lib/projections";
 import { formatMoney, formatNumber } from "@/lib/utils";
 
-const HORIZON_OPTIONS = [2.5, 5, 10, 15, 20] as const;
+const HORIZON_OPTIONS = [2, 5, 10, 15, 20] as const;
 type HorizonYears = (typeof HORIZON_OPTIONS)[number];
 
 const PIE_COLORS = [
