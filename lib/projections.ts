@@ -119,40 +119,62 @@ function rsuValueNative(
   projectedPrice: number,
 ): { vested: number; unvested: number } {
   const flatFactor = Math.max(0, 1 - (scenario.rsu_tax_rate_pct ?? 0) / 100);
-  let vested = h.shares_owned_outright * projectedPrice * flatFactor;
-  let unvested = 0;
-  // Tranche vests whose date matches a logged release event represent
-  // shares whose income tax has already been paid via withholding. Skip
-  // them here — they're added back below at full projected price (no
-  // RSU-rate haircut) and the withholding portion is implicitly gone.
-  // Unmatched tranches still get the scenario's haircut: tax is assumed
-  // payable at vest.
-  const releaseDates = new Set((h.sales ?? []).map((s) => s.release_date));
+
+  // Aggregate at the holding level so vest_date / release_date drift
+  // doesn't double-count: the user logs releases as quarters pass,
+  // sometimes a day off the scheduled tranche date. Date matching
+  // collapses there; counts hold regardless.
+  let pastTrancheGross = 0;
+  let futureTrancheGross = 0;
   for (const t of h.tranches) {
     for (const ev of t.vest_events) {
-      if (releaseDates.has(ev.vest_date)) continue;
       const d = parseISO(ev.vest_date);
       if (!d) continue;
-      const factor = Math.max(0, 1 - rsuRateForYear(scenario, d.getUTCFullYear()) / 100);
-      const val = ev.shares * projectedPrice * factor;
-      if (d <= asOf) vested += val;
-      else unvested += val;
+      if (d <= asOf) pastTrancheGross += ev.shares;
+      else futureTrancheGross += ev.shares;
     }
   }
-  // Release events contribute their kept shares (gross − withholding)
-  // at full projected price; income tax was paid via withholding so no
-  // further haircut. Sold-out events contribute nothing.
+
+  let releaseGrossPast = 0;
+  let keptHeldPast = 0;
+  let releaseGrossFuture = 0;
+  let releaseKeptFuture = 0;
   for (const s of h.sales ?? []) {
     const release = parseISO(s.release_date);
     if (!release) continue;
-    if (s.sell_date) {
-      const sellD = parseISO(s.sell_date);
-      if (sellD && sellD <= asOf) continue;
+    const kept = eventNetReleaseShares(s);
+    if (release <= asOf) {
+      releaseGrossPast += s.shares;
+      let sold = false;
+      if (s.sell_date) {
+        const sd = parseISO(s.sell_date);
+        if (sd && sd <= asOf) sold = true;
+      }
+      if (!sold) keptHeldPast += kept;
+    } else {
+      releaseGrossFuture += s.shares;
+      releaseKeptFuture += kept;
     }
-    const val = eventNetReleaseShares(s) * projectedPrice;
-    if (release <= asOf) vested += val;
-    else unvested += val;
   }
+
+  // Income-tax bookkeeping:
+  //   untaxed*  — tranche shares not yet "released" via an explicit
+  //               event; tax is assumed payable at vest, haircut applies.
+  //   taxPaid*  — kept shares from release events; income tax already
+  //               paid via withholding, value at full projected price.
+  const untaxedHeld = Math.max(0, pastTrancheGross - releaseGrossPast);
+  const taxPaidHeld = keptHeldPast;
+  const untaxedUnvested = Math.max(0, futureTrancheGross - releaseGrossFuture);
+  const taxPaidUnvested = releaseKeptFuture;
+
+  const vested =
+    h.shares_owned_outright * projectedPrice * flatFactor
+    + untaxedHeld * projectedPrice * flatFactor
+    + taxPaidHeld * projectedPrice;
+  const unvested =
+    untaxedUnvested * projectedPrice * flatFactor
+    + taxPaidUnvested * projectedPrice;
+
   return { vested: Math.max(0, vested), unvested };
 }
 

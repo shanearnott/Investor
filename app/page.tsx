@@ -69,16 +69,25 @@ export default function HomePage() {
   const preTaxRsuValue = data.stocks
     .filter((h) => h.equity_type === "RSU")
     .reduce((sum, h) => {
-      const releaseDates = new Set((h.sales ?? []).map((s) => s.release_date));
-      let preTaxShares = 0;
+      // Count-based aggregate at the holding level. Past tranche shares
+      // not "covered" by an explicit release event are assumed pre-tax;
+      // released gross is treated as tax-paid via withholding. This
+      // avoids the double-counting that exact vest_date / release_date
+      // matching produces when the user logs releases on the actual
+      // day rather than the scheduled day.
+      let pastTrancheGross = 0;
       for (const t of h.tranches) {
         for (const ev of t.vest_events) {
-          if (releaseDates.has(ev.vest_date)) continue;
           const d = parseISO(ev.vest_date);
-          if (!d || d > todayDate) continue;
-          preTaxShares += ev.shares;
+          if (d && d <= todayDate) pastTrancheGross += ev.shares;
         }
       }
+      let releaseGrossPast = 0;
+      for (const s of h.sales ?? []) {
+        const release = parseISO(s.release_date);
+        if (release && release <= todayDate) releaseGrossPast += s.shares;
+      }
+      const preTaxShares = Math.max(0, pastTrancheGross - releaseGrossPast);
       const valueNative = preTaxShares * h.current_share_price;
       return sum + convert(valueNative, h.currency, displayCurrency, data.settings);
     }, 0);
