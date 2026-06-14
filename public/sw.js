@@ -8,7 +8,7 @@
  *   - Other GETs (JS/CSS/images): stale-while-revalidate so the app still loads
  *     offline but updates land on the next visit.
  */
-const VERSION = "v3";
+const VERSION = "v4";
 const STATIC = `investor-static-${VERSION}`;
 const PRECACHE = ["manifest.json", "icon.svg"];
 
