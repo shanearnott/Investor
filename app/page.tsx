@@ -51,14 +51,27 @@ export default function HomePage() {
   const propertyGross = convert(propertyGrossPrimary, data.settings.primary_currency, displayCurrency, data.settings);
   const sharesGross = convert(sharesGrossPrimary, data.settings.primary_currency, displayCurrency, data.settings);
 
-  // Vested RSU value (gross, in displayCurrency) — needed to derive the
-  // post-tax tiles below. RSU income tax hits the value of vested RSU
-  // shares at vest; non-RSU equity and property equity are untouched.
+  // Value (gross, in displayCurrency) of RSU vests whose income tax has
+  // NOT yet been paid via a logged release event — i.e. tranche
+  // vest_events whose date isn't shadowed by a release event. The
+  // post-tax haircut below only applies to this portion; released
+  // shares already paid income tax via withholding and shouldn't be
+  // taxed a second time. Non-RSU equity and property are untouched.
   const todayDate = new Date();
-  const vestedRsuDisplay = data.stocks
+  const preTaxRsuValue = data.stocks
     .filter((h) => h.equity_type === "RSU")
     .reduce((sum, h) => {
-      const valueNative = vestedSharesAt(h, todayDate) * h.current_share_price;
+      const releaseDates = new Set((h.sales ?? []).map((s) => s.release_date));
+      let preTaxShares = 0;
+      for (const t of h.tranches) {
+        for (const ev of t.vest_events) {
+          if (releaseDates.has(ev.vest_date)) continue;
+          const d = parseISO(ev.vest_date);
+          if (!d || d > todayDate) continue;
+          preTaxShares += ev.shares;
+        }
+      }
+      const valueNative = preTaxShares * h.current_share_price;
       return sum + convert(valueNative, h.currency, displayCurrency, data.settings);
     }, 0);
   // Unvested ("still to vest") gross value across all stocks, in display
@@ -255,9 +268,9 @@ export default function HomePage() {
                           </div>
                         ) : null}
                       </div>
-                      {vestedRsuDisplay > 0
+                      {preTaxRsuValue > 0
                         ? POST_TAX_RATES.map(({ label, rate }) => {
-                            const value = today - vestedRsuDisplay * (rate / 100);
+                            const value = today - preTaxRsuValue * (rate / 100);
                             const alt = haveRates
                               ? convert(value, displayCurrency, secondary, data.settings)
                               : null;
