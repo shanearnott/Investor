@@ -12,7 +12,15 @@ import { convert } from "@/lib/fx";
 import { lookupGrowthRate } from "@/lib/growth";
 import { formatMoney, formatNumber } from "@/lib/utils";
 import { currentAllocationBreakdown } from "@/lib/projections";
-import { parseISO, unvestedSharesAt, vestedSharesAt, type Property, type StockHolding } from "@/lib/models";
+import {
+  defaultSaleTaxRate,
+  eventNetReleaseShares,
+  parseISO,
+  unvestedSharesAt,
+  vestedSharesAt,
+  type Property,
+  type StockHolding,
+} from "@/lib/models";
 
 /** RSU income-tax rates applied to the home-page "post-tax" net-worth
  *  tiles. Mirrors the scenarios page defaults — gives a quick at-a-glance
@@ -73,6 +81,34 @@ export default function HomePage() {
       }
       const valueNative = preTaxShares * h.current_share_price;
       return sum + convert(valueNative, h.currency, displayCurrency, data.settings);
+    }, 0);
+  // Cap-gains haircut on kept (released, not sold) RSU shares: the
+  // shares have already paid income tax via withholding, but the gain
+  // since release (current_share_price − release_price) is taxable on
+  // sale at the jurisdiction's LTCG rate. If the release price isn't
+  // recorded (release_price === 0) we can't compute the basis and skip
+  // the event entirely.
+  const releasedCapGainsHaircut = data.stocks
+    .filter((h) => h.equity_type === "RSU")
+    .reduce((sum, h) => {
+      const rate = defaultSaleTaxRate(h.jurisdiction) / 100;
+      let gainTotal = 0;
+      for (const s of h.sales ?? []) {
+        const release = parseISO(s.release_date);
+        if (!release || release > todayDate) continue;
+        if (s.sell_date) {
+          const sd = parseISO(s.sell_date);
+          if (sd && sd <= todayDate) continue;
+        }
+        const basis = s.release_price && s.release_price > 0
+          ? s.release_price
+          : h.cost_basis_per_share;
+        if (basis <= 0) continue;
+        const perShareGain = Math.max(0, h.current_share_price - basis);
+        gainTotal += eventNetReleaseShares(s) * perShareGain;
+      }
+      const haircutNative = gainTotal * rate;
+      return sum + convert(haircutNative, h.currency, displayCurrency, data.settings);
     }, 0);
   // Unvested ("still to vest") gross value across all stocks, in display
   // currency. Options use intrinsic so an underwater grant reads as 0
@@ -268,9 +304,9 @@ export default function HomePage() {
                           </div>
                         ) : null}
                       </div>
-                      {preTaxRsuValue > 0
+                      {(preTaxRsuValue > 0 || releasedCapGainsHaircut > 0)
                         ? POST_TAX_RATES.map(({ label, rate }) => {
-                            const value = today - preTaxRsuValue * (rate / 100);
+                            const value = today - preTaxRsuValue * (rate / 100) - releasedCapGainsHaircut;
                             const alt = haveRates
                               ? convert(value, displayCurrency, secondary, data.settings)
                               : null;
