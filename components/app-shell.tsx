@@ -39,8 +39,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const showDemoBadge = isDemo && !hasUserData;
 
   return (
-    <div className="flex min-h-dvh flex-col">
-      <header className="sticky top-0 z-30 flex items-center justify-between gap-2 border-b bg-background/95 backdrop-blur px-3 py-2 sm:px-6 sm:py-3">
+    <div className="min-h-dvh">
+      <header className="fixed top-0 left-0 right-0 z-30 flex items-center justify-between gap-2 border-b bg-background/95 backdrop-blur px-3 py-2 sm:px-6 sm:py-3">
         <Link href="/" className="flex items-center gap-2 text-lg font-semibold">
           <span className="text-xl">📈</span>
           <span>Investor</span>
@@ -74,9 +74,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         )}
       </header>
       {error ? (
-        <div className="border-b bg-destructive/10 px-4 py-2 text-sm text-destructive">{error}</div>
+        <div className="fixed top-[44px] left-0 right-0 z-20 border-b bg-destructive/10 px-4 py-2 text-sm text-destructive sm:top-[52px]">{error}</div>
       ) : null}
-      <main className="flex-1 px-3 pb-24 pt-4 sm:px-6 sm:pb-24">{children}</main>
+      <main className="px-3 pb-24 pt-[60px] sm:px-6 sm:pb-24 sm:pt-[68px]">{children}</main>
       <nav className="fixed bottom-0 left-0 right-0 z-40 border-t bg-background/95 backdrop-blur sm:hidden">
         <ul className="flex justify-around">
           {navItems.map(({ href, label, icon: Icon }) => {
