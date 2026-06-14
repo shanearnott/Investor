@@ -8,7 +8,10 @@
  *   - Other GETs (JS/CSS/images): stale-while-revalidate so the app still loads
  *     offline but updates land on the next visit.
  */
-const VERSION = "v4";
+// Replaced at build time by scripts/stamp-sw.js with the current commit SHA
+// (or a timestamp fallback for local builds), so every deploy gets a fresh
+// cache name and the activate handler purges anything older.
+const VERSION = "__BUILD_ID__";
 const STATIC = `investor-static-${VERSION}`;
 const PRECACHE = ["manifest.json", "icon.svg"];
 
