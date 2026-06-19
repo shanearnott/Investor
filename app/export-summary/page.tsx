@@ -1,0 +1,307 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { Printer, ArrowLeft } from "lucide-react";
+
+import { useData } from "@/components/data-provider";
+import { Button } from "@/components/ui/button";
+import {
+  defaultSaleTaxRate,
+  eventNetReleaseShares,
+  eventWithholdingShares,
+  parseISO,
+  totalGrantedShares,
+  totalSoldShares,
+  unvestedSharesAt,
+  vestedSharesAt,
+} from "@/lib/models";
+import { formatMoney, formatNumber } from "@/lib/utils";
+
+const SELECTION_KEY = "investor:exportSelection";
+
+type Selection = {
+  stockIds: string[];
+  propertyIds: string[];
+};
+
+function readSelection(): Selection | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(SELECTION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Selection;
+    if (!Array.isArray(parsed.stockIds) || !Array.isArray(parsed.propertyIds)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export default function ExportSummaryPage() {
+  const { data, loading } = useData();
+  const [selection, setSelection] = useState<Selection | null>(null);
+
+  useEffect(() => {
+    const s = readSelection();
+    setSelection(
+      // Fall back to "everything" if no selection has been recorded (e.g.
+      // user navigated here directly).
+      s ?? {
+        stockIds: data.stocks.map((h) => h.id),
+        propertyIds: data.properties.map((p) => p.id),
+      },
+    );
+  }, [data.stocks, data.properties]);
+
+  const stocks = useMemo(
+    () => data.stocks.filter((h) => selection?.stockIds.includes(h.id)),
+    [data.stocks, selection],
+  );
+  const properties = useMemo(
+    () => data.properties.filter((p) => selection?.propertyIds.includes(p.id)),
+    [data.properties, selection],
+  );
+
+  const today = new Date();
+  const generatedAt = today.toLocaleString();
+
+  if (loading || !selection) {
+    return <div className="p-6 text-sm">Loading…</div>;
+  }
+
+  return (
+    <div className="export-summary mx-auto max-w-4xl space-y-6 p-4 text-sm">
+      {/* Toolbar — hidden on print. */}
+      <div className="no-print flex items-center justify-between gap-2 border-b pb-3">
+        <Link href="/settings" className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+          <ArrowLeft className="h-3 w-3" /> Back to Settings
+        </Link>
+        <Button size="sm" onClick={() => window.print()}>
+          <Printer className="h-3 w-3" /> Print / Save as PDF
+        </Button>
+      </div>
+
+      <header className="space-y-1">
+        <h1 className="text-xl font-semibold">Tax summary</h1>
+        <p className="text-xs text-muted-foreground">
+          Factual snapshot for your tax advisor. No modelling, scenarios, or
+          projections included. Generated {generatedAt}.
+        </p>
+      </header>
+
+      {stocks.length > 0 ? (
+        <section className="space-y-4">
+          <h2 className="text-lg font-semibold border-b pb-1">Stocks &amp; equity</h2>
+          {stocks.map((h) => (
+            <StockBlock key={h.id} h={h} today={today} />
+          ))}
+        </section>
+      ) : null}
+
+      {properties.length > 0 ? (
+        <section className="space-y-4">
+          <h2 className="text-lg font-semibold border-b pb-1">Properties</h2>
+          {properties.map((p) => (
+            <PropertyBlock key={p.id} p={p} />
+          ))}
+        </section>
+      ) : null}
+
+      {stocks.length === 0 && properties.length === 0 ? (
+        <p className="text-xs text-muted-foreground italic">
+          No items selected. Return to Settings to choose what to include.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function StockBlock({ h, today }: { h: ReturnType<typeof useData>["data"]["stocks"][number]; today: Date }) {
+  const vested = vestedSharesAt(h, today);
+  const granted = totalGrantedShares(h);
+  const unvested = unvestedSharesAt(h, today);
+  const sold = totalSoldShares(h, today);
+
+  const sortedVestEvents = h.tranches
+    .flatMap((t) => t.vest_events.map((ev) => ({ ...ev, tranche: t.name || "Grant" })))
+    .sort((a, b) => a.vest_date.localeCompare(b.vest_date));
+
+  const sortedReleases = [...(h.sales ?? [])].sort((a, b) =>
+    a.release_date.localeCompare(b.release_date),
+  );
+
+  const sales = sortedReleases.filter((s) => !!s.sell_date);
+
+  return (
+    <article className="space-y-3 break-inside-avoid">
+      <div className="flex flex-wrap items-baseline justify-between gap-2 border-b pb-1">
+        <h3 className="text-base font-semibold">
+          {h.ticker || h.company_name || "—"}
+          {h.company_name && h.ticker ? <span className="ml-2 font-normal text-muted-foreground">{h.company_name}</span> : null}
+        </h3>
+        <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
+          {h.equity_type} · {h.currency} · {h.jurisdiction}
+        </span>
+      </div>
+
+      <table className="w-full text-xs tabular-nums">
+        <tbody>
+          <Row label="Current share price" value={formatMoney(h.current_share_price, h.currency, { fractionDigits: 2 })} />
+          {h.equity_type === "Stock Options" ? (
+            <Row label="Strike (grant) price" value={formatMoney(h.strike_price, h.currency, { fractionDigits: 2 })} />
+          ) : null}
+          <Row label="Total granted (lifetime)" value={`${formatNumber(granted)} sh`} />
+          <Row label="Currently held" value={`${formatNumber(vested)} sh`} />
+          <Row label="Still to vest" value={`${formatNumber(unvested)} sh`} />
+          <Row label="Sold to date" value={`${formatNumber(sold)} sh`} />
+          {h.notes ? <Row label="Notes" value={h.notes} /> : null}
+        </tbody>
+      </table>
+
+      {sortedVestEvents.length > 0 ? (
+        <div className="space-y-1">
+          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+            Vesting schedule
+          </p>
+          <table className="w-full text-xs tabular-nums border-collapse">
+            <thead>
+              <tr className="border-b text-[10px] uppercase tracking-wide text-muted-foreground">
+                <th className="px-2 py-1 text-left font-normal">Date</th>
+                <th className="px-2 py-1 text-left font-normal">Tranche</th>
+                <th className="px-2 py-1 text-right font-normal">Shares</th>
+                <th className="px-2 py-1 text-right font-normal">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sortedVestEvents.map((ev, i) => {
+                const d = parseISO(ev.vest_date);
+                const passed = !!d && d <= today;
+                return (
+                  <tr key={i} className="border-b">
+                    <td className="px-2 py-1">{ev.vest_date}</td>
+                    <td className="px-2 py-1">{ev.tranche}</td>
+                    <td className="px-2 py-1 text-right">{formatNumber(ev.shares)}</td>
+                    <td className="px-2 py-1 text-right text-muted-foreground">
+                      {passed ? "Vested" : "Upcoming"}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+
+      {sortedReleases.length > 0 ? (
+        <div className="space-y-1">
+          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+            Release events
+          </p>
+          <table className="w-full text-xs tabular-nums border-collapse">
+            <thead>
+              <tr className="border-b text-[10px] uppercase tracking-wide text-muted-foreground">
+                <th className="px-2 py-1 text-left font-normal">Release date</th>
+                <th className="px-2 py-1 text-right font-normal">Shares</th>
+                <th className="px-2 py-1 text-right font-normal">Release price</th>
+                <th className="px-2 py-1 text-right font-normal">Withheld</th>
+                <th className="px-2 py-1 text-right font-normal">Net kept</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sortedReleases.map((s) => {
+                const cover = eventWithholdingShares(s);
+                const kept = eventNetReleaseShares(s);
+                return (
+                  <tr key={s.id} className="border-b">
+                    <td className="px-2 py-1">{s.release_date}</td>
+                    <td className="px-2 py-1 text-right">{formatNumber(s.shares)}</td>
+                    <td className="px-2 py-1 text-right">
+                      {s.release_price > 0 ? formatMoney(s.release_price, h.currency, { fractionDigits: 2 }) : "—"}
+                    </td>
+                    <td className="px-2 py-1 text-right">{formatNumber(Math.round(cover))}</td>
+                    <td className="px-2 py-1 text-right">{formatNumber(Math.round(kept))}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+
+      {sales.length > 0 ? (
+        <div className="space-y-1">
+          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+            Sale events
+          </p>
+          <table className="w-full text-xs tabular-nums border-collapse">
+            <thead>
+              <tr className="border-b text-[10px] uppercase tracking-wide text-muted-foreground">
+                <th className="px-2 py-1 text-left font-normal">Sell date</th>
+                <th className="px-2 py-1 text-right font-normal">Shares sold</th>
+                <th className="px-2 py-1 text-right font-normal">Sale price</th>
+                <th className="px-2 py-1 text-right font-normal">Release price (basis)</th>
+                <th className="px-2 py-1 text-right font-normal">Tax rate</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sales.map((s) => {
+                const kept = eventNetReleaseShares(s);
+                const salePrice = s.sale_price ?? h.current_share_price;
+                const taxRate = s.sale_tax_rate_pct || defaultSaleTaxRate(h.jurisdiction);
+                return (
+                  <tr key={s.id} className="border-b">
+                    <td className="px-2 py-1">{s.sell_date}</td>
+                    <td className="px-2 py-1 text-right">{formatNumber(Math.round(kept))}</td>
+                    <td className="px-2 py-1 text-right">{formatMoney(salePrice, h.currency, { fractionDigits: 2 })}</td>
+                    <td className="px-2 py-1 text-right">
+                      {s.release_price > 0 ? formatMoney(s.release_price, h.currency, { fractionDigits: 2 }) : "—"}
+                    </td>
+                    <td className="px-2 py-1 text-right">{taxRate.toFixed(1)}%</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
+function PropertyBlock({ p }: { p: ReturnType<typeof useData>["data"]["properties"][number] }) {
+  const equity = p.current_value - p.mortgage_balance;
+  return (
+    <article className="space-y-2 break-inside-avoid">
+      <div className="flex flex-wrap items-baseline justify-between gap-2 border-b pb-1">
+        <h3 className="text-base font-semibold">{p.name || "—"}</h3>
+        <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
+          {p.country} · {p.currency} · {p.jurisdiction}
+        </span>
+      </div>
+      <table className="w-full text-xs tabular-nums">
+        <tbody>
+          {p.address ? <Row label="Address" value={p.address} /> : null}
+          {p.suburb || p.region || p.postcode ? (
+            <Row label="Locality" value={[p.suburb, p.region, p.postcode].filter(Boolean).join(", ")} />
+          ) : null}
+          {p.purchase_date ? <Row label="Purchase date" value={p.purchase_date} /> : null}
+          {p.purchase_price > 0 ? <Row label="Purchase price" value={formatMoney(p.purchase_price, p.currency)} /> : null}
+          <Row label="Current value" value={formatMoney(p.current_value, p.currency)} />
+          <Row label="Mortgage balance" value={formatMoney(p.mortgage_balance, p.currency)} />
+          <Row label="Equity" value={formatMoney(equity, p.currency)} />
+          {p.notes ? <Row label="Notes" value={p.notes} /> : null}
+        </tbody>
+      </table>
+    </article>
+  );
+}
+
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <tr className="border-b last:border-0">
+      <td className="px-2 py-1 text-muted-foreground w-1/3">{label}</td>
+      <td className="px-2 py-1">{value}</td>
+    </tr>
+  );
+}
