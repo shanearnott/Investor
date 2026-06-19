@@ -28,8 +28,13 @@ type Selection = {
 function readSelection(): Selection | null {
   if (typeof window === "undefined") return null;
   try {
-    const raw = window.sessionStorage.getItem(SELECTION_KEY);
+    // Settings writes to localStorage because sessionStorage doesn't
+    // cross window.open with noopener. Treat the read as one-shot:
+    // remove after consuming so a manual revisit (without re-picking)
+    // falls back to "everything" instead of replaying old picks.
+    const raw = window.localStorage.getItem(SELECTION_KEY);
     if (!raw) return null;
+    window.localStorage.removeItem(SELECTION_KEY);
     const parsed = JSON.parse(raw) as Selection;
     if (!Array.isArray(parsed.stockIds) || !Array.isArray(parsed.propertyIds)) return null;
     return parsed;
