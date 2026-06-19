@@ -72,3 +72,30 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   opacity: 0.55;
   cursor: pointer;
 }
+
+/* Print layout for the tax-summary export. Hides the app chrome (top
+ * bar, bottom nav, toolbar) and tightens spacing for A4/Letter PDF. */
+@media print {
+  header[class*="fixed"],
+  nav[class*="fixed"],
+  .no-print {
+    display: none !important;
+  }
+  main,
+  body,
+  html {
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+    background: #fff !important;
+    color: #000 !important;
+  }
+  .export-summary {
+    max-width: none !important;
+    padding: 0 !important;
+    font-size: 11pt;
+  }
+  .export-summary h1 { font-size: 16pt; }
+  .export-summary h2 { font-size: 13pt; }
+  .export-summary h3 { font-size: 12pt; }
+  .break-inside-avoid { break-inside: avoid; page-break-inside: avoid; }
+}

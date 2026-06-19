@@ -233,6 +233,20 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
 
+      <Card>
+        <CardHeader>
+          <CardTitle>Tax summary export</CardTitle>
+          <CardDescription>
+            Generate a factual PDF (via the print dialog) of your selected
+            stocks and properties to share with a tax advisor. Modelling
+            assumptions and scenarios are not included — just the facts.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <TaxSummaryExportSection />
+        </CardContent>
+      </Card>
+
       <div className="flex justify-end gap-2">
         {savedNote ? <span className="text-sm text-emerald-700 self-center">{savedNote}</span> : null}
         {error ? <span className="text-sm text-destructive self-center">{error}</span> : null}
@@ -646,6 +660,131 @@ function FileBackupSection() {
       </p>
       {note ? <p className="text-xs text-emerald-700">{note}</p> : null}
       {err ? <p className="text-xs text-destructive">{err}</p> : null}
+    </div>
+  );
+}
+
+const TAX_EXPORT_SELECTION_KEY = "investor:exportSelection";
+
+function TaxSummaryExportSection() {
+  const { data } = useData();
+  const [stockIds, setStockIds] = useState<Set<string>>(() => new Set(data.stocks.map((h) => h.id)));
+  const [propertyIds, setPropertyIds] = useState<Set<string>>(() => new Set(data.properties.map((p) => p.id)));
+
+  // Keep selection in sync if the underlying data changes (e.g. after a
+  // Drive restore). Add any new items to the selection; remove deleted ones.
+  useEffect(() => {
+    setStockIds((prev) => new Set(data.stocks.map((h) => h.id).filter((id) => prev.has(id) || !prev.size ? true : prev.has(id))));
+    setPropertyIds((prev) => new Set(data.properties.map((p) => p.id).filter((id) => prev.has(id) || !prev.size ? true : prev.has(id))));
+  }, [data.stocks, data.properties]);
+
+  const toggleStock = (id: string) =>
+    setStockIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const toggleProperty = (id: string) =>
+    setPropertyIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const selectAllStocks = (on: boolean) =>
+    setStockIds(on ? new Set(data.stocks.map((h) => h.id)) : new Set());
+  const selectAllProperties = (on: boolean) =>
+    setPropertyIds(on ? new Set(data.properties.map((p) => p.id)) : new Set());
+
+  const open = () => {
+    if (typeof window === "undefined") return;
+    const payload = JSON.stringify({
+      stockIds: Array.from(stockIds),
+      propertyIds: Array.from(propertyIds),
+    });
+    window.sessionStorage.setItem(TAX_EXPORT_SELECTION_KEY, payload);
+    const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? (process.env.GH_PAGES === "1" ? "/Investor" : "");
+    window.open(`${basePath}/export-summary`, "_blank", "noopener,noreferrer");
+  };
+
+  const totalStocks = data.stocks.length;
+  const totalProperties = data.properties.length;
+  const nothingSelected = stockIds.size === 0 && propertyIds.size === 0;
+
+  return (
+    <div className="space-y-4">
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-medium">Stocks &amp; equity ({stockIds.size}/{totalStocks})</p>
+          {totalStocks > 0 ? (
+            <div className="flex gap-2 text-[11px]">
+              <button type="button" className="underline text-muted-foreground hover:text-foreground" onClick={() => selectAllStocks(true)}>All</button>
+              <button type="button" className="underline text-muted-foreground hover:text-foreground" onClick={() => selectAllStocks(false)}>None</button>
+            </div>
+          ) : null}
+        </div>
+        {totalStocks === 0 ? (
+          <p className="text-xs text-muted-foreground italic">No stocks yet.</p>
+        ) : (
+          <ul className="space-y-1">
+            {data.stocks.map((h) => (
+              <li key={h.id}>
+                <label className="flex items-center gap-2 text-xs cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={stockIds.has(h.id)}
+                    onChange={() => toggleStock(h.id)}
+                  />
+                  <span>{h.ticker || h.company_name || "—"}</span>
+                  <span className="text-muted-foreground">· {h.equity_type}</span>
+                </label>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-medium">Properties ({propertyIds.size}/{totalProperties})</p>
+          {totalProperties > 0 ? (
+            <div className="flex gap-2 text-[11px]">
+              <button type="button" className="underline text-muted-foreground hover:text-foreground" onClick={() => selectAllProperties(true)}>All</button>
+              <button type="button" className="underline text-muted-foreground hover:text-foreground" onClick={() => selectAllProperties(false)}>None</button>
+            </div>
+          ) : null}
+        </div>
+        {totalProperties === 0 ? (
+          <p className="text-xs text-muted-foreground italic">No properties yet.</p>
+        ) : (
+          <ul className="space-y-1">
+            {data.properties.map((p) => (
+              <li key={p.id}>
+                <label className="flex items-center gap-2 text-xs cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={propertyIds.has(p.id)}
+                    onChange={() => toggleProperty(p.id)}
+                  />
+                  <span>{p.name || "—"}</span>
+                  {p.country ? <span className="text-muted-foreground">· {p.country}</span> : null}
+                </label>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <div className="flex justify-end">
+        <Button size="sm" onClick={open} disabled={nothingSelected}>
+          Open export view
+        </Button>
+      </div>
+      <p className="text-[11px] text-muted-foreground">
+        Opens in a new tab. Use your browser&apos;s print dialog (Cmd/Ctrl-P) and choose <b>Save as PDF</b>.
+      </p>
     </div>
   );
 }
