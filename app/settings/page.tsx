@@ -704,7 +704,10 @@ function TaxSummaryExportSection() {
       stockIds: Array.from(stockIds),
       propertyIds: Array.from(propertyIds),
     });
-    window.sessionStorage.setItem(TAX_EXPORT_SELECTION_KEY, payload);
+    // localStorage (not sessionStorage): each tab has its own
+    // sessionStorage, and we open the export page with noopener so the
+    // new tab can't read the opener's session.
+    window.localStorage.setItem(TAX_EXPORT_SELECTION_KEY, payload);
     // basePath comes from next.config (exposed via env.NEXT_PUBLIC_BASE_PATH);
     // trailing slash matches the trailingSlash: true config so GH Pages
     // resolves the page instead of 404ing.
