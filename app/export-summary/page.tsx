@@ -127,6 +127,10 @@ function StockBlock({ h, today }: { h: ReturnType<typeof useData>["data"]["stock
     .flatMap((t) => t.vest_events.map((ev) => ({ ...ev, tranche: t.name || "Grant" })))
     .sort((a, b) => a.vest_date.localeCompare(b.vest_date));
 
+  const vestingChart = (
+    <CumulativeVestingChart events={sortedVestEvents.map(({ vest_date, shares }) => ({ vest_date, shares }))} today={today} />
+  );
+
   const sortedReleases = [...(h.sales ?? [])].sort((a, b) =>
     a.release_date.localeCompare(b.release_date),
   );
@@ -144,6 +148,8 @@ function StockBlock({ h, today }: { h: ReturnType<typeof useData>["data"]["stock
           {h.equity_type} · {h.currency} · {h.jurisdiction}
         </span>
       </div>
+
+      {vestingChart}
 
       <table className="w-full text-xs tabular-nums">
         <tbody>
@@ -303,5 +309,105 @@ function Row({ label, value }: { label: string; value: string }) {
       <td className="px-2 py-1 text-muted-foreground w-1/3">{label}</td>
       <td className="px-2 py-1">{value}</td>
     </tr>
+  );
+}
+
+/** Step chart of cumulative tranche shares from the first vest_date to the
+ *  last, with a dashed marker at today. Inline SVG so the print/PDF view
+ *  doesn't need to pull in a chart library on this route. */
+function CumulativeVestingChart({
+  events,
+  today,
+}: {
+  events: { vest_date: string; shares: number }[];
+  today: Date;
+}) {
+  const sorted = [...events].sort((a, b) => a.vest_date.localeCompare(b.vest_date));
+  const total = sorted.reduce((s, e) => s + e.shares, 0);
+  if (sorted.length === 0 || total <= 0) return null;
+
+  const start = parseISO(sorted[0].vest_date);
+  const end = parseISO(sorted[sorted.length - 1].vest_date);
+  if (!start || !end) return null;
+  const startMs = start.getTime();
+  const endMs = end.getTime();
+  const range = endMs - startMs || 1;
+
+  const W = 640;
+  const H = 110;
+  const padL = 44;
+  const padR = 12;
+  const padT = 8;
+  const padB = 22;
+  const innerW = W - padL - padR;
+  const innerH = H - padT - padB;
+
+  const xFor = (ms: number) => padL + (innerW * (ms - startMs)) / range;
+  const yFor = (n: number) => padT + innerH - (innerH * n) / total;
+
+  // Step-after path: jump up at each event date.
+  let cum = 0;
+  const segments: string[] = [`M ${xFor(startMs)},${yFor(0)}`];
+  for (const ev of sorted) {
+    const d = parseISO(ev.vest_date);
+    if (!d) continue;
+    const x = xFor(d.getTime());
+    segments.push(`L ${x},${yFor(cum)}`);
+    cum += ev.shares;
+    segments.push(`L ${x},${yFor(cum)}`);
+  }
+  // Trail out to the right edge so the curve ends at the total.
+  segments.push(`L ${xFor(endMs)},${yFor(cum)}`);
+  const path = segments.join(" ");
+
+  const todayMs = today.getTime();
+  const todayInside = todayMs >= startMs && todayMs <= endMs;
+  const todayX = todayInside ? xFor(todayMs) : null;
+
+  // Year ticks on the x-axis.
+  const startYear = start.getUTCFullYear();
+  const endYear = end.getUTCFullYear();
+  const yearTicks: number[] = [];
+  for (let y = startYear; y <= endYear; y++) yearTicks.push(Date.UTC(y, 0, 1));
+
+  const halfTotal = Math.round(total / 2);
+
+  return (
+    <div className="space-y-0.5 break-inside-avoid">
+      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+        Cumulative shares vesting · {sorted[0].vest_date} → {sorted[sorted.length - 1].vest_date} · {formatNumber(total)} total
+      </p>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-24" role="img" aria-label="Cumulative vesting curve">
+        {/* Axes */}
+        <line x1={padL} y1={padT + innerH} x2={W - padR} y2={padT + innerH} stroke="#888" strokeWidth="0.5" />
+        <line x1={padL} y1={padT} x2={padL} y2={padT + innerH} stroke="#888" strokeWidth="0.5" />
+        {/* Year ticks */}
+        {yearTicks.map((ms) => {
+          const x = xFor(ms);
+          if (x < padL || x > W - padR) return null;
+          return (
+            <g key={ms}>
+              <line x1={x} y1={padT + innerH} x2={x} y2={padT + innerH + 3} stroke="#888" strokeWidth="0.5" />
+              <text x={x} y={H - 6} fontSize="9" textAnchor="middle" fill="#666">
+                {new Date(ms).getUTCFullYear()}
+              </text>
+            </g>
+          );
+        })}
+        {/* Y labels: 0, half, total */}
+        <text x={padL - 4} y={padT + innerH} fontSize="9" textAnchor="end" fill="#666" dominantBaseline="middle">0</text>
+        <text x={padL - 4} y={yFor(halfTotal)} fontSize="9" textAnchor="end" fill="#666" dominantBaseline="middle">{formatNumber(halfTotal)}</text>
+        <text x={padL - 4} y={padT} fontSize="9" textAnchor="end" fill="#666" dominantBaseline="middle">{formatNumber(total)}</text>
+        {/* Today line */}
+        {todayX !== null ? (
+          <g>
+            <line x1={todayX} y1={padT} x2={todayX} y2={padT + innerH} stroke="#000" strokeWidth="0.6" strokeDasharray="3,2" />
+            <text x={todayX} y={padT - 1} fontSize="8" textAnchor="middle" fill="#000">today</text>
+          </g>
+        ) : null}
+        {/* Step path */}
+        <path d={path} stroke="#0f172a" fill="none" strokeWidth="1.4" strokeLinejoin="miter" strokeLinecap="butt" />
+      </svg>
+    </div>
   );
 }
