@@ -705,8 +705,11 @@ function TaxSummaryExportSection() {
       propertyIds: Array.from(propertyIds),
     });
     window.sessionStorage.setItem(TAX_EXPORT_SELECTION_KEY, payload);
-    const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? (process.env.GH_PAGES === "1" ? "/Investor" : "");
-    window.open(`${basePath}/export-summary`, "_blank", "noopener,noreferrer");
+    // basePath comes from next.config (exposed via env.NEXT_PUBLIC_BASE_PATH);
+    // trailing slash matches the trailingSlash: true config so GH Pages
+    // resolves the page instead of 404ing.
+    const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
+    window.open(`${basePath}/export-summary/`, "_blank", "noopener,noreferrer");
   };
 
   const totalStocks = data.stocks.length;
