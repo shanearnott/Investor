@@ -123,14 +123,6 @@ function StockBlock({ h, today }: { h: ReturnType<typeof useData>["data"]["stock
   const unvested = unvestedSharesAt(h, today);
   const sold = totalSoldShares(h, today);
 
-  const sortedVestEvents = h.tranches
-    .flatMap((t) => t.vest_events.map((ev) => ({ ...ev, tranche: t.name || "Grant" })))
-    .sort((a, b) => a.vest_date.localeCompare(b.vest_date));
-
-  const vestingChart = (
-    <CumulativeVestingChart events={sortedVestEvents.map(({ vest_date, shares }) => ({ vest_date, shares }))} today={today} />
-  );
-
   const sortedReleases = [...(h.sales ?? [])].sort((a, b) =>
     a.release_date.localeCompare(b.release_date),
   );
@@ -149,8 +141,6 @@ function StockBlock({ h, today }: { h: ReturnType<typeof useData>["data"]["stock
         </span>
       </div>
 
-      {vestingChart}
-
       <table className="w-full text-xs tabular-nums">
         <tbody>
           <Row label="Current share price" value={formatMoney(h.current_share_price, h.currency, { fractionDigits: 2 })} />
@@ -165,37 +155,21 @@ function StockBlock({ h, today }: { h: ReturnType<typeof useData>["data"]["stock
         </tbody>
       </table>
 
-      {sortedVestEvents.length > 0 ? (
-        <div className="space-y-1">
+      {h.tranches.length > 0 ? (
+        <div className="space-y-3">
           <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
-            Vesting schedule
+            Vesting by tranche
           </p>
-          <table className="w-full text-xs tabular-nums border-collapse">
-            <thead>
-              <tr className="border-b text-[10px] uppercase tracking-wide text-muted-foreground">
-                <th className="px-2 py-1 text-left font-normal">Date</th>
-                <th className="px-2 py-1 text-left font-normal">Tranche</th>
-                <th className="px-2 py-1 text-right font-normal">Shares</th>
-                <th className="px-2 py-1 text-right font-normal">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sortedVestEvents.map((ev, i) => {
-                const d = parseISO(ev.vest_date);
-                const passed = !!d && d <= today;
-                return (
-                  <tr key={i} className="border-b">
-                    <td className="px-2 py-1">{ev.vest_date}</td>
-                    <td className="px-2 py-1">{ev.tranche}</td>
-                    <td className="px-2 py-1 text-right">{formatNumber(ev.shares)}</td>
-                    <td className="px-2 py-1 text-right text-muted-foreground">
-                      {passed ? "Vested" : "Upcoming"}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          {[...h.tranches]
+            // Stable order: by grant date when present, else by first vest date.
+            .sort((a, b) => {
+              const ag = a.grant_date ?? a.vest_events[0]?.vest_date ?? "";
+              const bg = b.grant_date ?? b.vest_events[0]?.vest_date ?? "";
+              return ag.localeCompare(bg);
+            })
+            .map((t, idx) => (
+              <TrancheBlock key={t.id ?? idx} t={t} today={today} />
+            ))}
         </div>
       ) : null}
 
@@ -272,6 +246,83 @@ function StockBlock({ h, today }: { h: ReturnType<typeof useData>["data"]["stock
         </div>
       ) : null}
     </article>
+  );
+}
+
+function TrancheBlock({
+  t,
+  today,
+}: {
+  t: ReturnType<typeof useData>["data"]["stocks"][number]["tranches"][number];
+  today: Date;
+}) {
+  const events = [...t.vest_events].sort((a, b) => a.vest_date.localeCompare(b.vest_date));
+  const total = events.reduce((s, e) => s + e.shares, 0);
+  const vested = events
+    .filter((e) => {
+      const d = parseISO(e.vest_date);
+      return d && d <= today;
+    })
+    .reduce((s, e) => s + e.shares, 0);
+  const upcoming = total - vested;
+  const first = events[0]?.vest_date ?? "";
+  const last = events[events.length - 1]?.vest_date ?? "";
+
+  return (
+    <div className="space-y-2 pl-2 border-l-2 border-muted break-inside-avoid">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h4 className="text-sm font-semibold">{t.name || "Grant"}</h4>
+        <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+          {t.grant_date ? `Granted ${t.grant_date}` : "Grant date unrecorded"}
+        </span>
+      </div>
+
+      {events.length > 0 ? (
+        <>
+          <table className="w-full text-xs tabular-nums">
+            <tbody>
+              <Row label="Total shares" value={`${formatNumber(total)} sh`} />
+              <Row label="Vests" value={`${events.length} event${events.length === 1 ? "" : "s"} · ${first} → ${last}`} />
+              <Row label="Vested to date" value={`${formatNumber(vested)} sh`} />
+              <Row label="Still to vest" value={`${formatNumber(upcoming)} sh`} />
+              {t.notes ? <Row label="Notes" value={t.notes} /> : null}
+            </tbody>
+          </table>
+
+          <CumulativeVestingChart
+            events={events.map(({ vest_date, shares }) => ({ vest_date, shares }))}
+            today={today}
+          />
+
+          <table className="w-full text-xs tabular-nums border-collapse">
+            <thead>
+              <tr className="border-b text-[10px] uppercase tracking-wide text-muted-foreground">
+                <th className="px-2 py-1 text-left font-normal">Date</th>
+                <th className="px-2 py-1 text-right font-normal">Shares</th>
+                <th className="px-2 py-1 text-right font-normal">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {events.map((ev, i) => {
+                const d = parseISO(ev.vest_date);
+                const passed = !!d && d <= today;
+                return (
+                  <tr key={i} className="border-b">
+                    <td className="px-2 py-1">{ev.vest_date}</td>
+                    <td className="px-2 py-1 text-right">{formatNumber(ev.shares)}</td>
+                    <td className="px-2 py-1 text-right text-muted-foreground">
+                      {passed ? "Vested" : "Upcoming"}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </>
+      ) : (
+        <p className="text-xs text-muted-foreground italic">No vest events recorded.</p>
+      )}
+    </div>
   );
 }
 
