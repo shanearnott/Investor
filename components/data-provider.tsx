@@ -232,6 +232,35 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         if (changed) await saveCollection("scenarios", scenarios);
       }
 
+      // v4: one-shot cleanup of sell entries the previous migration
+      // auto-created from legacy combined entries. Those followed the
+      // id pattern `${releaseId}-sell`; user-created sells get random
+      // ids so they're safe to leave alone. Gated behind a localStorage
+      // marker so it only runs once per device.
+      const MIG_V4_KEY = "investor:migration:v4-drop-auto-sells";
+      if (typeof window !== "undefined" && !window.localStorage.getItem(MIG_V4_KEY)) {
+        const isAuto = (id: string) => /-sell$/.test(id);
+        let stocksChanged = false;
+        stocks = stocks.map((h) => {
+          const before = h.sells ?? [];
+          const after = before.filter((s) => !isAuto(s.id));
+          if (after.length === before.length) return h;
+          stocksChanged = true;
+          return { ...h, sells: after };
+        });
+        if (stocksChanged) await saveCollection("stocks", stocks);
+        let scenariosChanged = false;
+        scenarios = scenarios.map((sc) => {
+          const before = sc.sells ?? [];
+          const after = before.filter((s) => !isAuto(s.id));
+          if (after.length === before.length) return sc;
+          scenariosChanged = true;
+          return { ...sc, sells: after };
+        });
+        if (scenariosChanged) await saveCollection("scenarios", scenarios);
+        window.localStorage.setItem(MIG_V4_KEY, "1");
+      }
+
       setData({
         stocks,
         properties: properties ?? [],

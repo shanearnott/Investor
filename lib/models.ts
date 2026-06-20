@@ -208,20 +208,19 @@ export const StockHoldingSchema = z.object({
 export type StockHolding = z.infer<typeof StockHoldingSchema>;
 
 /** One-shot migration from the legacy combined `sales` array to the
- *  decoupled `releases` + `sells` arrays. Each old sale becomes a
- *  release event; if it also had a `sell_date`, a matching sell event
- *  referencing that release is added. Idempotent: if `releases` or
+ *  decoupled `releases` + `sells` arrays. Each old combined entry
+ *  becomes a release event; the legacy sell piece is intentionally
+ *  dropped (sells are now planning-side only — the user re-records
+ *  any actual sale they want to model). Idempotent: if `releases` or
  *  `sells` already has any entries, the migration is a no-op. */
 export function migrateHoldingSales(h: StockHolding): StockHolding {
   const hasNew = (h.releases ?? []).length > 0 || (h.sells ?? []).length > 0;
   const hasLegacy = (h.sales ?? []).length > 0;
   if (hasNew || !hasLegacy) return h;
   const releases: StockHoldingRelease[] = [];
-  const sells: StockHoldingSell[] = [];
   for (const s of h.sales) {
-    const releaseId = s.id;
     releases.push({
-      id: releaseId,
+      id: s.id,
       name: "",
       release_date: s.release_date,
       shares: s.shares,
@@ -230,19 +229,8 @@ export function migrateHoldingSales(h: StockHolding): StockHolding {
       tax_rate_pct: s.tax_rate_pct ?? 0,
       notes: s.notes ?? "",
     });
-    if (s.sell_date) {
-      sells.push({
-        id: `${s.id}-sell`,
-        name: "",
-        release_id: releaseId,
-        sell_date: s.sell_date,
-        sale_price: s.sale_price,
-        sale_tax_rate_pct: s.sale_tax_rate_pct ?? 0,
-        notes: "",
-      });
-    }
   }
-  return { ...h, releases, sells, sales: [] };
+  return { ...h, releases, sells: [], sales: [] };
 }
 
 export const PropertySchema = z.object({
@@ -399,11 +387,9 @@ export function migrateScenarioSales(s: z.infer<typeof ScenarioSchema>): z.infer
   const hasLegacy = (s.stock_sales ?? []).length > 0;
   if (hasNew || !hasLegacy) return s;
   const releases: ScenarioRelease[] = [];
-  const sells: ScenarioSell[] = [];
   for (const ss of s.stock_sales) {
-    const releaseId = ss.id;
     releases.push({
-      id: releaseId,
+      id: ss.id,
       name: "",
       stock_id: ss.stock_id,
       release_date: ss.release_date ?? ss.date ?? "",
@@ -413,19 +399,8 @@ export function migrateScenarioSales(s: z.infer<typeof ScenarioSchema>): z.infer
       release_jurisdiction: ss.release_jurisdiction,
       release_tax_rate_pct: ss.release_tax_rate_pct,
     });
-    sells.push({
-      id: `${ss.id}-sell`,
-      name: "",
-      release_ref: releaseId,
-      sell_date: ss.sell_date ?? ss.release_date ?? ss.date ?? "",
-      sale_price: ss.sale_price,
-      shares: undefined,
-      shares_pct: undefined,
-      sale_jurisdiction: ss.sale_jurisdiction,
-      sale_tax_rate_pct: ss.tax_rate_pct ?? 0,
-    });
   }
-  return { ...s, releases, sells, stock_sales: [] };
+  return { ...s, releases, sells: [], stock_sales: [] };
 }
 
 /** Typical top-marginal-on-RSU defaults used to pre-fill the rate input
