@@ -14,7 +14,8 @@ import { formatMoney, formatNumber } from "@/lib/utils";
 import { currentAllocationBreakdown } from "@/lib/projections";
 import {
   defaultSaleTaxRate,
-  eventNetReleaseShares,
+  releaseKeptShares,
+  sellSharesFor,
   parseISO,
   unvestedSharesAt,
   vestedSharesAt,
@@ -83,9 +84,9 @@ export default function HomePage() {
         }
       }
       let releaseGrossPast = 0;
-      for (const s of h.sales ?? []) {
-        const release = parseISO(s.release_date);
-        if (release && release <= todayDate) releaseGrossPast += s.shares;
+      for (const r of h.releases ?? []) {
+        const release = parseISO(r.release_date);
+        if (release && release <= todayDate) releaseGrossPast += r.shares;
       }
       const preTaxShares = Math.max(0, pastTrancheGross - releaseGrossPast);
       const valueNative = preTaxShares * h.current_share_price;
@@ -96,25 +97,30 @@ export default function HomePage() {
   // since release (current_share_price − release_price) is taxable on
   // sale at the jurisdiction's LTCG rate. If the release price isn't
   // recorded (release_price === 0) we can't compute the basis and skip
-  // the event entirely.
+  // the release entirely. "Held" = kept from the release minus any sell
+  // events that have settled against it.
   const releasedCapGainsHaircut = data.stocks
     .filter((h) => h.equity_type === "RSU")
     .reduce((sum, h) => {
       const rate = defaultSaleTaxRate(h.jurisdiction) / 100;
       let gainTotal = 0;
-      for (const s of h.sales ?? []) {
-        const release = parseISO(s.release_date);
+      for (const r of h.releases ?? []) {
+        const release = parseISO(r.release_date);
         if (!release || release > todayDate) continue;
-        if (s.sell_date) {
-          const sd = parseISO(s.sell_date);
-          if (sd && sd <= todayDate) continue;
-        }
-        const basis = s.release_price && s.release_price > 0
-          ? s.release_price
+        const basis = r.release_price && r.release_price > 0
+          ? r.release_price
           : h.cost_basis_per_share;
         if (basis <= 0) continue;
+        let soldFromThis = 0;
+        for (const sell of h.sells ?? []) {
+          if (sell.release_id !== r.id) continue;
+          const sd = parseISO(sell.sell_date);
+          if (!sd || sd > todayDate) continue;
+          soldFromThis += sellSharesFor(sell, r);
+        }
+        const stillHeld = Math.max(0, releaseKeptShares(r) - soldFromThis);
         const perShareGain = Math.max(0, h.current_share_price - basis);
-        gainTotal += eventNetReleaseShares(s) * perShareGain;
+        gainTotal += stillHeld * perShareGain;
       }
       const haircutNative = gainTotal * rate;
       return sum + convert(haircutNative, h.currency, displayCurrency, data.settings);

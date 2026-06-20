@@ -8,9 +8,10 @@ import { useData } from "@/components/data-provider";
 import { Button } from "@/components/ui/button";
 import {
   defaultSaleTaxRate,
-  eventNetReleaseShares,
-  eventWithholdingShares,
   parseISO,
+  releaseKeptShares,
+  releaseWithholdingShares,
+  sellSharesFor,
   totalGrantedShares,
   totalSoldShares,
   unvestedSharesAt,
@@ -175,11 +176,13 @@ function StockBlock({ h, today }: { h: ReturnType<typeof useData>["data"]["stock
   const unvested = unvestedSharesAt(h, today);
   const sold = totalSoldShares(h, today);
 
-  const sortedReleases = [...(h.sales ?? [])].sort((a, b) =>
+  const sortedReleases = [...(h.releases ?? [])].sort((a, b) =>
     a.release_date.localeCompare(b.release_date),
   );
-
-  const sales = sortedReleases.filter((s) => !!s.sell_date);
+  const sortedSells = [...(h.sells ?? [])].sort((a, b) =>
+    a.sell_date.localeCompare(b.sell_date),
+  );
+  const releasesById = new Map(sortedReleases.map((r) => [r.id, r]));
 
   return (
     <article className="space-y-3 break-inside-avoid">
@@ -233,6 +236,7 @@ function StockBlock({ h, today }: { h: ReturnType<typeof useData>["data"]["stock
           <table className="w-full text-xs tabular-nums border-collapse">
             <thead>
               <tr className="border-b text-[10px] uppercase tracking-wide text-muted-foreground">
+                <th className="px-2 py-1 text-left font-normal">Name</th>
                 <th className="px-2 py-1 text-left font-normal">Release date</th>
                 <th className="px-2 py-1 text-right font-normal">Shares</th>
                 <th className="px-2 py-1 text-right font-normal">Release price</th>
@@ -241,15 +245,16 @@ function StockBlock({ h, today }: { h: ReturnType<typeof useData>["data"]["stock
               </tr>
             </thead>
             <tbody>
-              {sortedReleases.map((s) => {
-                const cover = eventWithholdingShares(s);
-                const kept = eventNetReleaseShares(s);
+              {sortedReleases.map((r) => {
+                const cover = releaseWithholdingShares(r);
+                const kept = releaseKeptShares(r);
                 return (
-                  <tr key={s.id} className="border-b">
-                    <td className="px-2 py-1">{s.release_date}</td>
-                    <td className="px-2 py-1 text-right">{formatNumber(s.shares)}</td>
+                  <tr key={r.id} className="border-b">
+                    <td className="px-2 py-1">{r.name || "—"}</td>
+                    <td className="px-2 py-1">{r.release_date}</td>
+                    <td className="px-2 py-1 text-right">{formatNumber(r.shares)}</td>
                     <td className="px-2 py-1 text-right">
-                      {s.release_price > 0 ? formatMoney(s.release_price, h.currency, { fractionDigits: 2 }) : "—"}
+                      {r.release_price > 0 ? formatMoney(r.release_price, h.currency, { fractionDigits: 2 }) : "—"}
                     </td>
                     <td className="px-2 py-1 text-right">{formatNumber(Math.round(cover))}</td>
                     <td className="px-2 py-1 text-right">{formatNumber(Math.round(kept))}</td>
@@ -261,33 +266,43 @@ function StockBlock({ h, today }: { h: ReturnType<typeof useData>["data"]["stock
         </div>
       ) : null}
 
-      {sales.length > 0 ? (
+      {sortedSells.length > 0 ? (
         <div className="space-y-1">
           <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
-            Sale events
+            Sell events
           </p>
           <table className="w-full text-xs tabular-nums border-collapse">
             <thead>
               <tr className="border-b text-[10px] uppercase tracking-wide text-muted-foreground">
+                <th className="px-2 py-1 text-left font-normal">Name</th>
                 <th className="px-2 py-1 text-left font-normal">Sell date</th>
+                <th className="px-2 py-1 text-left font-normal">From release</th>
                 <th className="px-2 py-1 text-right font-normal">Shares sold</th>
                 <th className="px-2 py-1 text-right font-normal">Sale price</th>
-                <th className="px-2 py-1 text-right font-normal">Release price (basis)</th>
+                <th className="px-2 py-1 text-right font-normal">Basis</th>
                 <th className="px-2 py-1 text-right font-normal">Tax rate</th>
               </tr>
             </thead>
             <tbody>
-              {sales.map((s) => {
-                const kept = eventNetReleaseShares(s);
-                const salePrice = s.sale_price ?? h.current_share_price;
+              {sortedSells.map((s) => {
+                const release = releasesById.get(s.release_id) ?? null;
+                const sharesSold = sellSharesFor(s, release);
+                const salePrice = s.sale_price !== undefined && s.sale_price > 0
+                  ? s.sale_price
+                  : h.current_share_price;
+                const basis = release && release.release_price > 0
+                  ? release.release_price
+                  : h.cost_basis_per_share;
                 const taxRate = s.sale_tax_rate_pct || defaultSaleTaxRate(h.jurisdiction);
                 return (
                   <tr key={s.id} className="border-b">
+                    <td className="px-2 py-1">{s.name || "—"}</td>
                     <td className="px-2 py-1">{s.sell_date}</td>
-                    <td className="px-2 py-1 text-right">{formatNumber(Math.round(kept))}</td>
+                    <td className="px-2 py-1">{release ? (release.name || release.release_date) : "—"}</td>
+                    <td className="px-2 py-1 text-right">{formatNumber(Math.round(sharesSold))}</td>
                     <td className="px-2 py-1 text-right">{formatMoney(salePrice, h.currency, { fractionDigits: 2 })}</td>
                     <td className="px-2 py-1 text-right">
-                      {s.release_price > 0 ? formatMoney(s.release_price, h.currency, { fractionDigits: 2 }) : "—"}
+                      {basis > 0 ? formatMoney(basis, h.currency, { fractionDigits: 2 }) : "—"}
                     </td>
                     <td className="px-2 py-1 text-right">{taxRate.toFixed(1)}%</td>
                   </tr>

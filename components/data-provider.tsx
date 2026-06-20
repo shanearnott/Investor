@@ -21,6 +21,7 @@ import {
   type Property,
   type Scenario,
   type Settings,
+  migrateHoldingSales,
   type StockHolding,
 } from "@/lib/models";
 import {
@@ -203,6 +204,19 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         });
         if (changed) await saveCollection("stocks", stocks);
         window.localStorage.setItem(MIG_V2_KEY, "1");
+      }
+
+      // v3: split legacy `sales` (combined release+sell) into the
+      // decoupled `releases` and `sells` arrays. Idempotent — no-op once
+      // each holding has anything in the new arrays.
+      {
+        let changed = false;
+        stocks = stocks.map((s) => {
+          const migrated = migrateHoldingSales(s);
+          if (migrated !== s) changed = true;
+          return migrated;
+        });
+        if (changed) await saveCollection("stocks", stocks);
       }
 
       setData({

@@ -15,19 +15,19 @@ import {
   Property,
   PropertySchema,
   StockHolding,
-  StockHoldingSale,
+  StockHoldingRelease,
   StockHoldingSchema,
+  StockHoldingSell,
   SUPPORTED_CURRENCIES,
   SUPPORTED_JURISDICTIONS,
   Tranche,
   VestEvent,
   defaultSaleTaxRate,
-  eventNetReleaseShares,
-  eventWithholdingShares,
   newId,
   parseISO,
-  releaseEventMath,
-  saleEventMath,
+  releaseKeptShares,
+  releaseWithholdingShares,
+  sellSharesFor,
   type Settings,
   todayISO,
   totalGrantedShares,
@@ -184,8 +184,8 @@ function ReleaseEventsSummary({
   const today = new Date();
   const rows = stocks
     .map((h) => {
-      const events = (h.sales ?? []).filter((s) => {
-        const d = parseISO(s.release_date);
+      const events = (h.releases ?? []).filter((r) => {
+        const d = parseISO(r.release_date);
         return !!d && d <= today;
       });
       if (events.length === 0) return null;
@@ -194,11 +194,11 @@ function ReleaseEventsSummary({
       let grossNative = 0;
       let withheldNative = 0;
       for (const e of events) {
-        const m = releaseEventMath(e, h);
+        const taxShares = releaseWithholdingShares(e);
         shares += e.shares;
-        covered += m.withheldShares;
-        grossNative += m.gross;
-        withheldNative += m.withheldValue;
+        covered += taxShares;
+        grossNative += e.shares * e.release_price;
+        withheldNative += taxShares * e.release_price;
       }
       if (shares === 0) return null;
       const remaining = vestedSharesAt(h, today);
@@ -287,8 +287,8 @@ function SaleEventsSummary({
   const today = new Date();
   const rows = stocks
     .map((h) => {
-      const events = (h.sales ?? []).filter((s) => {
-        if (!s.sell_date) return false;
+      const releasesById = new Map((h.releases ?? []).map((r) => [r.id, r]));
+      const events = (h.sells ?? []).filter((s) => {
         const d = parseISO(s.sell_date);
         return !!d && d <= today;
       });
@@ -299,12 +299,24 @@ function SaleEventsSummary({
       let gainNative = 0;
       let taxNative = 0;
       for (const e of events) {
-        const m = saleEventMath(e, h);
-        shares += m.sharesSold;
-        grossNative += m.gross;
-        costNative += m.cost;
-        gainNative += m.gain;
-        taxNative += m.tax;
+        const release = releasesById.get(e.release_id) ?? null;
+        const sharesSold = sellSharesFor(e, release);
+        const salePrice = e.sale_price !== undefined && e.sale_price > 0
+          ? e.sale_price
+          : h.current_share_price;
+        const basis = release && release.release_price > 0
+          ? release.release_price
+          : h.cost_basis_per_share;
+        const gross = sharesSold * salePrice;
+        const cost = sharesSold * basis;
+        const gain = Math.max(0, gross - cost);
+        const rate = e.sale_tax_rate_pct || defaultSaleTaxRate(h.jurisdiction);
+        const tax = gain * (rate / 100);
+        shares += sharesSold;
+        grossNative += gross;
+        costNative += cost;
+        gainNative += gain;
+        taxNative += tax;
       }
       if (shares === 0) return null;
       const gross = convert(grossNative, h.currency, display, settings);
@@ -543,47 +555,91 @@ function StockForm({
       ),
     }));
 
-  const addSale = () =>
+  const addRelease = () =>
     setD((prev) => ({
       ...prev,
-      sales: [
-        ...(prev.sales ?? []),
+      releases: [
+        ...(prev.releases ?? []),
         {
           id: newId(),
+          name: "",
           release_date: todayISO(),
           shares: 0,
           release_price: prev.current_share_price,
           sell_to_cover_shares: 0,
           tax_rate_pct: 0,
-          sale_tax_rate_pct: defaultSaleTaxRate(prev.jurisdiction),
           notes: "",
         },
       ],
     }));
 
-  const updateSale = (
+  const updateRelease = (
     id: string,
     patch: Partial<{
+      name: string;
       release_date: string;
       shares: number;
       release_price: number;
       sell_to_cover_shares: number;
       tax_rate_pct: number;
-      sell_date: string | undefined;
+      notes: string;
+    }>,
+  ) =>
+    setD((prev) => ({
+      ...prev,
+      releases: (prev.releases ?? []).map((r) => (r.id === id ? { ...r, ...patch } : r)),
+    }));
+
+  const removeRelease = (id: string) =>
+    setD((prev) => ({
+      ...prev,
+      releases: (prev.releases ?? []).filter((r) => r.id !== id),
+      // Also drop any sells that reference this release so we don't end
+      // up with dangling FKs.
+      sells: (prev.sells ?? []).filter((s) => s.release_id !== id),
+    }));
+
+  const addSell = () =>
+    setD((prev) => {
+      const firstRelease = (prev.releases ?? [])[0];
+      if (!firstRelease) return prev;
+      return {
+        ...prev,
+        sells: [
+          ...(prev.sells ?? []),
+          {
+            id: newId(),
+            name: "",
+            release_id: firstRelease.id,
+            sell_date: todayISO(),
+            sale_tax_rate_pct: defaultSaleTaxRate(prev.jurisdiction),
+            notes: "",
+          },
+        ],
+      };
+    });
+
+  const updateSell = (
+    id: string,
+    patch: Partial<{
+      name: string;
+      release_id: string;
+      sell_date: string;
       sale_price: number | undefined;
+      shares: number | undefined;
       sale_tax_rate_pct: number;
       notes: string;
     }>,
   ) =>
     setD((prev) => ({
       ...prev,
-      sales: (prev.sales ?? []).map((s) => (s.id === id ? { ...s, ...patch } : s)),
+      sells: (prev.sells ?? []).map((s) => (s.id === id ? { ...s, ...patch } : s)),
     }));
 
-  const removeSale = (id: string) =>
+  const removeSell = (id: string) =>
     setD((prev) => ({
       ...prev,
-      sales: (prev.sales ?? []).filter((s) => s.id !== id),
+      sells: (prev.sells ?? []).filter((s) => s.id !== id),
     }));
 
   const submit = async () => {
@@ -690,32 +746,74 @@ function StockForm({
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <div>
-              <Label>Release &amp; sale events</Label>
+              <Label>Release events</Label>
               <p className="text-[11px] text-muted-foreground">
-                One event per RSU release. The release piece (date, shares,
-                release price, withholding) is always required; the sale piece
-                is optional. With no sale, the kept shares are owned outright;
-                with a sale, they leave the holding on the sell date.
+                Each release records shares coming off vesting with a date,
+                price and withholding. Give it a name so you can reference
+                it later from a sell event or a scenario.
               </p>
             </div>
-            <Button size="sm" variant="outline" onClick={addSale}>
-              <Plus className="h-3 w-3" /> Add event
+            <Button size="sm" variant="outline" onClick={addRelease}>
+              <Plus className="h-3 w-3" /> Add release
             </Button>
           </div>
 
-          {(d.sales ?? []).length === 0 ? (
+          {(d.releases ?? []).length === 0 ? (
             <p className="text-xs text-muted-foreground">
-              No events recorded — click <b>Add event</b> to log one.
+              No releases recorded — click <b>Add release</b> to log one.
             </p>
           ) : (
             <div className="space-y-2">
-              {(d.sales ?? []).map((s) => (
-                <SaleEditor
-                  key={s.id}
-                  sale={s}
+              {(d.releases ?? []).map((r) => (
+                <ReleaseEditor
+                  key={r.id}
+                  release={r}
                   holding={d}
-                  onChange={(patch) => updateSale(s.id, patch)}
-                  onDelete={() => removeSale(s.id)}
+                  onChange={(patch) => updateRelease(r.id, patch)}
+                  onDelete={() => removeRelease(r.id)}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <Label>Sell events</Label>
+              <p className="text-[11px] text-muted-foreground">
+                Each sell event references one of the release events above —
+                that gives the cost basis and original price. Sale price /
+                share count default to the full kept amount at today&apos;s price.
+              </p>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={addSell}
+              disabled={(d.releases ?? []).length === 0}
+              title={(d.releases ?? []).length === 0 ? "Add a release first" : undefined}
+            >
+              <Plus className="h-3 w-3" /> Add sell
+            </Button>
+          </div>
+
+          {(d.sells ?? []).length === 0 ? (
+            <p className="text-xs text-muted-foreground">
+              {(d.releases ?? []).length === 0
+                ? "Add a release event first."
+                : <>No sells recorded — click <b>Add sell</b> to log one.</>}
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {(d.sells ?? []).map((s) => (
+                <SellEditor
+                  key={s.id}
+                  sell={s}
+                  releases={d.releases ?? []}
+                  holding={d}
+                  onChange={(patch) => updateSell(s.id, patch)}
+                  onDelete={() => removeSell(s.id)}
                 />
               ))}
             </div>
@@ -945,161 +1043,103 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
   );
 }
 
-function SaleEditor({
-  sale,
+function ReleaseEditor({
+  release,
   holding,
   onChange,
   onDelete,
 }: {
-  sale: StockHoldingSale;
+  release: StockHoldingRelease;
   holding: StockHolding;
   onChange: (patch: Partial<{
+    name: string;
     release_date: string;
     shares: number;
     release_price: number;
     sell_to_cover_shares: number;
     tax_rate_pct: number;
-    sell_date: string | undefined;
-    sale_price: number | undefined;
-    sale_tax_rate_pct: number;
     notes: string;
   }>) => void;
   onDelete: () => void;
 }) {
-  const r = releaseEventMath(sale, holding);
-  const showSale = !!sale.sell_date;
-  const s = showSale ? saleEventMath(sale, holding) : null;
-  const coverMode = (sale.sell_to_cover_shares ?? 0) > 0;
-  const effectiveRate = coverMode && sale.shares > 0
-    ? (Math.min(sale.sell_to_cover_shares ?? 0, sale.shares) / sale.shares) * 100
-    : sale.tax_rate_pct;
+  const cover = Math.min(release.sell_to_cover_shares ?? 0, release.shares);
+  const coverMode = cover > 0;
+  const taxShares = coverMode
+    ? cover
+    : Math.min(release.shares, (release.shares * (release.tax_rate_pct ?? 0)) / 100);
+  const kept = Math.max(0, release.shares - taxShares);
+  const grossNative = release.shares * release.release_price;
+  const withheldNative = taxShares * release.release_price;
+  const effectiveRate = release.shares > 0 ? (taxShares / release.shares) * 100 : 0;
   return (
-    <div className="rounded-md border p-3 space-y-4">
-      {/* Release piece */}
-      <div className="space-y-3">
-        <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
-          Release
-        </div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field label="Release date" hint="When the shares came off vesting.">
-            <Input
-              type="date"
-              value={sale.release_date}
-              onChange={(e) => onChange({ release_date: e.target.value })}
-            />
-          </Field>
-          <Field label="Shares released">
-            <Input
-              type="number"
-              step="1"
-              min={0}
-              value={sale.shares}
-              onChange={(e) => onChange({ shares: Number(e.target.value) })}
-            />
-          </Field>
-        </div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <Field label={`Release price (${holding.currency})`} hint="Per-share FMV at vest; the cost basis for any later sale.">
-            <Input
-              type="number"
-              step="0.01"
-              min={0}
-              value={sale.release_price ?? 0}
-              onChange={(e) => onChange({ release_price: Number(e.target.value) })}
-            />
-          </Field>
-          <Field label="Sell to cover (shares)" hint="Shares the broker sold to pay income tax at vest. Takes precedence over the % rate.">
-            <Input
-              type="number"
-              step="1"
-              min={0}
-              value={sale.sell_to_cover_shares ?? 0}
-              onChange={(e) => onChange({ sell_to_cover_shares: Number(e.target.value), tax_rate_pct: 0 })}
-            />
-          </Field>
-          <Field label="Or income tax (%)" hint="Used when Sell-to-cover is 0.">
-            <Input
-              type="number"
-              step="0.5"
-              min={0}
-              max={100}
-              value={sale.tax_rate_pct}
-              onChange={(e) => onChange({ tax_rate_pct: Number(e.target.value), sell_to_cover_shares: 0 })}
-            />
-          </Field>
-        </div>
-        {sale.shares > 0 ? (
-          <div className="rounded-md bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground space-y-0.5 tabular-nums">
-            <div className="flex justify-between"><span>Gross at release</span><span>{formatNumber(sale.shares)} sh · {formatMoney(r.gross, holding.currency)}</span></div>
-            <div className="flex justify-between"><span>Withheld for tax ({effectiveRate.toFixed(1)}%)</span><span>−{formatNumber(Math.round(r.withheldShares))} sh · −{formatMoney(r.withheldValue, holding.currency)}</span></div>
-            <div className="flex justify-between font-semibold text-foreground"><span>{showSale ? "Carried into sale" : "Kept (owned outright)"}</span><span>{formatNumber(Math.round(r.kept))} sh</span></div>
-          </div>
-        ) : null}
+    <div className="rounded-md border p-3 space-y-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Field label="Name" hint="Optional — handy to reference from a sell or scenario.">
+          <Input
+            value={release.name ?? ""}
+            placeholder={`e.g. ${release.release_date || "Q4 vest"}`}
+            onChange={(e) => onChange({ name: e.target.value })}
+          />
+        </Field>
+        <Field label="Release date" hint="When the shares came off vesting.">
+          <Input
+            type="date"
+            value={release.release_date}
+            onChange={(e) => onChange({ release_date: e.target.value })}
+          />
+        </Field>
       </div>
-
-      {/* Sale piece (optional) */}
-      <div className="space-y-3 border-t pt-3">
-        <div className="flex items-center justify-between gap-2">
-          <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
-            Sale {showSale ? "" : <span className="lowercase">(optional)</span>}
-          </div>
-          {showSale ? (
-            <Button
-              size="sm"
-              variant="ghost"
-              title="Clear sale piece — the kept shares stay owned outright"
-              onClick={() =>
-                onChange({ sell_date: undefined, sale_price: undefined, sale_tax_rate_pct: 0 })
-              }
-            >
-              <X className="h-3 w-3" /> Clear sale
-            </Button>
-          ) : null}
-        </div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <Field label="Sell date" hint="Blank = not sold; kept shares stay outright.">
-            <Input
-              type="date"
-              value={sale.sell_date ?? ""}
-              onChange={(e) => onChange({ sell_date: e.target.value || undefined })}
-            />
-          </Field>
-          <Field label={`Sell price (${holding.currency})`} hint="Blank = current share price.">
-            <Input
-              type="number"
-              step="0.01"
-              min={0}
-              value={sale.sale_price ?? ""}
-              onChange={(e) =>
-                onChange({ sale_price: e.target.value === "" ? undefined : Number(e.target.value) })
-              }
-            />
-          </Field>
-          <Field label="Cap-gains tax (%)" hint={`${holding.jurisdiction} default ${defaultSaleTaxRate(holding.jurisdiction)}%.`}>
-            <Input
-              type="number"
-              step="0.5"
-              min={0}
-              max={100}
-              value={sale.sale_tax_rate_pct ?? 0}
-              onChange={(e) => onChange({ sale_tax_rate_pct: Number(e.target.value) })}
-            />
-          </Field>
-        </div>
-        {s && s.sharesSold > 0 ? (
-          <div className="rounded-md bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground space-y-0.5 tabular-nums">
-            <div className="flex justify-between"><span>Gross proceeds</span><span>{formatMoney(s.gross, holding.currency)}</span></div>
-            <div className="flex justify-between"><span>Cost basis ({formatMoney(s.basis, holding.currency, { fractionDigits: 2 })}/sh)</span><span>−{formatMoney(s.cost, holding.currency)}</span></div>
-            <div className="flex justify-between"><span>Taxable gain</span><span>{formatMoney(s.gain, holding.currency)}</span></div>
-            <div className="flex justify-between"><span>Tax on gain</span><span>−{formatMoney(s.tax, holding.currency)}</span></div>
-            <div className="flex justify-between font-semibold text-foreground"><span>Net proceeds</span><span>{formatMoney(s.net, holding.currency)}</span></div>
-          </div>
-        ) : null}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Field label="Shares released">
+          <Input
+            type="number"
+            step="1"
+            min={0}
+            value={release.shares}
+            onChange={(e) => onChange({ shares: Number(e.target.value) })}
+          />
+        </Field>
+        <Field label={`Release price (${holding.currency})`} hint="Per-share FMV at vest; the cost basis for any later sale.">
+          <Input
+            type="number"
+            step="0.01"
+            min={0}
+            value={release.release_price ?? 0}
+            onChange={(e) => onChange({ release_price: Number(e.target.value) })}
+          />
+        </Field>
       </div>
-
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Field label="Sell to cover (shares)" hint="Shares the broker sold to pay income tax at vest. Takes precedence over the % rate.">
+          <Input
+            type="number"
+            step="1"
+            min={0}
+            value={release.sell_to_cover_shares ?? 0}
+            onChange={(e) => onChange({ sell_to_cover_shares: Number(e.target.value), tax_rate_pct: 0 })}
+          />
+        </Field>
+        <Field label="Or income tax (%)" hint="Used when Sell-to-cover is 0.">
+          <Input
+            type="number"
+            step="0.5"
+            min={0}
+            max={100}
+            value={release.tax_rate_pct}
+            onChange={(e) => onChange({ tax_rate_pct: Number(e.target.value), sell_to_cover_shares: 0 })}
+          />
+        </Field>
+      </div>
+      {release.shares > 0 ? (
+        <div className="rounded-md bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground space-y-0.5 tabular-nums">
+          <div className="flex justify-between"><span>Gross at release</span><span>{formatNumber(release.shares)} sh · {formatMoney(grossNative, holding.currency)}</span></div>
+          <div className="flex justify-between"><span>Withheld for tax ({effectiveRate.toFixed(1)}%)</span><span>−{formatNumber(Math.round(taxShares))} sh · −{formatMoney(withheldNative, holding.currency)}</span></div>
+          <div className="flex justify-between font-semibold text-foreground"><span>Kept (held)</span><span>{formatNumber(Math.round(kept))} sh</span></div>
+        </div>
+      ) : null}
       <Field label="Notes (optional)">
         <Input
-          value={sale.notes ?? ""}
+          value={release.notes ?? ""}
           onChange={(e) => onChange({ notes: e.target.value })}
         />
       </Field>
@@ -1112,6 +1152,136 @@ function SaleEditor({
   );
 }
 
+function SellEditor({
+  sell,
+  releases,
+  holding,
+  onChange,
+  onDelete,
+}: {
+  sell: StockHoldingSell;
+  releases: StockHoldingRelease[];
+  holding: StockHolding;
+  onChange: (patch: Partial<{
+    name: string;
+    release_id: string;
+    sell_date: string;
+    sale_price: number | undefined;
+    shares: number | undefined;
+    sale_tax_rate_pct: number;
+    notes: string;
+  }>) => void;
+  onDelete: () => void;
+}) {
+  const release = releases.find((r) => r.id === sell.release_id) ?? null;
+  const releaseKept = release ? releaseKeptShares(release) : 0;
+  const sharesSold = sellSharesFor(sell, release);
+  const salePrice = sell.sale_price !== undefined && sell.sale_price > 0
+    ? sell.sale_price
+    : holding.current_share_price;
+  const basis = release && release.release_price > 0
+    ? release.release_price
+    : holding.cost_basis_per_share;
+  const gross = sharesSold * salePrice;
+  const cost = sharesSold * basis;
+  const gain = Math.max(0, gross - cost);
+  const taxRate = sell.sale_tax_rate_pct || defaultSaleTaxRate(holding.jurisdiction);
+  const tax = gain * (taxRate / 100);
+  const net = gross - tax;
+  return (
+    <div className="rounded-md border p-3 space-y-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Field label="Name" hint="Optional label.">
+          <Input
+            value={sell.name ?? ""}
+            placeholder="e.g. Diversify Q4"
+            onChange={(e) => onChange({ name: e.target.value })}
+          />
+        </Field>
+        <Field label="Linked release" hint="Provides the cost basis and original price.">
+          <Select
+            value={sell.release_id}
+            onChange={(e) => onChange({ release_id: e.target.value })}
+          >
+            {releases.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.name || r.release_date} · {formatNumber(r.shares)} sh
+              </option>
+            ))}
+          </Select>
+        </Field>
+      </div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <Field label="Sell date">
+          <Input
+            type="date"
+            value={sell.sell_date}
+            onChange={(e) => onChange({ sell_date: e.target.value })}
+          />
+        </Field>
+        <Field label={`Sell price (${holding.currency})`} hint="Blank = current share price.">
+          <Input
+            type="number"
+            step="0.01"
+            min={0}
+            value={sell.sale_price ?? ""}
+            onChange={(e) =>
+              onChange({ sale_price: e.target.value === "" ? undefined : Number(e.target.value) })
+            }
+          />
+        </Field>
+        <Field
+          label="Shares to sell"
+          hint={release ? `Blank = all kept (${formatNumber(Math.round(releaseKept))} sh).` : "Blank = all kept."}
+        >
+          <Input
+            type="number"
+            step="1"
+            min={0}
+            value={sell.shares ?? ""}
+            onChange={(e) =>
+              onChange({ shares: e.target.value === "" ? undefined : Number(e.target.value) })
+            }
+          />
+        </Field>
+      </div>
+      <Field label="Cap-gains tax (%)" hint={`${holding.jurisdiction} default ${defaultSaleTaxRate(holding.jurisdiction)}%.`}>
+        <Input
+          type="number"
+          step="0.5"
+          min={0}
+          max={100}
+          value={sell.sale_tax_rate_pct ?? 0}
+          onChange={(e) => onChange({ sale_tax_rate_pct: Number(e.target.value) })}
+        />
+      </Field>
+      {sharesSold > 0 ? (
+        <div className="rounded-md bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground space-y-0.5 tabular-nums">
+          <div className="flex justify-between"><span>Shares sold</span><span>{formatNumber(Math.round(sharesSold))} sh</span></div>
+          <div className="flex justify-between"><span>Gross proceeds</span><span>{formatMoney(gross, holding.currency)}</span></div>
+          <div className="flex justify-between"><span>Cost basis ({formatMoney(basis, holding.currency, { fractionDigits: 2 })}/sh)</span><span>−{formatMoney(cost, holding.currency)}</span></div>
+          <div className="flex justify-between"><span>Taxable gain</span><span>{formatMoney(gain, holding.currency)}</span></div>
+          <div className="flex justify-between"><span>Tax on gain ({taxRate.toFixed(1)}%)</span><span>−{formatMoney(tax, holding.currency)}</span></div>
+          <div className="flex justify-between font-semibold text-foreground"><span>Net proceeds</span><span>{formatMoney(net, holding.currency)}</span></div>
+        </div>
+      ) : null}
+      <Field label="Notes (optional)">
+        <Input
+          value={sell.notes ?? ""}
+          onChange={(e) => onChange({ notes: e.target.value })}
+        />
+      </Field>
+      <div className="flex justify-end">
+        <Button size="sm" variant="ghost" onClick={onDelete}>
+          <Trash2 className="h-4 w-4" /> Remove
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// Legacy combined editor kept for type-checking until callers are
+// removed. Renders nothing.
 /**
  * Editor for one tranche: name, grant date, schedule generator, vest events.
  *

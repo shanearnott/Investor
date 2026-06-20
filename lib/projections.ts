@@ -8,8 +8,9 @@ import { lookupGrowthRate } from "./growth";
 import {
   RSU_DEFAULT_TAX_RATES,
   defaultSaleTaxRate,
-  eventNetReleaseShares,
   parseISO,
+  releaseKeptShares,
+  sellSharesFor,
   totalGrantedShares,
   unvestedSharesAt,
   vestedSharesAt,
@@ -158,26 +159,32 @@ function rsuValueNative(
   }
 
   let releaseGrossPast = 0;
-  let keptHeldPast = 0;
+  let keptReleasedPast = 0;
   let releaseGrossFuture = 0;
   let releaseKeptFuture = 0;
-  for (const s of h.sales ?? []) {
-    const release = parseISO(s.release_date);
+  for (const r of h.releases ?? []) {
+    const release = parseISO(r.release_date);
     if (!release) continue;
-    const kept = eventNetReleaseShares(s);
+    const kept = releaseKeptShares(r);
     if (release <= asOf) {
-      releaseGrossPast += s.shares;
-      let sold = false;
-      if (s.sell_date) {
-        const sd = parseISO(s.sell_date);
-        if (sd && sd <= asOf) sold = true;
-      }
-      if (!sold) keptHeldPast += kept;
+      releaseGrossPast += r.shares;
+      keptReleasedPast += kept;
     } else {
-      releaseGrossFuture += s.shares;
+      releaseGrossFuture += r.shares;
       releaseKeptFuture += kept;
     }
   }
+  // Sells reduce the kept-held bucket once they've settled. They're
+  // matched to the release they reference; defaults to "all kept from
+  // that release" when shares is unset.
+  const releasesById = new Map((h.releases ?? []).map((r) => [r.id, r]));
+  let soldKeptPast = 0;
+  for (const sell of h.sells ?? []) {
+    const d = parseISO(sell.sell_date);
+    if (!d || d > asOf) continue;
+    soldKeptPast += sellSharesFor(sell, releasesById.get(sell.release_id) ?? null);
+  }
+  const keptHeldPast = Math.max(0, keptReleasedPast - soldKeptPast);
 
   // Income-tax bookkeeping:
   //   untaxed*  — tranche shares not yet "released" via an explicit
