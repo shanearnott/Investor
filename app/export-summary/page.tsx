@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Printer, ArrowLeft } from "lucide-react";
 
@@ -46,18 +46,23 @@ function readSelection(): Selection | null {
 export default function ExportSummaryPage() {
   const { data, loading } = useData();
   const [selection, setSelection] = useState<Selection | null>(null);
+  // Guard against the effect firing twice — once before the data
+  // provider finishes its async load (data.stocks=[]) and again after.
+  // The first run consumes the one-shot localStorage key; the second
+  // would then read null and clobber the picked IDs with "all".
+  const initRef = useRef(false);
 
   useEffect(() => {
+    if (loading || initRef.current) return;
+    initRef.current = true;
     const s = readSelection();
     setSelection(
-      // Fall back to "everything" if no selection has been recorded (e.g.
-      // user navigated here directly).
       s ?? {
         stockIds: data.stocks.map((h) => h.id),
         propertyIds: data.properties.map((p) => p.id),
       },
     );
-  }, [data.stocks, data.properties]);
+  }, [loading, data.stocks, data.properties]);
 
   const stocks = useMemo(
     () => data.stocks.filter((h) => selection?.stockIds.includes(h.id)),
