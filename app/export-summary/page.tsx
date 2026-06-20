@@ -100,6 +100,8 @@ export default function ExportSummaryPage() {
         </p>
       </header>
 
+      {stocks.length > 0 ? <OverallVestingSection stocks={stocks} today={today} /> : null}
+
       {stocks.length > 0 ? (
         <section className="space-y-4">
           <h2 className="text-lg font-semibold border-b pb-1">Stocks &amp; equity</h2>
@@ -124,6 +126,46 @@ export default function ExportSummaryPage() {
         </p>
       ) : null}
     </div>
+  );
+}
+
+function OverallVestingSection({
+  stocks,
+  today,
+}: {
+  stocks: ReturnType<typeof useData>["data"]["stocks"];
+  today: Date;
+}) {
+  // Aggregate every tranche vest_event across every selected stock. Shares
+  // are summed as raw counts (no price normalisation) so the chart reads
+  // strictly as "shares vesting across the portfolio over time".
+  const events = stocks
+    .flatMap((h) => h.tranches.flatMap((t) => t.vest_events))
+    .filter((ev) => !!ev.vest_date)
+    .map((ev) => ({ vest_date: ev.vest_date, shares: ev.shares }))
+    .sort((a, b) => a.vest_date.localeCompare(b.vest_date));
+  const total = events.reduce((s, e) => s + e.shares, 0);
+  const vestedToDate = events
+    .filter((e) => {
+      const d = parseISO(e.vest_date);
+      return d && d <= today;
+    })
+    .reduce((s, e) => s + e.shares, 0);
+  if (events.length === 0 || total === 0) return null;
+  return (
+    <section className="space-y-2 break-inside-avoid">
+      <h2 className="text-lg font-semibold border-b pb-1">Overall vesting</h2>
+      <table className="w-full text-xs tabular-nums">
+        <tbody>
+          <Row label="Selected stocks" value={String(stocks.length)} />
+          <Row label="Total shares granted (lifetime)" value={`${formatNumber(total)} sh`} />
+          <Row label="Vested to date" value={`${formatNumber(vestedToDate)} sh`} />
+          <Row label="Still to vest" value={`${formatNumber(total - vestedToDate)} sh`} />
+          <Row label="Window" value={`${events[0].vest_date} → ${events[events.length - 1].vest_date}`} />
+        </tbody>
+      </table>
+      <CumulativeVestingChart events={events} today={today} />
+    </section>
   );
 }
 
