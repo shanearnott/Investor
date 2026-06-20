@@ -64,6 +64,26 @@ function monthStart(d: Date): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
 }
 
+/** Return a copy of the holding with any tranche vest_events after the
+ *  scenario's termination_date removed. Models "I leave / get terminated
+ *  on this date — the remaining grants are forfeit." Off by default. */
+function applyScenarioTermination(h: StockHolding, scenario: Scenario): StockHolding {
+  const term = scenario.stock_overrides[h.id]?.termination_date;
+  if (!term) return h;
+  const limit = parseISO(term);
+  if (!limit) return h;
+  return {
+    ...h,
+    tranches: h.tranches.map((t) => ({
+      ...t,
+      vest_events: t.vest_events.filter((ev) => {
+        const d = parseISO(ev.vest_date);
+        return !d || d <= limit;
+      }),
+    })),
+  };
+}
+
 /** Effective today's price for a stock under a scenario — defaults to the
  *  holding's actual price unless the scenario overrides it. */
 export function startingPriceForScenario(
@@ -197,17 +217,22 @@ export function projectStockValueAt(
   const startPrice = startingPriceForScenario(scenario, h);
   const projectedPrice = startPrice * Math.pow(1 + monthlyGrowth, monthsForward);
 
-  const vested = vestedSharesAt(h, asOf);
+  // Drop tranche vest_events past the scenario's termination_date (if
+  // set) so vested / unvested counts and rsuValueNative all see the
+  // forfeited grants as gone.
+  const adjusted = applyScenarioTermination(h, scenario);
+
+  const vested = vestedSharesAt(adjusted, asOf);
   // unvested = future tranche vests only. Don't infer it from
   // granted − vested: release/sale deductions on past vests would
   // otherwise leak into the "unvested" bucket.
-  const unvested = unvestedSharesAt(h, asOf);
+  const unvested = unvestedSharesAt(adjusted, asOf);
 
   // RSUs: tax per vest year (override or flat). Non-RSU: untaxed here.
   let vestedNative: number;
   let unvestedNative: number;
   if (h.equity_type === "RSU") {
-    const v = rsuValueNative(h, scenario, asOf, projectedPrice);
+    const v = rsuValueNative(adjusted, scenario, asOf, projectedPrice);
     vestedNative = v.vested;
     unvestedNative = v.unvested;
   } else if (h.equity_type === "Stock Options") {
@@ -290,7 +315,8 @@ export function resolveScenarioSales(
     const releaseDate = parseISO(s.release_date ?? s.date ?? null);
     if (!h || !releaseDate) continue;
     const sellDate = parseISO(s.sell_date ?? s.release_date ?? s.date ?? null) ?? releaseDate;
-    const available = Math.max(0, vestedSharesAt(h, releaseDate) - (earmarked[s.stock_id] ?? 0));
+    const adjusted = applyScenarioTermination(h, scenario);
+    const available = Math.max(0, vestedSharesAt(adjusted, releaseDate) - (earmarked[s.stock_id] ?? 0));
     const shares = Math.min(s.shares, available);
     earmarked[s.stock_id] = (earmarked[s.stock_id] ?? 0) + shares;
     if (shares <= 0) continue;

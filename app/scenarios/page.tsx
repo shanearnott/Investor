@@ -156,7 +156,7 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
     const init = new Set<string>();
     for (const id of Object.keys(draft.stock_overrides ?? {})) {
       const ov = draft.stock_overrides[id];
-      if (ov && (ov.starting_share_price !== undefined || ov.annual_price_growth_pct !== undefined || ov.target_share_price !== undefined)) {
+      if (ov && (ov.starting_share_price !== undefined || ov.annual_price_growth_pct !== undefined || ov.target_share_price !== undefined || ov.termination_date !== undefined)) {
         init.add(id);
       }
     }
@@ -183,6 +183,7 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
       starting_share_price?: number;
       annual_price_growth_pct?: number;
       target_share_price?: number;
+      termination_date?: string;
     },
   ) => {
     setD((p) => ({
@@ -193,7 +194,7 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
 
   const clearStockField = (
     id: string,
-    field: "starting_share_price" | "annual_price_growth_pct" | "target_share_price",
+    field: "starting_share_price" | "annual_price_growth_pct" | "target_share_price" | "termination_date",
   ) => {
     setD((p) => {
       const cur = { ...(p.stock_overrides[id] ?? {}) };
@@ -383,7 +384,8 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
                 const hasOverride =
                   ov.starting_share_price !== undefined ||
                   ov.annual_price_growth_pct !== undefined ||
-                  ov.target_share_price !== undefined;
+                  ov.target_share_price !== undefined ||
+                  ov.termination_date !== undefined;
                 const open = isExpanded(h.id);
                 return (
                   <div key={h.id} className="rounded-md border p-2 space-y-2">
@@ -484,6 +486,20 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
                             />
                           </Field>
                         </div>
+                        <Field
+                          label="Termination date"
+                          hint="Off by default. When set, any tranche vests after this date are forfeited in this scenario (models being terminated / leaving)."
+                        >
+                          <Input
+                            type="date"
+                            value={ov.termination_date ?? ""}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              if (val === "") clearStockField(h.id, "termination_date");
+                              else updateStockOv(h.id, { termination_date: val });
+                            }}
+                          />
+                        </Field>
                         <p className="text-[10px] text-muted-foreground">
                           {usingTarget ? (
                             <>
