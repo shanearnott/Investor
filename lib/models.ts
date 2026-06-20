@@ -186,6 +186,11 @@ export const ScenarioSchema = z.object({
     starting_share_price: z.number().nonnegative().optional(),
     annual_price_growth_pct: z.number().optional(),
     target_share_price: z.number().nonnegative().optional(),
+    /** Termination date for this stock under this scenario. When set,
+     *  any tranche vest_event scheduled after this date is treated as
+     *  forfeit — never vests, never contributes to the projection. Off
+     *  by default; blank/undefined = no termination. */
+    termination_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   })).default({}),
   property_overrides: z.record(z.string(), z.object({
     annual_growth_pct: z.number().optional(),
