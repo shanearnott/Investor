@@ -215,8 +215,14 @@ export const ScenarioSchema = z.object({
    *    to use for proceeds. If unset, the projected price at sell_date.
    *  - `date` is the legacy single-date field, still read as a fallback for
    *    both release_date and sell_date.
-   *  Shares are capped at those vested by release_date and not already
-   *  earmarked by an earlier sale. Multiple sales over time are allowed. */
+  /** Planned scenario sales, keyed by holding. Each sale has a release
+   *  date (when the shares come off the equity line) and an optional
+   *  sell date (when proceeds become cash). The user can model living
+   *  in a different jurisdiction at release vs sale by setting
+   *  `release_jurisdiction` / `sale_jurisdiction` separately — income
+   *  tax is computed at the release piece, cap-gains tax at the sale
+   *  piece. Falls back to a single `tax_rate_pct` applied to gross when
+   *  no jurisdictions are set (legacy behaviour). */
   stock_sales: z.array(z.object({
     id: z.string(),
     stock_id: z.string(),
@@ -226,6 +232,21 @@ export const ScenarioSchema = z.object({
     sale_price: z.number().nonnegative().optional(),
     shares: z.number().nonnegative().default(0),
     tax_rate_pct: z.number().min(0).max(100).default(0),
+    /** Per-share fair-market value at release (income-tax basis).
+     *  Blank → uses the scenario's projected price at release_date. */
+    release_price: z.number().nonnegative().optional(),
+    /** Where the user lives at release. When set (or `release_tax_rate_pct`
+     *  is > 0), split-tax mode is active: income tax is paid on
+     *  `shares × release_price` and cap-gains is paid on the gain. */
+    release_jurisdiction: z.enum(SUPPORTED_JURISDICTIONS).optional(),
+    /** Override for the income-tax rate at release. When blank, falls
+     *  back to RSU_DEFAULT_TAX_RATES[release_jurisdiction] (or 0 if
+     *  jurisdiction is also blank → legacy mode). */
+    release_tax_rate_pct: z.number().min(0).max(100).optional(),
+    /** Where the user lives at sale. Used to pre-fill `tax_rate_pct`
+     *  via `defaultSaleTaxRate(...)` in the UI; in split-tax mode the
+     *  same `tax_rate_pct` field carries the cap-gains rate. */
+    sale_jurisdiction: z.enum(SUPPORTED_JURISDICTIONS).optional(),
   })).default([]),
 });
 export type StockSale = z.infer<typeof ScenarioSchema>["stock_sales"][number];

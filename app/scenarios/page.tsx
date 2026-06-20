@@ -7,7 +7,7 @@ import { useData } from "@/components/data-provider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Label, Select, Textarea } from "@/components/ui/input";
-import { newId, RSU_DEFAULT_TAX_RATES, Scenario, ScenarioSchema, SUPPORTED_JURISDICTIONS } from "@/lib/models";
+import { defaultSaleTaxRate, newId, RSU_DEFAULT_TAX_RATES, Scenario, ScenarioSchema, SUPPORTED_JURISDICTIONS } from "@/lib/models";
 import { cn, formatMoney } from "@/lib/utils";
 
 /** Scroll an inline edit form into view on mount. */
@@ -250,9 +250,13 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
       stock_id: string;
       release_date: string;
       sell_date: string;
-      sale_price: number;
+      sale_price: number | undefined;
       shares: number;
       tax_rate_pct: number;
+      release_price: number | undefined;
+      release_jurisdiction: (typeof SUPPORTED_JURISDICTIONS)[number] | undefined;
+      release_tax_rate_pct: number | undefined;
+      sale_jurisdiction: (typeof SUPPORTED_JURISDICTIONS)[number] | undefined;
     }>,
   ) => {
     setD((p) => ({
@@ -736,41 +740,131 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
                       />
                     </Field>
                   </div>
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                    <Field label="Shares" hint="Capped at shares vested by the release date.">
-                      <Input
-                        type="number"
-                        step="1"
-                        min={0}
-                        value={s.shares}
-                        onChange={(e) => updateSale(s.id, { shares: Number(e.target.value) })}
-                      />
-                    </Field>
-                    <Field label="Share price at sale" hint="Native currency. Blank = projected price.">
-                      <Input
-                        type="number"
-                        step="0.01"
-                        min={0}
-                        value={s.sale_price ?? ""}
-                        onChange={(e) =>
-                          updateSale(s.id, {
-                            sale_price:
-                              e.target.value === "" ? undefined : Number(e.target.value),
-                          })
+                  <Field label="Shares" hint="Capped at shares vested by the release date.">
+                    <Input
+                      type="number"
+                      step="1"
+                      min={0}
+                      value={s.shares}
+                      onChange={(e) => updateSale(s.id, { shares: Number(e.target.value) })}
+                    />
+                  </Field>
+
+                  {/* Release piece — income tax at release. Setting the
+                      jurisdiction (or an explicit release rate) flips
+                      the engine into split-tax mode. */}
+                  <div className="rounded-md border bg-secondary/30 p-3 space-y-3">
+                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Release piece</p>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                      <Field label="Release price" hint="Native currency. Blank = projected price at release.">
+                        <Input
+                          type="number"
+                          step="0.01"
+                          min={0}
+                          value={s.release_price ?? ""}
+                          onChange={(e) =>
+                            updateSale(s.id, {
+                              release_price: e.target.value === "" ? undefined : Number(e.target.value),
+                            })
+                          }
+                        />
+                      </Field>
+                      <Field label="Release jurisdiction" hint="Where you live at release.">
+                        <Select
+                          value={s.release_jurisdiction ?? ""}
+                          onChange={(e) =>
+                            updateSale(s.id, {
+                              release_jurisdiction:
+                                (e.target.value as typeof SUPPORTED_JURISDICTIONS[number]) || undefined,
+                            })
+                          }
+                        >
+                          <option value="">(none)</option>
+                          {SUPPORTED_JURISDICTIONS.map((j) => (
+                            <option key={j} value={j}>{j}</option>
+                          ))}
+                        </Select>
+                      </Field>
+                      <Field
+                        label="Release income tax"
+                        hint={
+                          s.release_jurisdiction
+                            ? `Default ${RSU_DEFAULT_TAX_RATES[s.release_jurisdiction] ?? 0}%`
+                            : "Set a release jurisdiction or override here to enable split-tax."
                         }
-                      />
-                    </Field>
-                    <Field label="Tax on sale" hint="Income/CGT applied to the proceeds.">
-                      <SuffixedInput
-                        suffix="%"
-                        type="number"
-                        step="0.5"
-                        min={0}
-                        max={100}
-                        value={s.tax_rate_pct}
-                        onChange={(e) => updateSale(s.id, { tax_rate_pct: Number(e.target.value) })}
-                      />
-                    </Field>
+                      >
+                        <SuffixedInput
+                          suffix="%"
+                          type="number"
+                          step="0.5"
+                          min={0}
+                          max={100}
+                          value={s.release_tax_rate_pct ?? ""}
+                          onChange={(e) =>
+                            updateSale(s.id, {
+                              release_tax_rate_pct: e.target.value === "" ? undefined : Number(e.target.value),
+                            })
+                          }
+                        />
+                      </Field>
+                    </div>
+                  </div>
+
+                  {/* Sale piece — cap-gains on the gain when split mode
+                      is active, otherwise a single rate applied to gross. */}
+                  <div className="rounded-md border bg-secondary/30 p-3 space-y-3">
+                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Sale piece</p>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                      <Field label="Sale price" hint="Native currency. Blank = projected price.">
+                        <Input
+                          type="number"
+                          step="0.01"
+                          min={0}
+                          value={s.sale_price ?? ""}
+                          onChange={(e) =>
+                            updateSale(s.id, {
+                              sale_price: e.target.value === "" ? undefined : Number(e.target.value),
+                            })
+                          }
+                        />
+                      </Field>
+                      <Field label="Sale jurisdiction" hint="Where you live at sale.">
+                        <Select
+                          value={s.sale_jurisdiction ?? ""}
+                          onChange={(e) =>
+                            updateSale(s.id, {
+                              sale_jurisdiction:
+                                (e.target.value as typeof SUPPORTED_JURISDICTIONS[number]) || undefined,
+                            })
+                          }
+                        >
+                          <option value="">(none)</option>
+                          {SUPPORTED_JURISDICTIONS.map((j) => (
+                            <option key={j} value={j}>{j}</option>
+                          ))}
+                        </Select>
+                      </Field>
+                      <Field
+                        label={(s.release_jurisdiction || (s.release_tax_rate_pct ?? 0) > 0) ? "Cap-gains tax" : "Tax on sale"}
+                        hint={
+                          s.sale_jurisdiction
+                            ? `Default ${defaultSaleTaxRate(s.sale_jurisdiction)}% in ${s.sale_jurisdiction}`
+                            : (s.release_jurisdiction || (s.release_tax_rate_pct ?? 0) > 0)
+                              ? "Applied to the gain (sale − release)."
+                              : "Applied to gross proceeds (legacy mode)."
+                        }
+                      >
+                        <SuffixedInput
+                          suffix="%"
+                          type="number"
+                          step="0.5"
+                          min={0}
+                          max={100}
+                          value={s.tax_rate_pct}
+                          onChange={(e) => updateSale(s.id, { tax_rate_pct: Number(e.target.value) })}
+                        />
+                      </Field>
+                    </div>
                   </div>
                   <div className="flex justify-end">
                     <Button size="sm" variant="ghost" onClick={() => removeSale(s.id)}>

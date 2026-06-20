@@ -6,6 +6,8 @@
 import { convert } from "./fx";
 import { lookupGrowthRate } from "./growth";
 import {
+  RSU_DEFAULT_TAX_RATES,
+  defaultSaleTaxRate,
   eventNetReleaseShares,
   parseISO,
   totalGrantedShares,
@@ -297,7 +299,39 @@ export function resolveScenarioSales(
         ? s.sale_price
         : projectStockValueAt(h, scenario, sellDate, settings.primary_currency, settings).projected_price;
     const grossNative = shares * priceNative;
-    const netNative = grossNative * (1 - Math.max(0, Math.min(100, s.tax_rate_pct)) / 100);
+
+    // Split-tax mode kicks in when the user has set either a release
+    // jurisdiction or an explicit release tax rate. Otherwise the
+    // existing single `tax_rate_pct` applies to gross (legacy).
+    const splitTaxMode =
+      !!s.release_jurisdiction || (s.release_tax_rate_pct ?? 0) > 0;
+    let netNative: number;
+    if (splitTaxMode) {
+      const releasePriceNative =
+        s.release_price !== undefined && s.release_price > 0
+          ? s.release_price
+          : projectStockValueAt(h, scenario, releaseDate, settings.primary_currency, settings).projected_price;
+      const releaseRatePct =
+        s.release_tax_rate_pct !== undefined
+          ? s.release_tax_rate_pct
+          : s.release_jurisdiction
+            ? RSU_DEFAULT_TAX_RATES[s.release_jurisdiction] ?? 0
+            : 0;
+      const incomeTaxNative =
+        shares * releasePriceNative * (Math.max(0, Math.min(100, releaseRatePct)) / 100);
+      const perShareGain = Math.max(0, priceNative - releasePriceNative);
+      const capGainsRatePct =
+        s.tax_rate_pct > 0
+          ? s.tax_rate_pct
+          : s.sale_jurisdiction
+            ? defaultSaleTaxRate(s.sale_jurisdiction)
+            : 0;
+      const capGainsTaxNative =
+        shares * perShareGain * (Math.max(0, Math.min(100, capGainsRatePct)) / 100);
+      netNative = grossNative - incomeTaxNative - capGainsTaxNative;
+    } else {
+      netNative = grossNative * (1 - Math.max(0, Math.min(100, s.tax_rate_pct)) / 100);
+    }
     out.push({
       stockId: s.stock_id,
       releaseDate,
