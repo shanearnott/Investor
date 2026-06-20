@@ -59,6 +59,8 @@ export function buildDemoData(): CollectionsMap {
           },
         ],
         sales: [],
+        releases: [],
+        sells: [],
         notes: "Demo: RSUs across two tranches (initial hire + refresher).",
       },
       {
@@ -74,6 +76,8 @@ export function buildDemoData(): CollectionsMap {
         strike_price: 0,
         tranches: [],
         sales: [],
+        releases: [],
+        sells: [],
         notes: "Demo: public-stock holding, long-term cap gains eligible.",
       },
     ],

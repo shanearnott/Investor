@@ -111,6 +111,59 @@ export function eventNetReleaseShares(s: StockHoldingSale): number {
   return Math.max(0, s.shares - eventWithholdingShares(s));
 }
 
+/** A release event: shares come off vesting at `release_date` and the
+ *  user keeps `shares − withholding`. Stand-alone — sells are tracked
+ *  separately and reference a release by `id`. The `name` is a
+ *  user-visible label so the user can pick it later when planning a sell. */
+export const StockHoldingReleaseSchema = z.object({
+  id: z.string(),
+  name: z.string().default(""),
+  release_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  shares: z.number().nonnegative().default(0),
+  release_price: z.number().nonnegative().default(0),
+  sell_to_cover_shares: z.number().nonnegative().default(0),
+  tax_rate_pct: z.number().min(0).max(100).default(0),
+  notes: z.string().default(""),
+});
+export type StockHoldingRelease = z.infer<typeof StockHoldingReleaseSchema>;
+
+/** A sell event: turns kept shares from a referenced release into cash.
+ *  `shares` defaults to all kept from that release; `sale_price` defaults
+ *  to the holding's current price. Cap-gains is on (sale_price − release_price). */
+export const StockHoldingSellSchema = z.object({
+  id: z.string(),
+  name: z.string().default(""),
+  release_id: z.string(),
+  sell_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  sale_price: z.number().nonnegative().optional(),
+  shares: z.number().nonnegative().optional(),
+  sale_tax_rate_pct: z.number().min(0).max(100).default(0),
+  notes: z.string().default(""),
+});
+export type StockHoldingSell = z.infer<typeof StockHoldingSellSchema>;
+
+/** Shares lost at release to either explicit sell-to-cover or an
+ *  equivalent tax rate. Capped at the gross release shares. */
+export function releaseWithholdingShares(r: StockHoldingRelease): number {
+  const cover = Math.min(r.sell_to_cover_shares ?? 0, r.shares);
+  if (cover > 0) return cover;
+  const rate = Math.min(100, Math.max(0, r.tax_rate_pct ?? 0));
+  return Math.min(r.shares, (r.shares * rate) / 100);
+}
+
+/** Net shares the user keeps from a release (after withholding). */
+export function releaseKeptShares(r: StockHoldingRelease): number {
+  return Math.max(0, r.shares - releaseWithholdingShares(r));
+}
+
+/** Shares a sell event removes from the holding. Defaults to all kept
+ *  from the referenced release when `sell.shares` is undefined. */
+export function sellSharesFor(sell: StockHoldingSell, release: StockHoldingRelease | null): number {
+  if (sell.shares !== undefined) return Math.max(0, sell.shares);
+  if (!release) return 0;
+  return releaseKeptShares(release);
+}
+
 /** Approximate default capital-gains rate by jurisdiction. Used to
  *  pre-populate new sale events; the user can override. */
 export function defaultSaleTaxRate(jurisdiction: string): number {
@@ -140,12 +193,57 @@ export const StockHoldingSchema = z.object({
   strike_price: z.number().nonnegative().default(0),
   /** Multiple tranches per stock; each has its own vesting schedule. */
   tranches: z.array(TrancheSchema).default([]),
-  /** Recorded sales — shares actually sold (or committed to be sold) out
-   *  of this holding. */
+  /** Release events — shares that came off vesting, with cover/tax info.
+   *  Each has a stable id + name so a sell event can reference it. */
+  releases: z.array(StockHoldingReleaseSchema).default([]),
+  /** Sell events — kept shares from a referenced release turned into
+   *  cash (or scheduled to). */
+  sells: z.array(StockHoldingSellSchema).default([]),
+  /** Legacy combined release+sell entries. Auto-migrated into
+   *  `releases` and `sells` the first time the holding is loaded with
+   *  empty new arrays; new code should not write to this field. */
   sales: z.array(StockHoldingSaleSchema).default([]),
   notes: z.string().default(""),
 });
 export type StockHolding = z.infer<typeof StockHoldingSchema>;
+
+/** One-shot migration from the legacy combined `sales` array to the
+ *  decoupled `releases` + `sells` arrays. Each old sale becomes a
+ *  release event; if it also had a `sell_date`, a matching sell event
+ *  referencing that release is added. Idempotent: if `releases` or
+ *  `sells` already has any entries, the migration is a no-op. */
+export function migrateHoldingSales(h: StockHolding): StockHolding {
+  const hasNew = (h.releases ?? []).length > 0 || (h.sells ?? []).length > 0;
+  const hasLegacy = (h.sales ?? []).length > 0;
+  if (hasNew || !hasLegacy) return h;
+  const releases: StockHoldingRelease[] = [];
+  const sells: StockHoldingSell[] = [];
+  for (const s of h.sales) {
+    const releaseId = s.id;
+    releases.push({
+      id: releaseId,
+      name: "",
+      release_date: s.release_date,
+      shares: s.shares,
+      release_price: s.release_price ?? 0,
+      sell_to_cover_shares: s.sell_to_cover_shares ?? 0,
+      tax_rate_pct: s.tax_rate_pct ?? 0,
+      notes: s.notes ?? "",
+    });
+    if (s.sell_date) {
+      sells.push({
+        id: `${s.id}-sell`,
+        name: "",
+        release_id: releaseId,
+        sell_date: s.sell_date,
+        sale_price: s.sale_price,
+        sale_tax_rate_pct: s.sale_tax_rate_pct ?? 0,
+        notes: "",
+      });
+    }
+  }
+  return { ...h, releases, sells, sales: [] };
+}
 
 export const PropertySchema = z.object({
   id: z.string(),
@@ -380,28 +478,31 @@ export function vestedSharesAt(h: StockHolding, asOf: Date): number {
       if (d && d <= asOf) v += ev.shares;
     }
   }
-  for (const s of h.sales ?? []) {
-    const release = parseISO(s.release_date);
-    if (release && release <= asOf) {
-      v -= eventWithholdingShares(s);
-    }
-    if (s.sell_date) {
-      const sellD = parseISO(s.sell_date);
-      if (sellD && sellD <= asOf) {
-        v -= eventNetReleaseShares(s);
-      }
-    }
+  // Releases reduce the count by their withholding once the release
+  // has happened.
+  for (const r of h.releases ?? []) {
+    const d = parseISO(r.release_date);
+    if (d && d <= asOf) v -= releaseWithholdingShares(r);
+  }
+  // Sells reduce the count by their share count (defaults to all kept
+  // from the referenced release) once the sell has settled.
+  const releasesById = new Map((h.releases ?? []).map((r) => [r.id, r]));
+  for (const s of h.sells ?? []) {
+    const d = parseISO(s.sell_date);
+    if (!d || d > asOf) continue;
+    v -= sellSharesFor(s, releasesById.get(s.release_id) ?? null);
   }
   return Math.max(0, v);
 }
 
-/** Total shares sold out via sale events whose sale has settled by `asOf`. */
+/** Total shares sold out via sell events whose sale has settled by `asOf`. */
 export function totalSoldShares(h: StockHolding, asOf: Date): number {
+  const releasesById = new Map((h.releases ?? []).map((r) => [r.id, r]));
   let n = 0;
-  for (const s of h.sales ?? []) {
-    if (!s.sell_date) continue;
+  for (const s of h.sells ?? []) {
     const d = parseISO(s.sell_date);
-    if (d && d <= asOf) n += eventNetReleaseShares(s);
+    if (!d || d > asOf) continue;
+    n += sellSharesFor(s, releasesById.get(s.release_id) ?? null);
   }
   return n;
 }
