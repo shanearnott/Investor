@@ -316,8 +316,16 @@ export function resolveScenarioSales(
     if (!h || !releaseDate) continue;
     const sellDate = parseISO(s.sell_date ?? s.release_date ?? s.date ?? null) ?? releaseDate;
     const adjusted = applyScenarioTermination(h, scenario);
-    const available = Math.max(0, vestedSharesAt(adjusted, releaseDate) - (earmarked[s.stock_id] ?? 0));
-    const shares = Math.min(s.shares, available);
+    const vestedAtRelease = vestedSharesAt(adjusted, releaseDate);
+    const available = Math.max(0, vestedAtRelease - (earmarked[s.stock_id] ?? 0));
+    // Percentage takes precedence over fixed share count when set —
+    // "sell N% of vested at release_date" rather than a literal share
+    // number. Caps at the available (vested minus prior earmarks).
+    const requestedShares =
+      s.shares_pct !== undefined && s.shares_pct > 0
+        ? vestedAtRelease * (Math.min(100, Math.max(0, s.shares_pct)) / 100)
+        : s.shares;
+    const shares = Math.min(requestedShares, available);
     earmarked[s.stock_id] = (earmarked[s.stock_id] ?? 0) + shares;
     if (shares <= 0) continue;
     const priceNative =

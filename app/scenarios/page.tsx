@@ -253,6 +253,7 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
       sell_date: string;
       sale_price: number | undefined;
       shares: number;
+      shares_pct: number | undefined;
       tax_rate_pct: number;
       release_price: number | undefined;
       release_jurisdiction: (typeof SUPPORTED_JURISDICTIONS)[number] | undefined;
@@ -756,15 +757,44 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
                       />
                     </Field>
                   </div>
-                  <Field label="Shares" hint="Capped at shares vested by the release date.">
-                    <Input
-                      type="number"
-                      step="1"
-                      min={0}
-                      value={s.shares}
-                      onChange={(e) => updateSale(s.id, { shares: Number(e.target.value) })}
-                    />
-                  </Field>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <Field
+                      label="Shares"
+                      hint={
+                        (s.shares_pct ?? 0) > 0
+                          ? "Disabled — using % of vested."
+                          : "Capped at shares vested by the release date."
+                      }
+                    >
+                      <Input
+                        type="number"
+                        step="1"
+                        min={0}
+                        value={s.shares}
+                        disabled={(s.shares_pct ?? 0) > 0}
+                        onChange={(e) => updateSale(s.id, { shares: Number(e.target.value) })}
+                      />
+                    </Field>
+                    <Field
+                      label="Or % of vested"
+                      hint="When > 0, takes precedence over Shares. Computed against total vested at release_date."
+                    >
+                      <SuffixedInput
+                        suffix="%"
+                        type="number"
+                        step="0.5"
+                        min={0}
+                        max={100}
+                        value={s.shares_pct ?? ""}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          updateSale(s.id, {
+                            shares_pct: v === "" ? undefined : Number(v),
+                          });
+                        }}
+                      />
+                    </Field>
+                  </div>
 
                   {/* Release piece — income tax at release. Setting the
                       jurisdiction (or an explicit release rate) flips

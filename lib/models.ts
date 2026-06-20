@@ -236,6 +236,10 @@ export const ScenarioSchema = z.object({
     sell_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     sale_price: z.number().nonnegative().optional(),
     shares: z.number().nonnegative().default(0),
+    /** Sell this percentage of total vested shares at release_date.
+     *  When set (> 0), takes precedence over `shares`. Useful for
+     *  "always sell 25% of whatever's vested" style plans. */
+    shares_pct: z.number().min(0).max(100).optional(),
     tax_rate_pct: z.number().min(0).max(100).default(0),
     /** Per-share fair-market value at release (income-tax basis).
      *  Blank → uses the scenario's projected price at release_date. */
