@@ -132,6 +132,8 @@ export function buildDemoData(): CollectionsMap {
         rsu_tax_rate_pct: 50,
         rsu_tax_year_overrides: {},
         stock_sales: [],
+        releases: [],
+        sells: [],
       },
       {
         id: "demo-sc-bull",
@@ -149,6 +151,8 @@ export function buildDemoData(): CollectionsMap {
         rsu_tax_rate_pct: 50,
         rsu_tax_year_overrides: {},
         stock_sales: [],
+        releases: [],
+        sells: [],
       },
       {
         id: "demo-sc-bear",
@@ -168,6 +172,8 @@ export function buildDemoData(): CollectionsMap {
         rsu_tax_rate_pct: 50,
         rsu_tax_year_overrides: {},
         stock_sales: [],
+        releases: [],
+        sells: [],
       },
     ],
     projects: [

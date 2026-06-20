@@ -22,6 +22,7 @@ import {
   type Scenario,
   type Settings,
   migrateHoldingSales,
+  migrateScenarioSales,
   type StockHolding,
 } from "@/lib/models";
 import {
@@ -217,6 +218,18 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
           return migrated;
         });
         if (changed) await saveCollection("stocks", stocks);
+      }
+
+      // Same migration on the scenario side — old `stock_sales` entries
+      // become a scenario release + scenario sell pair.
+      {
+        let changed = false;
+        scenarios = scenarios.map((sc) => {
+          const migrated = migrateScenarioSales(sc);
+          if (migrated !== sc) changed = true;
+          return migrated;
+        });
+        if (changed) await saveCollection("scenarios", scenarios);
       }
 
       setData({

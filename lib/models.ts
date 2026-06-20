@@ -355,8 +355,78 @@ export const ScenarioSchema = z.object({
      *  same `tax_rate_pct` field carries the cap-gains rate. */
     sale_jurisdiction: z.enum(SUPPORTED_JURISDICTIONS).optional(),
   })).default([]),
+  /** Scenario-defined release events. The user lists planned vests
+   *  here when they want to model income tax in a specific jurisdiction
+   *  at a future date (e.g. relocating before a refresher grant lands).
+   *  Sells reference these by id alongside investment releases. */
+  releases: z.array(z.object({
+    id: z.string(),
+    name: z.string().default(""),
+    stock_id: z.string(),
+    release_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    shares: z.number().nonnegative().default(0),
+    shares_pct: z.number().min(0).max(100).optional(),
+    release_price: z.number().nonnegative().optional(),
+    release_jurisdiction: z.enum(SUPPORTED_JURISDICTIONS).optional(),
+    release_tax_rate_pct: z.number().min(0).max(100).optional(),
+  })).default([]),
+  /** Scenario sells. Each references a release by id — either an
+   *  investment release (`h.releases[].id`) or a scenario release
+   *  (`scenario.releases[].id`). Cap-gains is on the gain between the
+   *  referenced release's price and `sale_price`. */
+  sells: z.array(z.object({
+    id: z.string(),
+    name: z.string().default(""),
+    release_ref: z.string(),
+    sell_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    sale_price: z.number().nonnegative().optional(),
+    shares: z.number().nonnegative().optional(),
+    shares_pct: z.number().min(0).max(100).optional(),
+    sale_jurisdiction: z.enum(SUPPORTED_JURISDICTIONS).optional(),
+    sale_tax_rate_pct: z.number().min(0).max(100).default(0),
+  })).default([]),
 });
 export type StockSale = z.infer<typeof ScenarioSchema>["stock_sales"][number];
+export type ScenarioRelease = z.infer<typeof ScenarioSchema>["releases"][number];
+export type ScenarioSell = z.infer<typeof ScenarioSchema>["sells"][number];
+
+/** One-shot migration from the legacy `stock_sales` array on a scenario
+ *  to the decoupled `releases` + `sells` arrays. Each combined entry
+ *  becomes a scenario release (carrying the release-side fields) plus a
+ *  scenario sell that references it. Idempotent. */
+export function migrateScenarioSales(s: z.infer<typeof ScenarioSchema>): z.infer<typeof ScenarioSchema> {
+  const hasNew = (s.releases ?? []).length > 0 || (s.sells ?? []).length > 0;
+  const hasLegacy = (s.stock_sales ?? []).length > 0;
+  if (hasNew || !hasLegacy) return s;
+  const releases: ScenarioRelease[] = [];
+  const sells: ScenarioSell[] = [];
+  for (const ss of s.stock_sales) {
+    const releaseId = ss.id;
+    releases.push({
+      id: releaseId,
+      name: "",
+      stock_id: ss.stock_id,
+      release_date: ss.release_date ?? ss.date ?? "",
+      shares: ss.shares ?? 0,
+      shares_pct: ss.shares_pct,
+      release_price: ss.release_price,
+      release_jurisdiction: ss.release_jurisdiction,
+      release_tax_rate_pct: ss.release_tax_rate_pct,
+    });
+    sells.push({
+      id: `${ss.id}-sell`,
+      name: "",
+      release_ref: releaseId,
+      sell_date: ss.sell_date ?? ss.release_date ?? ss.date ?? "",
+      sale_price: ss.sale_price,
+      shares: undefined,
+      shares_pct: undefined,
+      sale_jurisdiction: ss.sale_jurisdiction,
+      sale_tax_rate_pct: ss.tax_rate_pct ?? 0,
+    });
+  }
+  return { ...s, releases, sells, stock_sales: [] };
+}
 
 /** Typical top-marginal-on-RSU defaults used to pre-fill the rate input
  *  when the user picks a new jurisdiction in a scenario. Editable after. */
