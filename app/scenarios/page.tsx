@@ -229,47 +229,94 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
     collapse(id);
   };
 
-  const addSale = () => {
+  const addScenarioRelease = () => {
     const firstStock = data.stocks[0];
     setD((p) => ({
       ...p,
-      stock_sales: [
-        ...(p.stock_sales ?? []),
+      releases: [
+        ...(p.releases ?? []),
         {
           id: newId(),
+          name: "",
           stock_id: firstStock?.id ?? "",
           release_date: new Date().toISOString().slice(0, 10),
           shares: 0,
-          tax_rate_pct: p.rsu_tax_rate_pct ?? 0,
         },
       ],
     }));
   };
-  const updateSale = (
+  const updateScenarioRelease = (
     id: string,
     patch: Partial<{
+      name: string;
       stock_id: string;
       release_date: string;
-      sell_date: string;
-      sale_price: number | undefined;
       shares: number;
       shares_pct: number | undefined;
-      tax_rate_pct: number;
       release_price: number | undefined;
       release_jurisdiction: (typeof SUPPORTED_JURISDICTIONS)[number] | undefined;
       release_tax_rate_pct: number | undefined;
-      sale_jurisdiction: (typeof SUPPORTED_JURISDICTIONS)[number] | undefined;
     }>,
   ) => {
     setD((p) => ({
       ...p,
-      stock_sales: (p.stock_sales ?? []).map((s) => (s.id === id ? { ...s, ...patch } : s)),
+      releases: (p.releases ?? []).map((r) => (r.id === id ? { ...r, ...patch } : r)),
     }));
   };
-  const removeSale = (id: string) => {
+  const removeScenarioRelease = (id: string) => {
     setD((p) => ({
       ...p,
-      stock_sales: (p.stock_sales ?? []).filter((s) => s.id !== id),
+      releases: (p.releases ?? []).filter((r) => r.id !== id),
+      // Drop any sells that referenced this release so we don't dangle FKs.
+      sells: (p.sells ?? []).filter((s) => s.release_ref !== id),
+    }));
+  };
+
+  const addScenarioSell = () => {
+    // Default the release_ref to the first available release across
+    // both pools — investments first, then this scenario's own releases.
+    const firstInvestmentRelease = data.stocks.flatMap((h) => h.releases ?? [])[0];
+    setD((p) => {
+      const defaultRef =
+        firstInvestmentRelease?.id ?? (p.releases ?? [])[0]?.id ?? "";
+      if (!defaultRef) return p;
+      return {
+        ...p,
+        sells: [
+          ...(p.sells ?? []),
+          {
+            id: newId(),
+            name: "",
+            release_ref: defaultRef,
+            sell_date: new Date().toISOString().slice(0, 10),
+            sale_tax_rate_pct: 0,
+          },
+        ],
+      };
+    });
+  };
+  const updateScenarioSell = (
+    id: string,
+    patch: Partial<{
+      name: string;
+      release_ref: string;
+      sell_date: string;
+      sale_price: number | undefined;
+      shares: number | undefined;
+      shares_pct: number | undefined;
+      sale_jurisdiction: (typeof SUPPORTED_JURISDICTIONS)[number] | undefined;
+      sale_tax_rate_pct: number;
+    }>,
+  ) => {
+    setD((p) => ({
+      ...p,
+      sells: (p.sells ?? []).map((s) => (s.id === id ? { ...s, ...patch } : s)),
+    }));
+  };
+  const removeScenarioSell = (id: string) => {
+    setD((p) => ({
+      ...p,
+      sells: (p.sells ?? []).filter((s) => s.id !== id),
     }));
   };
 
@@ -699,85 +746,123 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
 
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <Label>Planned sales</Label>
+            <Label>Scenario release events</Label>
             <Button
               size="sm"
               variant="outline"
-              onClick={addSale}
+              onClick={addScenarioRelease}
               disabled={data.stocks.length === 0}
             >
-              <Plus className="h-3.5 w-3.5" /> Add sale
+              <Plus className="h-3.5 w-3.5" /> Add release
             </Button>
           </div>
           <p className="text-[11px] text-muted-foreground">
-            Sell already-vested shares under a chosen tax rate. Earmarked shares
-            are valued at the post-tax sale proceeds (override price or projected
-            price at sell, less this tax) for the whole projection, so the line
-            is fully static through both the release and sell dates — no step at
-            the sale itself. On the release date the shares leave the equity
-            line into a pending bucket; on the sell date they become cash. The
-            chart marks each sale with a bar in the scenario&apos;s colour. Sales
-            are capped at shares vested by the release date.
+            Add a future vest you want to model under this scenario&apos;s
+            jurisdiction. Income tax is realised at the release date. Sells
+            below can pick either a scenario release here or any release
+            you&apos;ve recorded against your investments.
           </p>
           {data.stocks.length === 0 ? (
-            <p className="text-[11px] text-muted-foreground">Add a stock first to plan a sale.</p>
-          ) : (d.stock_sales ?? []).length === 0 ? (
-            <p className="text-[11px] text-muted-foreground">No planned sales.</p>
+            <p className="text-[11px] text-muted-foreground">Add a stock first.</p>
+          ) : (d.releases ?? []).length === 0 ? (
+            <p className="text-[11px] text-muted-foreground">No scenario releases.</p>
           ) : (
             <div className="space-y-2">
-              {(d.stock_sales ?? []).map((s) => (
-                <div key={s.id} className="rounded-md border p-3 space-y-3">
-                  <Field label="Stock">
-                    <Select
-                      value={s.stock_id}
-                      onChange={(e) => updateSale(s.id, { stock_id: e.target.value })}
-                    >
-                      {data.stocks.map((h) => (
-                        <option key={h.id} value={h.id}>
-                          {h.ticker || h.company_name || h.id}
-                        </option>
-                      ))}
-                    </Select>
-                  </Field>
+              {(d.releases ?? []).map((r) => (
+                <div key={r.id} className="rounded-md border p-3 space-y-3">
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                    <Field label="Release date" hint="When the shares leave the equity line.">
+                    <Field label="Name" hint="Reference label for sells to pick.">
                       <Input
-                        type="date"
-                        className="min-w-[9rem]"
-                        value={s.release_date ?? s.date ?? ""}
-                        onChange={(e) => updateSale(s.id, { release_date: e.target.value })}
+                        value={r.name ?? ""}
+                        placeholder={`e.g. ${r.release_date} refresher`}
+                        onChange={(e) => updateScenarioRelease(r.id, { name: e.target.value })}
                       />
                     </Field>
-                    <Field label="Sell date" hint="Cash added to net worth. Blank = release date.">
-                      <Input
-                        type="date"
-                        className="min-w-[9rem]"
-                        value={s.sell_date ?? ""}
-                        onChange={(e) => updateSale(s.id, { sell_date: e.target.value })}
-                      />
+                    <Field label="Stock">
+                      <Select
+                        value={r.stock_id}
+                        onChange={(e) => updateScenarioRelease(r.id, { stock_id: e.target.value })}
+                      >
+                        {data.stocks.map((h) => (
+                          <option key={h.id} value={h.id}>{h.ticker || h.company_name || h.id}</option>
+                        ))}
+                      </Select>
                     </Field>
                   </div>
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                    <Field label="Release date">
+                      <Input
+                        type="date"
+                        value={r.release_date}
+                        onChange={(e) => updateScenarioRelease(r.id, { release_date: e.target.value })}
+                      />
+                    </Field>
                     <Field
                       label="Shares"
-                      hint={
-                        (s.shares_pct ?? 0) > 0
-                          ? "Disabled — using % of vested."
-                          : "Capped at shares vested by the release date."
-                      }
+                      hint={(r.shares_pct ?? 0) > 0 ? "Disabled — using % of vested." : "Released at release_date."}
                     >
                       <Input
                         type="number"
                         step="1"
                         min={0}
-                        value={s.shares}
-                        disabled={(s.shares_pct ?? 0) > 0}
-                        onChange={(e) => updateSale(s.id, { shares: Number(e.target.value) })}
+                        value={r.shares}
+                        disabled={(r.shares_pct ?? 0) > 0}
+                        onChange={(e) => updateScenarioRelease(r.id, { shares: Number(e.target.value) })}
                       />
                     </Field>
+                    <Field label="Or % of vested" hint="When > 0, takes precedence over Shares.">
+                      <SuffixedInput
+                        suffix="%"
+                        type="number"
+                        step="0.5"
+                        min={0}
+                        max={100}
+                        value={r.shares_pct ?? ""}
+                        onChange={(e) =>
+                          updateScenarioRelease(r.id, {
+                            shares_pct: e.target.value === "" ? undefined : Number(e.target.value),
+                          })
+                        }
+                      />
+                    </Field>
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                    <Field label="Release price" hint="Native currency. Blank = projected price at release.">
+                      <Input
+                        type="number"
+                        step="0.01"
+                        min={0}
+                        value={r.release_price ?? ""}
+                        onChange={(e) =>
+                          updateScenarioRelease(r.id, {
+                            release_price: e.target.value === "" ? undefined : Number(e.target.value),
+                          })
+                        }
+                      />
+                    </Field>
+                    <Field label="Release jurisdiction" hint="Where you live at release.">
+                      <Select
+                        value={r.release_jurisdiction ?? ""}
+                        onChange={(e) =>
+                          updateScenarioRelease(r.id, {
+                            release_jurisdiction:
+                              (e.target.value as typeof SUPPORTED_JURISDICTIONS[number]) || undefined,
+                          })
+                        }
+                      >
+                        <option value="">(none)</option>
+                        {SUPPORTED_JURISDICTIONS.map((j) => (
+                          <option key={j} value={j}>{j}</option>
+                        ))}
+                      </Select>
+                    </Field>
                     <Field
-                      label="Or % of vested"
-                      hint="When > 0, takes precedence over Shares. Computed against total vested at release_date."
+                      label="Release income tax"
+                      hint={
+                        r.release_jurisdiction
+                          ? `Default ${RSU_DEFAULT_TAX_RATES[r.release_jurisdiction] ?? 0}%`
+                          : "Override the rate here."
+                      }
                     >
                       <SuffixedInput
                         suffix="%"
@@ -785,91 +870,137 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
                         step="0.5"
                         min={0}
                         max={100}
-                        value={s.shares_pct ?? ""}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          updateSale(s.id, {
-                            shares_pct: v === "" ? undefined : Number(v),
-                          });
-                        }}
+                        value={r.release_tax_rate_pct ?? ""}
+                        onChange={(e) =>
+                          updateScenarioRelease(r.id, {
+                            release_tax_rate_pct: e.target.value === "" ? undefined : Number(e.target.value),
+                          })
+                        }
                       />
                     </Field>
                   </div>
+                  <div className="flex justify-end">
+                    <Button size="sm" variant="ghost" onClick={() => removeScenarioRelease(r.id)}>
+                      <Trash2 className="h-4 w-4" /> Remove
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
-                  {/* Release piece — income tax at release. Setting the
-                      jurisdiction (or an explicit release rate) flips
-                      the engine into split-tax mode. */}
-                  <div className="rounded-md border bg-secondary/30 p-3 space-y-3">
-                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Release piece</p>
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                      <Field label="Release price" hint="Native currency. Blank = projected price at release.">
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <Label>Scenario sell events</Label>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={addScenarioSell}
+              disabled={data.stocks.flatMap((h) => h.releases ?? []).length === 0 && (d.releases ?? []).length === 0}
+            >
+              <Plus className="h-3.5 w-3.5" /> Add sell
+            </Button>
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            Each sell references one release event — either an investment
+            release (above on the holding) or a scenario release just
+            defined. Cap-gains tax is on the gain between the referenced
+            release&apos;s price and the sell price.
+          </p>
+          {(d.sells ?? []).length === 0 ? (
+            <p className="text-[11px] text-muted-foreground">
+              {data.stocks.flatMap((h) => h.releases ?? []).length === 0 && (d.releases ?? []).length === 0
+                ? "Add a release event first."
+                : "No scenario sells."}
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {(d.sells ?? []).map((s) => {
+                const releaseOptions: { id: string; label: string }[] = [];
+                for (const h of data.stocks) {
+                  for (const r of h.releases ?? []) {
+                    const tag = `Investments / ${h.ticker || h.company_name || h.id}`;
+                    releaseOptions.push({ id: r.id, label: `${tag} · ${r.name || r.release_date} · ${r.shares} sh` });
+                  }
+                }
+                for (const r of d.releases ?? []) {
+                  const stock = data.stocks.find((h) => h.id === r.stock_id);
+                  const tag = `Scenario / ${stock?.ticker || stock?.company_name || r.stock_id}`;
+                  releaseOptions.push({ id: r.id, label: `${tag} · ${r.name || r.release_date} · ${r.shares} sh` });
+                }
+                return (
+                  <div key={s.id} className="rounded-md border p-3 space-y-3">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <Field label="Name" hint="Optional label.">
                         <Input
-                          type="number"
-                          step="0.01"
-                          min={0}
-                          value={s.release_price ?? ""}
-                          onChange={(e) =>
-                            updateSale(s.id, {
-                              release_price: e.target.value === "" ? undefined : Number(e.target.value),
-                            })
-                          }
+                          value={s.name ?? ""}
+                          placeholder="e.g. House deposit"
+                          onChange={(e) => updateScenarioSell(s.id, { name: e.target.value })}
                         />
                       </Field>
-                      <Field label="Release jurisdiction" hint="Where you live at release.">
+                      <Field label="Linked release" hint="Provides the basis and original price.">
                         <Select
-                          value={s.release_jurisdiction ?? ""}
-                          onChange={(e) =>
-                            updateSale(s.id, {
-                              release_jurisdiction:
-                                (e.target.value as typeof SUPPORTED_JURISDICTIONS[number]) || undefined,
-                            })
-                          }
+                          value={s.release_ref}
+                          onChange={(e) => updateScenarioSell(s.id, { release_ref: e.target.value })}
                         >
-                          <option value="">(none)</option>
-                          {SUPPORTED_JURISDICTIONS.map((j) => (
-                            <option key={j} value={j}>{j}</option>
+                          {releaseOptions.map((o) => (
+                            <option key={o.id} value={o.id}>{o.label}</option>
                           ))}
                         </Select>
                       </Field>
-                      <Field
-                        label="Release income tax"
-                        hint={
-                          s.release_jurisdiction
-                            ? `Default ${RSU_DEFAULT_TAX_RATES[s.release_jurisdiction] ?? 0}%`
-                            : "Set a release jurisdiction or override here to enable split-tax."
-                        }
-                      >
-                        <SuffixedInput
-                          suffix="%"
-                          type="number"
-                          step="0.5"
-                          min={0}
-                          max={100}
-                          value={s.release_tax_rate_pct ?? ""}
-                          onChange={(e) =>
-                            updateSale(s.id, {
-                              release_tax_rate_pct: e.target.value === "" ? undefined : Number(e.target.value),
-                            })
-                          }
+                    </div>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                      <Field label="Sell date" hint="Cash added to net worth.">
+                        <Input
+                          type="date"
+                          value={s.sell_date}
+                          onChange={(e) => updateScenarioSell(s.id, { sell_date: e.target.value })}
                         />
                       </Field>
-                    </div>
-                  </div>
-
-                  {/* Sale piece — cap-gains on the gain when split mode
-                      is active, otherwise a single rate applied to gross. */}
-                  <div className="rounded-md border bg-secondary/30 p-3 space-y-3">
-                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Sale piece</p>
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                      <Field label="Sale price" hint="Native currency. Blank = projected price.">
+                      <Field label="Sale price" hint="Native currency. Blank = projected price at sell.">
                         <Input
                           type="number"
                           step="0.01"
                           min={0}
                           value={s.sale_price ?? ""}
                           onChange={(e) =>
-                            updateSale(s.id, {
+                            updateScenarioSell(s.id, {
                               sale_price: e.target.value === "" ? undefined : Number(e.target.value),
+                            })
+                          }
+                        />
+                      </Field>
+                      <Field
+                        label="Shares"
+                        hint={(s.shares_pct ?? 0) > 0 ? "Disabled — using % of kept." : "Blank = all kept from release."}
+                      >
+                        <Input
+                          type="number"
+                          step="1"
+                          min={0}
+                          value={s.shares ?? ""}
+                          disabled={(s.shares_pct ?? 0) > 0}
+                          onChange={(e) =>
+                            updateScenarioSell(s.id, {
+                              shares: e.target.value === "" ? undefined : Number(e.target.value),
+                            })
+                          }
+                        />
+                      </Field>
+                    </div>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                      <Field label="Or % of kept" hint="When > 0, takes precedence over Shares.">
+                        <SuffixedInput
+                          suffix="%"
+                          type="number"
+                          step="0.5"
+                          min={0}
+                          max={100}
+                          value={s.shares_pct ?? ""}
+                          onChange={(e) =>
+                            updateScenarioSell(s.id, {
+                              shares_pct: e.target.value === "" ? undefined : Number(e.target.value),
                             })
                           }
                         />
@@ -878,7 +1009,7 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
                         <Select
                           value={s.sale_jurisdiction ?? ""}
                           onChange={(e) =>
-                            updateSale(s.id, {
+                            updateScenarioSell(s.id, {
                               sale_jurisdiction:
                                 (e.target.value as typeof SUPPORTED_JURISDICTIONS[number]) || undefined,
                             })
@@ -891,13 +1022,11 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
                         </Select>
                       </Field>
                       <Field
-                        label={(s.release_jurisdiction || (s.release_tax_rate_pct ?? 0) > 0) ? "Cap-gains tax" : "Tax on sale"}
+                        label="Cap-gains tax"
                         hint={
                           s.sale_jurisdiction
-                            ? `Default ${defaultSaleTaxRate(s.sale_jurisdiction)}% in ${s.sale_jurisdiction}`
-                            : (s.release_jurisdiction || (s.release_tax_rate_pct ?? 0) > 0)
-                              ? "Applied to the gain (sale − release)."
-                              : "Applied to gross proceeds (legacy mode)."
+                            ? `Default ${defaultSaleTaxRate(s.sale_jurisdiction)}%`
+                            : "Applied to (sale − release) × shares."
                         }
                       >
                         <SuffixedInput
@@ -906,19 +1035,19 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
                           step="0.5"
                           min={0}
                           max={100}
-                          value={s.tax_rate_pct}
-                          onChange={(e) => updateSale(s.id, { tax_rate_pct: Number(e.target.value) })}
+                          value={s.sale_tax_rate_pct}
+                          onChange={(e) => updateScenarioSell(s.id, { sale_tax_rate_pct: Number(e.target.value) })}
                         />
                       </Field>
                     </div>
+                    <div className="flex justify-end">
+                      <Button size="sm" variant="ghost" onClick={() => removeScenarioSell(s.id)}>
+                        <Trash2 className="h-4 w-4" /> Remove
+                      </Button>
+                    </div>
                   </div>
-                  <div className="flex justify-end">
-                    <Button size="sm" variant="ghost" onClick={() => removeSale(s.id)}>
-                      <Trash2 className="h-4 w-4" /> Remove
-                    </Button>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
