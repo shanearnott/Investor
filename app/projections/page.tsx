@@ -21,7 +21,7 @@ import { useData } from "@/components/data-provider";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Label, Select } from "@/components/ui/input";
 import { convert } from "@/lib/fx";
-import { Property, Scenario, ScenarioSchema, StockHolding, vestedSharesAt } from "@/lib/models";
+import { Property, Scenario, ScenarioSchema, StockHolding, type Settings, vestedSharesAt } from "@/lib/models";
 import {
   buildNetWorthSeries,
   holdingSaleAccrual,
@@ -438,6 +438,12 @@ export default function ProjectionsPage() {
             <Kpi label="Vested equity (post-tax)" valueNum={liquidToday} ccy={ccy} settings={settings} />
             <Kpi label="Unvested equity (post-tax)" valueNum={unvestedToday} ccy={ccy} settings={settings} />
           </div>
+
+          <ScenarioSaleMath
+            chosen={chosen}
+            holdings={data.stocks}
+            settings={{ ...settings, primary_currency: ccy as typeof settings.primary_currency }}
+          />
 
           <Card>
             <CardHeader>
@@ -975,6 +981,106 @@ function NestedAllocationCard({
           <b>Today</b> per asset = vested shares past any second trigger × current price, plus property equity.{" "}
           <b>Coming</b> per asset = the gap between the asset&apos;s value at horizon (in this scenario) and what&apos;s realised today, so it bundles future vesting, post-trigger unlocks, and price growth.
         </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Expandable per-scenario per-sale math panel — mirrors the
+ *  funding/cost breakdown on the projects page so the user can see
+ *  exactly how each planned sale's net cash was derived. */
+function ScenarioSaleMath({
+  chosen,
+  holdings,
+  settings,
+}: {
+  chosen: Scenario[];
+  holdings: StockHolding[];
+  settings: ReturnType<typeof useData>["data"]["settings"];
+}) {
+  const ccy = settings.primary_currency;
+  const perScenario = useMemo(() => {
+    return chosen.map((sc) => {
+      const sales = resolveScenarioSales(sc, holdings, settings as Settings);
+      return { scenario: sc, sales };
+    });
+  }, [chosen, holdings, settings]);
+  const totalSales = perScenario.reduce((n, p) => n + p.sales.length, 0);
+  if (totalSales === 0) return null;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Sale math</CardTitle>
+        <CardDescription>
+          Per-scenario walk-through of every planned sale — share counts,
+          prices, cap-gains, net proceeds. Click a scenario to expand.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {perScenario.map(({ scenario, sales }) => {
+          if (sales.length === 0) return null;
+          return (
+            <details key={scenario.id} className="rounded-md border">
+              <summary className="cursor-pointer px-3 py-2 text-sm font-medium">
+                {scenario.name || "Untitled"}{" "}
+                <span className="ml-2 text-xs text-muted-foreground">
+                  {sales.length} sale{sales.length === 1 ? "" : "s"}
+                </span>
+              </summary>
+              <div className="space-y-3 border-t p-3">
+                {sales.map((r, i) => {
+                  const b = r.breakdown;
+                  if (!b) return null;
+                  return (
+                    <div key={i} className="rounded-md bg-muted/40 px-3 py-2 text-[11px] tabular-nums space-y-0.5">
+                      <div className="flex justify-between font-semibold text-foreground">
+                        <span>
+                          {b.sellName || b.releaseName || `Sell ${i + 1}`}
+                          <span className="ml-2 text-[10px] uppercase tracking-wide text-muted-foreground">
+                            {b.releaseSource} release
+                          </span>
+                        </span>
+                        <span>{b.releaseDate} → {b.sellDate}</span>
+                      </div>
+                      <div className="flex justify-between"><span>Release: gross / kept</span><span>{formatNumber(Math.round(b.grossSharesAtRelease))} / {formatNumber(Math.round(b.keptSharesAtRelease))} sh @ {formatMoney(b.releasePriceNative, b.currency, { fractionDigits: 2 })}</span></div>
+                      {b.incomeTaxAtReleaseNative > 0 ? (
+                        <div className="flex justify-between text-muted-foreground">
+                          <span>
+                            Income tax at release (info)
+                            <span className="ml-1 text-[10px]">— pre-paid via cover, not deducted from sale</span>
+                          </span>
+                          <span>{formatMoney(b.incomeTaxAtReleaseNative, b.currency)}</span>
+                        </div>
+                      ) : null}
+                      <div className="flex justify-between"><span>Shares sold</span><span>{formatNumber(Math.round(b.sharesSold))}</span></div>
+                      <div className="flex justify-between">
+                        <span>
+                          Sale price{" "}
+                          {b.salePriceFromProjection ? (
+                            <span className="text-[10px] text-muted-foreground">(projected)</span>
+                          ) : null}
+                        </span>
+                        <span>{formatMoney(b.salePriceNative, b.currency, { fractionDigits: 2 })}</span>
+                      </div>
+                      <div className="flex justify-between"><span>Gross proceeds</span><span>{formatMoney(b.grossSaleNative, b.currency)}</span></div>
+                      <div className="flex justify-between"><span>Cap-gains tax ({b.capGainsRatePct.toFixed(1)}%)</span><span>−{formatMoney(b.capGainsTaxNative, b.currency)}</span></div>
+                      <div className="flex justify-between font-semibold text-foreground">
+                        <span>Net (native)</span>
+                        <span>{formatMoney(b.netNative, b.currency)}</span>
+                      </div>
+                      {b.currency !== ccy ? (
+                        <div className="flex justify-between text-muted-foreground">
+                          <span>Net in {ccy}</span>
+                          <span>{formatMoney(b.netPrimary, ccy)}</span>
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            </details>
+          );
+        })}
       </CardContent>
     </Card>
   );

@@ -302,6 +302,33 @@ export type ResolvedSale = {
    *  are valued at this net amount for the whole projection, so a sale never
    *  causes a step in the net-worth line. */
   netPrimary: number;
+  /** Optional per-event math breakdown so UI surfaces can show "how we
+   *  got here" without re-deriving anything. Native currency unless
+   *  noted. */
+  breakdown?: {
+    sellName?: string;
+    releaseName?: string;
+    currency: string;
+    releaseSource: "investment" | "scenario";
+    releaseDate: string;
+    sellDate: string;
+    grossSharesAtRelease: number;
+    keptSharesAtRelease: number;
+    releasePriceNative: number;
+    salePriceNative: number;
+    salePriceFromProjection: boolean;
+    sharesSold: number;
+    grossSaleNative: number;
+    capGainsRatePct: number;
+    capGainsTaxNative: number;
+    /** Informational only — the income tax was realised at the
+     *  release via the reduced share count (kept = gross × (1 −
+     *  rate%)), not deducted from the sale's net. Surfaced so the UI
+     *  can explain the lifecycle to the user. */
+    incomeTaxAtReleaseNative: number;
+    netNative: number;
+    netPrimary: number;
+  };
 };
 
 /** Resolve a scenario's planned sales chronologically: cap shares at those
@@ -432,21 +459,46 @@ export function resolveScenarioSales(
           : 0;
     const capGainsTaxNative =
       shares * perShareGain * (Math.max(0, Math.min(100, capGainsRatePct)) / 100);
-    // Income tax: only realised here for scenario-defined releases;
-    // investment releases had it withheld in reality. We pro-rate the
-    // pre-computed release income tax by the share of kept shares being
-    // sold so multi-part sells don't double-pay.
-    const incomeTaxPortion =
+    // Income tax is NOT deducted from the sell's net: for an investment
+    // release it was paid in real life via withholding; for a scenario
+    // release the cover shares already paid it (kept = gross × (1 −
+    // rate%)), so the kept shares pass through to the sale gross
+    // intact. We surface the release-side income tax in the breakdown
+    // for the UI only.
+    const incomeTaxAtReleaseNative =
       ref.incomeTaxAlreadyPaid || ref.keptShares <= 0
         ? 0
         : ref.incomeTaxNative * (shares / ref.keptShares);
-    const netNative = grossNative - capGainsTaxNative - incomeTaxPortion;
+    const netNative = grossNative - capGainsTaxNative;
+    const netPrimary = convert(netNative, h.currency, settings.primary_currency, settings);
+    const scenarioReleaseRef = (scenario.releases ?? []).find((sr) => sr.id === sell.release_ref);
+    const investmentReleaseRef = h.releases?.find((rr) => rr.id === sell.release_ref);
     out.push({
       stockId: ref.stockId,
       releaseDate: ref.releaseDate,
       sellDate,
       shares,
-      netPrimary: convert(netNative, h.currency, settings.primary_currency, settings),
+      netPrimary,
+      breakdown: {
+        sellName: sell.name || undefined,
+        releaseName: scenarioReleaseRef?.name ?? investmentReleaseRef?.name ?? undefined,
+        currency: h.currency,
+        releaseSource: ref.incomeTaxAlreadyPaid ? "investment" : "scenario",
+        releaseDate: ref.releaseDate.toISOString().slice(0, 10),
+        sellDate: sellDate.toISOString().slice(0, 10),
+        grossSharesAtRelease: ref.grossShares,
+        keptSharesAtRelease: ref.keptShares,
+        releasePriceNative: ref.releasePriceNative,
+        salePriceNative: priceNative,
+        salePriceFromProjection: !(sell.sale_price !== undefined && sell.sale_price > 0),
+        sharesSold: shares,
+        grossSaleNative: grossNative,
+        capGainsRatePct: capGainsRatePct,
+        capGainsTaxNative,
+        incomeTaxAtReleaseNative,
+        netNative,
+        netPrimary,
+      },
     });
   }
   return out;
