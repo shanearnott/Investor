@@ -20,6 +20,7 @@ export const SUPPORTED_JURISDICTIONS = [
   "New Zealand",
   "Hong Kong",
   "Ireland",
+  "Cyprus",
   "US-Federal-Only",
 ] as const;
 
@@ -173,6 +174,7 @@ export function defaultSaleTaxRate(jurisdiction: string): number {
     case "Australia": return 22.5;      // 45% marginal × 50% CGT discount
     case "United Kingdom": return 20;   // higher-band CGT
     case "Canada": return 25;           // approx, with 50% inclusion
+    case "Cyprus": return 0;            // 0% on listed-securities capital gains
     default: return 20;
   }
 }
