@@ -39,6 +39,54 @@ function blank(): Scenario {
 export default function ScenariosPage() {
   const { data, setScenarios } = useData();
   const [editing, setEditing] = useState<Scenario | null>(null);
+  const [adding, setAdding] = useState<boolean>(false);
+  const [cloneSourceId, setCloneSourceId] = useState<string>("");
+
+  const startAdd = () => {
+    // No existing scenarios → skip the dialog, start blank.
+    if (data.scenarios.length === 0) {
+      setEditing(blank());
+      return;
+    }
+    setCloneSourceId(data.scenarios[0]?.id ?? "");
+    setAdding(true);
+  };
+  const confirmAddBlank = () => {
+    setAdding(false);
+    setEditing(blank());
+  };
+  const confirmAddClone = () => {
+    const src = data.scenarios.find((s) => s.id === cloneSourceId);
+    if (!src) {
+      setAdding(false);
+      return;
+    }
+    // Fresh ids on the parent + every nested release/sell, and remap
+    // sell.release_ref onto the new release ids so the clone is fully
+    // independent of the source. Sells that point to investment
+    // releases (anything not in src.releases) keep their existing ref.
+    const releaseIdMap = new Map<string, string>();
+    const clonedReleases = (src.releases ?? []).map((r) => {
+      const newReleaseId = newId();
+      releaseIdMap.set(r.id, newReleaseId);
+      return { ...r, id: newReleaseId };
+    });
+    const clonedSells = (src.sells ?? []).map((s) => ({
+      ...s,
+      id: newId(),
+      release_ref: releaseIdMap.get(s.release_ref) ?? s.release_ref,
+    }));
+    const cloned: Scenario = {
+      ...src,
+      id: newId(),
+      name: `${src.name || "Scenario"} (copy)`,
+      releases: clonedReleases,
+      sells: clonedSells,
+      stock_sales: [],
+    };
+    setAdding(false);
+    setEditing(cloned);
+  };
 
   const save = async (s: Scenario) => {
     const i = data.scenarios.findIndex((x) => x.id === s.id);
@@ -57,10 +105,46 @@ export default function ScenariosPage() {
     <div className="mx-auto max-w-5xl space-y-4">
       <div className="flex items-center justify-between gap-2">
         <h1 className="text-xl font-semibold">Scenarios</h1>
-        <Button onClick={() => setEditing(blank())}>
+        <Button onClick={startAdd}>
           <Plus className="h-4 w-4" /> Add scenario
         </Button>
       </div>
+
+      {adding ? (
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center bg-background/70 backdrop-blur"
+          onClick={() => setAdding(false)}
+        >
+          <div
+            className="w-[min(420px,90vw)] rounded-lg border bg-card p-4 space-y-3 shadow-lg"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-base font-semibold">Add scenario</h2>
+            <p className="text-xs text-muted-foreground">
+              Start a blank scenario, or clone an existing one (assumptions,
+              releases and sells get copied with fresh ids).
+            </p>
+            <div className="space-y-2">
+              <Label className="text-xs">Clone from</Label>
+              <Select
+                value={cloneSourceId}
+                onChange={(e) => setCloneSourceId(e.target.value)}
+              >
+                {data.scenarios.map((s) => (
+                  <option key={s.id} value={s.id}>{s.name || "Untitled"}</option>
+                ))}
+              </Select>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="ghost" onClick={() => setAdding(false)}>Cancel</Button>
+              <Button variant="outline" onClick={confirmAddBlank}>Start blank</Button>
+              <Button onClick={confirmAddClone} disabled={!cloneSourceId}>
+                Clone selected
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <p className="text-sm text-muted-foreground">
         Each scenario is a set of growth assumptions. Use them in <b>Projections</b> and <b>Projects</b>.
