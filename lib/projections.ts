@@ -18,6 +18,8 @@ import {
   type Scenario,
   type Settings,
   type StockHolding,
+  type StockHoldingRelease,
+  type ScenarioRelease,
 } from "./models";
 
 export type ProjectionRow = {
@@ -321,11 +323,15 @@ export type ResolvedSale = {
     grossSaleNative: number;
     capGainsRatePct: number;
     capGainsTaxNative: number;
-    /** Informational only — the income tax was realised at the
-     *  release via the reduced share count (kept = gross × (1 −
-     *  rate%)), not deducted from the sale's net. Surfaced so the UI
-     *  can explain the lifecycle to the user. */
+    /** Informational only — for RSU/Common the income tax was
+     *  realised at the release via the reduced share count (kept =
+     *  gross × (1 − rate%)), not deducted from the sale's net.
+     *  Surfaced so the UI can explain the lifecycle to the user. */
     incomeTaxAtReleaseNative: number;
+    /** Stock Options only: strike paid at exercise (in native
+     *  currency). Folded into netNative since the projection doesn't
+     *  track cash outflows separately. */
+    strikePaidNative?: number;
     netNative: number;
     netPrimary: number;
   };
@@ -354,65 +360,134 @@ type ResolvedRelease = {
   incomeTaxNative: number;
 };
 
+/** Walk every release for the stock chronologically so we can:
+ *  - cap each release's gross by what's still vested-but-unreleased
+ *    (no double counting against earlier releases on the same stock);
+ *  - subtract any investment sells from kept-shares of an investment
+ *    release (so a scenario sell can't draw shares the user already
+ *    sold IRL);
+ *  - apply option-aware math: for Stock Options, kept = gross (no
+ *    share withholding; tax + strike are cash outflows) and income
+ *    tax is computed on the intrinsic spread, not the full FMV. */
 function resolveReleasePool(
   scenario: Scenario,
   holdings: StockHolding[],
   settings: Settings,
 ): Map<string, ResolvedRelease> {
   const pool = new Map<string, ResolvedRelease>();
-  const holdingsById = new Map(holdings.map((h) => [h.id, h]));
-  // Investment-side releases recorded against each holding — income tax
-  // is already paid via the recorded withholding.
+  type Entry =
+    | { kind: "investment"; date: Date; release: StockHoldingRelease }
+    | { kind: "scenario"; date: Date; release: ScenarioRelease };
   for (const h of holdings) {
+    const entries: Entry[] = [];
     for (const r of h.releases ?? []) {
       const d = parseISO(r.release_date);
-      if (!d) continue;
-      pool.set(r.id, {
-        stockId: h.id,
-        holding: h,
-        releaseDate: d,
-        releasePriceNative: r.release_price,
-        grossShares: r.shares,
-        keptShares: releaseKeptShares(r),
-        incomeTaxAlreadyPaid: true,
-        incomeTaxNative: 0,
-      });
+      if (d) entries.push({ kind: "investment", date: d, release: r });
     }
-  }
-  // Scenario-defined releases — model income tax at release_date.
-  for (const sr of scenario.releases ?? []) {
-    const h = holdingsById.get(sr.stock_id);
-    const d = parseISO(sr.release_date);
-    if (!h || !d) continue;
+    for (const sr of scenario.releases ?? []) {
+      if (sr.stock_id !== h.id) continue;
+      const d = parseISO(sr.release_date);
+      if (d) entries.push({ kind: "scenario", date: d, release: sr });
+    }
+    if (entries.length === 0) continue;
+    entries.sort((a, b) => a.date.getTime() - b.date.getTime());
+
+    // Tally investment sells per release so kept can be reduced.
+    const investSellsByRelease = new Map<string, number>();
+    const investReleases = new Map<string, StockHoldingRelease>(
+      (h.releases ?? []).map((r) => [r.id, r]),
+    );
+    for (const s of h.sells ?? []) {
+      const release = investReleases.get(s.release_id) ?? null;
+      const sold = sellSharesFor(s, release);
+      if (sold <= 0) continue;
+      investSellsByRelease.set(
+        s.release_id,
+        (investSellsByRelease.get(s.release_id) ?? 0) + sold,
+      );
+    }
+
     const adjusted = applyScenarioTermination(h, scenario);
-    const vestedAtRelease = vestedSharesAt(adjusted, d);
-    const releasePriceNative =
-      sr.release_price !== undefined && sr.release_price > 0
-        ? sr.release_price
-        : projectStockValueAt(h, scenario, d, settings.primary_currency, settings).projected_price;
-    const gross =
-      sr.shares_pct !== undefined && sr.shares_pct > 0
-        ? vestedAtRelease * (Math.min(100, Math.max(0, sr.shares_pct)) / 100)
-        : sr.shares;
-    const releaseRatePct =
-      sr.release_tax_rate_pct !== undefined
-        ? sr.release_tax_rate_pct
-        : sr.release_jurisdiction
-          ? RSU_DEFAULT_TAX_RATES[sr.release_jurisdiction] ?? 0
-          : 0;
-    const withholdingPct = Math.max(0, Math.min(100, releaseRatePct)) / 100;
-    const kept = Math.max(0, gross * (1 - withholdingPct));
-    const incomeTaxNative = gross * releasePriceNative * withholdingPct;
-    pool.set(sr.id, {
-      stockId: h.id,
-      holding: h,
-      releaseDate: d,
-      releasePriceNative,
-      grossShares: gross,
-      keptShares: kept,
-      incomeTaxAlreadyPaid: false,
-      incomeTaxNative,
-    });
+    const isOptions = h.equity_type === "Stock Options";
+    const strike = isOptions ? h.strike_price ?? 0 : 0;
+
+    // Raw tranche-vested count at a date — no release/sell deductions
+    // (we subtract releasedGrossCum manually as we walk forward).
+    const trancheVestedAt = (d: Date) => {
+      let n = adjusted.shares_owned_outright;
+      for (const t of adjusted.tranches) {
+        for (const ev of t.vest_events) {
+          const vd = parseISO(ev.vest_date);
+          if (vd && vd <= d) n += ev.shares;
+        }
+      }
+      return n;
+    };
+
+    // Running tally of gross shares already released on this stock as
+    // we walk forward chronologically.
+    let releasedGrossCum = 0;
+    for (const e of entries) {
+      if (e.kind === "investment") {
+        const r = e.release;
+        // Investment-side releases are facts — gross is whatever the
+        // user logged. We still subtract it from the available pool so
+        // later scenario releases don't double-count.
+        const investSold = investSellsByRelease.get(r.id) ?? 0;
+        const keptShares = Math.max(0, releaseKeptShares(r) - investSold);
+        pool.set(r.id, {
+          stockId: h.id,
+          holding: h,
+          releaseDate: e.date,
+          releasePriceNative: r.release_price,
+          grossShares: r.shares,
+          keptShares,
+          incomeTaxAlreadyPaid: true,
+          incomeTaxNative: 0,
+        });
+        releasedGrossCum += r.shares;
+      } else {
+        const sr = e.release;
+        const remaining = Math.max(0, trancheVestedAt(e.date) - releasedGrossCum);
+        const releasePriceNative =
+          sr.release_price !== undefined && sr.release_price > 0
+            ? sr.release_price
+            : projectStockValueAt(h, scenario, e.date, settings.primary_currency, settings).projected_price;
+        const requestedGross =
+          sr.shares_pct !== undefined && sr.shares_pct > 0
+            ? remaining * (Math.min(100, Math.max(0, sr.shares_pct)) / 100)
+            : sr.shares;
+        const gross = Math.min(Math.max(0, requestedGross), remaining);
+        const releaseRatePct =
+          sr.release_tax_rate_pct !== undefined
+            ? sr.release_tax_rate_pct
+            : sr.release_jurisdiction
+              ? RSU_DEFAULT_TAX_RATES[sr.release_jurisdiction] ?? 0
+              : 0;
+        const withholdingPct = Math.max(0, Math.min(100, releaseRatePct)) / 100;
+        // Options: tax is on intrinsic spread; user keeps every share
+        // (strike + tax come from cash, not withheld shares).
+        // RSU/Common: tax is on FMV; shares are withheld at rate.
+        const taxablePerShare = isOptions
+          ? Math.max(0, releasePriceNative - strike)
+          : releasePriceNative;
+        const kept = isOptions
+          ? gross
+          : Math.max(0, gross * (1 - withholdingPct));
+        const incomeTaxNative = gross * taxablePerShare * withholdingPct;
+        pool.set(sr.id, {
+          stockId: h.id,
+          holding: h,
+          releaseDate: e.date,
+          releasePriceNative,
+          grossShares: gross,
+          keptShares: kept,
+          incomeTaxAlreadyPaid: false,
+          incomeTaxNative,
+        });
+        releasedGrossCum += gross;
+      }
+    }
   }
   return pool;
 }
@@ -472,11 +547,18 @@ export function resolveScenarioSales(
         : sell.sale_jurisdiction
           ? defaultSaleTaxRate(sell.sale_jurisdiction)
           : 0;
+    // For Stock Options, the user paid strike per share at exercise
+    // (i.e. at release time). We fold that into the sale net since
+    // the projection doesn't track cash outflows separately —
+    // simpler than introducing a dedicated cash-out bucket and
+    // directionally correct.
+    const isOptions = h.equity_type === "Stock Options";
+    const strikeNative = isOptions ? shares * (h.strike_price ?? 0) : 0;
     const grossNative = shares * priceNative;
     const perShareGain = Math.max(0, priceNative - ref.releasePriceNative);
     const capGainsTaxNative =
       shares * perShareGain * (Math.max(0, Math.min(100, capGainsRatePct)) / 100);
-    const netNative = grossNative - capGainsTaxNative;
+    const netNative = grossNative - capGainsTaxNative - strikeNative;
     const netPrimary = convert(netNative, h.currency, settings.primary_currency, settings);
     const incomeTaxAtReleaseNative =
       ref.incomeTaxAlreadyPaid || ref.keptShares <= 0
@@ -505,6 +587,7 @@ export function resolveScenarioSales(
         capGainsRatePct: capGainsRatePct,
         capGainsTaxNative,
         incomeTaxAtReleaseNative,
+        strikePaidNative: isOptions ? strikeNative : undefined,
         netNative,
         netPrimary,
       },
