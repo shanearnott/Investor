@@ -1002,11 +1002,39 @@ function ScenarioSaleMath({
   const perScenario = useMemo(() => {
     return chosen.map((sc) => {
       const sales = resolveScenarioSales(sc, holdings, settings as Settings);
-      return { scenario: sc, sales };
+      // Project every holding to the scenario horizon and net off the
+      // scenario's sales so the user can see what's left in their pile
+      // at the end of the modelled period.
+      const now = new Date();
+      const horizon = new Date(
+        Date.UTC(now.getUTCFullYear() + sc.horizon_years, now.getUTCMonth(), 1),
+      );
+      const soldSharesByStock = new Map<string, number>();
+      for (const sale of sales) {
+        soldSharesByStock.set(
+          sale.stockId,
+          (soldSharesByStock.get(sale.stockId) ?? 0) + sale.shares,
+        );
+      }
+      const remaining = holdings
+        .map((h) => {
+          const v = projectStockValueAt(h, sc, horizon, ccy, settings as Settings);
+          const sold = soldSharesByStock.get(h.id) ?? 0;
+          const freeVested = Math.max(0, v.shares_vested - sold);
+          const liquidFree =
+            v.shares_vested > 0 ? v.liquid * (freeVested / v.shares_vested) : 0;
+          const shares = freeVested + v.shares_unvested;
+          const value = liquidFree + v.unvested;
+          return { holding: h, shares, value, projectedPrice: v.projected_price };
+        })
+        .filter((x) => x.shares > 0.5 || x.value > 0.5);
+      const remainingTotal = remaining.reduce((n, x) => n + x.value, 0);
+      return { scenario: sc, sales, horizon, remaining, remainingTotal };
     });
-  }, [chosen, holdings, settings]);
+  }, [chosen, holdings, settings, ccy]);
   const totalSales = perScenario.reduce((n, p) => n + p.sales.length, 0);
-  if (totalSales === 0) return null;
+  const totalRemaining = perScenario.reduce((n, p) => n + p.remaining.length, 0);
+  if (totalSales === 0 && totalRemaining === 0) return null;
   return (
     <Card>
       <CardHeader>
@@ -1017,14 +1045,19 @@ function ScenarioSaleMath({
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-2">
-        {perScenario.map(({ scenario, sales }) => {
-          if (sales.length === 0) return null;
+        {perScenario.map(({ scenario, sales, horizon, remaining, remainingTotal }) => {
+          if (sales.length === 0 && remaining.length === 0) return null;
           return (
             <details key={scenario.id} className="rounded-md border">
               <summary className="cursor-pointer px-3 py-2 text-sm font-medium">
                 {scenario.name || "Untitled"}{" "}
                 <span className="ml-2 text-xs text-muted-foreground">
                   {sales.length} sale{sales.length === 1 ? "" : "s"}
+                  {remaining.length > 0 ? (
+                    <>
+                      {" "}· remaining {formatMoney(remainingTotal, ccy)}
+                    </>
+                  ) : null}
                 </span>
               </summary>
               <div className="space-y-3 border-t p-3">
@@ -1083,6 +1116,29 @@ function ScenarioSaleMath({
                     </div>
                   );
                 })}
+                {remaining.length > 0 ? (
+                  <div className="rounded-md bg-muted/40 px-3 py-2 text-[11px] tabular-nums space-y-0.5">
+                    <div className="flex justify-between font-semibold text-foreground">
+                      <span>Remaining unsold at horizon</span>
+                      <span>{horizon.toISOString().slice(0, 10)}</span>
+                    </div>
+                    {remaining.map(({ holding, shares, value, projectedPrice }) => (
+                      <div key={holding.id} className="flex justify-between">
+                        <span>
+                          {holding.ticker || holding.company_name || holding.id}
+                          <span className="ml-1 text-[10px] text-muted-foreground">
+                            {formatNumber(Math.round(shares))} sh @ {formatMoney(projectedPrice, holding.currency, { fractionDigits: 2 })}
+                          </span>
+                        </span>
+                        <span>{formatMoney(value, ccy)}</span>
+                      </div>
+                    ))}
+                    <div className="flex justify-between font-semibold text-foreground border-t pt-1 mt-1">
+                      <span>Total remaining</span>
+                      <span>{formatMoney(remainingTotal, ccy)}</span>
+                    </div>
+                  </div>
+                ) : null}
               </div>
             </details>
           );
