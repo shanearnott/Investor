@@ -424,82 +424,121 @@ export function resolveScenarioSales(
 ): ResolvedSale[] {
   const out: ResolvedSale[] = [];
   const releasePool = resolveReleasePool(scenario, holdings, settings);
-  // Track how many kept shares each release has already had earmarked
-  // by earlier sells so multiple sells against the same release don't
-  // oversell.
-  const sellEarmarked: Record<string, number> = {};
+
+  // Per-stock FIFO pool of release "lots" (kept shares with their
+  // release-date and basis). Drained as sells settle so the next sell
+  // only sees what's still on hand. Built lazily and cached.
+  type Lot = ResolvedRelease & { id: string; remaining: number; releaseSource: "investment" | "scenario" };
+  const poolByStock = new Map<string, Lot[]>();
+  const ensurePool = (stockId: string): Lot[] => {
+    const cached = poolByStock.get(stockId);
+    if (cached) return cached;
+    const lots: Lot[] = [];
+    for (const [id, ref] of releasePool) {
+      if (ref.stockId !== stockId) continue;
+      lots.push({
+        ...ref,
+        id,
+        remaining: ref.keptShares,
+        releaseSource: ref.incomeTaxAlreadyPaid ? "investment" : "scenario",
+      });
+    }
+    lots.sort((a, b) => a.releaseDate.getTime() - b.releaseDate.getTime());
+    poolByStock.set(stockId, lots);
+    return lots;
+  };
+
+  const sellNameOf = (id: string, fallback: string) => {
+    const scenarioRel = (scenario.releases ?? []).find((sr) => sr.id === id);
+    if (scenarioRel?.name) return scenarioRel.name;
+    for (const h of holdings) {
+      const inv = h.releases?.find((r) => r.id === id);
+      if (inv?.name) return inv.name;
+    }
+    return fallback;
+  };
+
   for (const sell of [...(scenario.sells ?? [])].sort((a, b) => a.sell_date.localeCompare(b.sell_date))) {
-    const ref = releasePool.get(sell.release_ref);
-    if (!ref) continue;
+    const stockId = sell.stock_id;
+    if (!stockId) continue;
+    const h = holdings.find((x) => x.id === stockId);
+    if (!h) continue;
     const sellDate = parseISO(sell.sell_date);
     if (!sellDate) continue;
-    const availableKept = Math.max(0, ref.keptShares - (sellEarmarked[sell.release_ref] ?? 0));
+
+    const pool = ensurePool(stockId);
+    const available = pool.filter((l) => l.releaseDate <= sellDate && l.remaining > 0);
+    const totalAvailable = available.reduce((s, l) => s + l.remaining, 0);
+    if (totalAvailable <= 0) continue;
+
     const requested =
       sell.shares_pct !== undefined && sell.shares_pct > 0
-        ? ref.keptShares * (Math.min(100, Math.max(0, sell.shares_pct)) / 100)
+        ? totalAvailable * (Math.min(100, Math.max(0, sell.shares_pct)) / 100)
         : sell.shares !== undefined && sell.shares > 0
           ? sell.shares
-          : availableKept;
-    const shares = Math.min(requested, availableKept);
-    if (shares <= 0) continue;
-    sellEarmarked[sell.release_ref] = (sellEarmarked[sell.release_ref] ?? 0) + shares;
+          : totalAvailable;
+    let needed = Math.min(requested, totalAvailable);
+    if (needed <= 0) continue;
 
-    const h = ref.holding;
     const priceNative =
       sell.sale_price !== undefined && sell.sale_price > 0
         ? sell.sale_price
         : projectStockValueAt(h, scenario, sellDate, settings.primary_currency, settings).projected_price;
-    const grossNative = shares * priceNative;
-    const perShareGain = Math.max(0, priceNative - ref.releasePriceNative);
+    const salePriceFromProjection = !(sell.sale_price !== undefined && sell.sale_price > 0);
     const capGainsRatePct =
       sell.sale_tax_rate_pct > 0
         ? sell.sale_tax_rate_pct
         : sell.sale_jurisdiction
           ? defaultSaleTaxRate(sell.sale_jurisdiction)
           : 0;
-    const capGainsTaxNative =
-      shares * perShareGain * (Math.max(0, Math.min(100, capGainsRatePct)) / 100);
-    // Income tax is NOT deducted from the sell's net: for an investment
-    // release it was paid in real life via withholding; for a scenario
-    // release the cover shares already paid it (kept = gross × (1 −
-    // rate%)), so the kept shares pass through to the sale gross
-    // intact. We surface the release-side income tax in the breakdown
-    // for the UI only.
-    const incomeTaxAtReleaseNative =
-      ref.incomeTaxAlreadyPaid || ref.keptShares <= 0
-        ? 0
-        : ref.incomeTaxNative * (shares / ref.keptShares);
-    const netNative = grossNative - capGainsTaxNative;
-    const netPrimary = convert(netNative, h.currency, settings.primary_currency, settings);
-    const scenarioReleaseRef = (scenario.releases ?? []).find((sr) => sr.id === sell.release_ref);
-    const investmentReleaseRef = h.releases?.find((rr) => rr.id === sell.release_ref);
-    out.push({
-      stockId: ref.stockId,
-      releaseDate: ref.releaseDate,
-      sellDate,
-      shares,
-      netPrimary,
-      breakdown: {
-        sellName: sell.name || undefined,
-        releaseName: scenarioReleaseRef?.name ?? investmentReleaseRef?.name ?? undefined,
-        currency: h.currency,
-        releaseSource: ref.incomeTaxAlreadyPaid ? "investment" : "scenario",
-        releaseDate: ref.releaseDate.toISOString().slice(0, 10),
-        sellDate: sellDate.toISOString().slice(0, 10),
-        grossSharesAtRelease: ref.grossShares,
-        keptSharesAtRelease: ref.keptShares,
-        releasePriceNative: ref.releasePriceNative,
-        salePriceNative: priceNative,
-        salePriceFromProjection: !(sell.sale_price !== undefined && sell.sale_price > 0),
-        sharesSold: shares,
-        grossSaleNative: grossNative,
-        capGainsRatePct: capGainsRatePct,
-        capGainsTaxNative,
-        incomeTaxAtReleaseNative,
-        netNative,
+
+    // FIFO-allocate across lots. Each lot's slice emits its own
+    // ResolvedSale so holdingSaleAccrual sees one entry per (release,
+    // sell) combination — multiple lots with the same sell_date just
+    // sum into the same cash bar.
+    for (const lot of available) {
+      if (needed <= 0) break;
+      const take = Math.min(lot.remaining, needed);
+      lot.remaining -= take;
+      needed -= take;
+      const grossNative = take * priceNative;
+      const perShareGain = Math.max(0, priceNative - lot.releasePriceNative);
+      const capGainsTaxNative =
+        take * perShareGain * (Math.max(0, Math.min(100, capGainsRatePct)) / 100);
+      const netNative = grossNative - capGainsTaxNative;
+      const netPrimary = convert(netNative, h.currency, settings.primary_currency, settings);
+      const incomeTaxAtReleaseNative =
+        lot.incomeTaxAlreadyPaid || lot.keptShares <= 0
+          ? 0
+          : lot.incomeTaxNative * (take / lot.keptShares);
+      out.push({
+        stockId,
+        releaseDate: lot.releaseDate,
+        sellDate,
+        shares: take,
         netPrimary,
-      },
-    });
+        breakdown: {
+          sellName: sell.name || undefined,
+          releaseName: sellNameOf(lot.id, lot.releaseDate.toISOString().slice(0, 10)),
+          currency: h.currency,
+          releaseSource: lot.releaseSource,
+          releaseDate: lot.releaseDate.toISOString().slice(0, 10),
+          sellDate: sellDate.toISOString().slice(0, 10),
+          grossSharesAtRelease: lot.grossShares,
+          keptSharesAtRelease: lot.keptShares,
+          releasePriceNative: lot.releasePriceNative,
+          salePriceNative: priceNative,
+          salePriceFromProjection,
+          sharesSold: take,
+          grossSaleNative: grossNative,
+          capGainsRatePct: capGainsRatePct,
+          capGainsTaxNative,
+          incomeTaxAtReleaseNative,
+          netNative,
+          netPrimary,
+        },
+      });
+    }
   }
   return out;
 }

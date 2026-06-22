@@ -23,6 +23,7 @@ import {
   type Settings,
   migrateHoldingSales,
   migrateScenarioSales,
+  migrateScenarioSellStockIds,
   type StockHolding,
 } from "@/lib/models";
 import {
@@ -226,6 +227,19 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         let changed = false;
         scenarios = scenarios.map((sc) => {
           const migrated = migrateScenarioSales(sc);
+          if (migrated !== sc) changed = true;
+          return migrated;
+        });
+        if (changed) await saveCollection("scenarios", scenarios);
+      }
+
+      // v5: derive scenario sell.stock_id from the legacy release_ref so
+      // the engine can FIFO-allocate against the stock's kept pool
+      // rather than a specific release.
+      {
+        let changed = false;
+        scenarios = scenarios.map((sc) => {
+          const migrated = migrateScenarioSellStockIds(sc, stocks);
           if (migrated !== sc) changed = true;
           return migrated;
         });

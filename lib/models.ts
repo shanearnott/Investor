@@ -360,14 +360,20 @@ export const ScenarioSchema = z.object({
     release_jurisdiction: z.enum(SUPPORTED_JURISDICTIONS).optional(),
     release_tax_rate_pct: z.number().min(0).max(100).optional(),
   })).default([]),
-  /** Scenario sells. Each references a release by id — either an
-   *  investment release (`h.releases[].id`) or a scenario release
-   *  (`scenario.releases[].id`). Cap-gains is on the gain between the
-   *  referenced release's price and `sale_price`. */
+  /** Scenario sells. Each sell removes shares from a stock's pool of
+   *  released-and-kept shares at `sell_date` — i.e. FIFO across every
+   *  release of that stock whose `release_date` has passed by then
+   *  (investments + scenario). `shares_pct` is "% of held kept pool",
+   *  `shares` is an explicit count; blank/0 means sell everything
+   *  currently held. `release_ref` is legacy and retained only so old
+   *  data can be migrated to `stock_id` on first load. */
   sells: z.array(z.object({
     id: z.string(),
     name: z.string().default(""),
-    release_ref: z.string(),
+    /** Optional — set by migration from release_ref, then primary
+     *  going forward. Engine skips sells without a stock_id. */
+    stock_id: z.string().optional(),
+    release_ref: z.string().optional(),
     sell_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     sale_price: z.number().nonnegative().optional(),
     shares: z.number().nonnegative().optional(),
@@ -379,6 +385,33 @@ export const ScenarioSchema = z.object({
 export type StockSale = z.infer<typeof ScenarioSchema>["stock_sales"][number];
 export type ScenarioRelease = z.infer<typeof ScenarioSchema>["releases"][number];
 export type ScenarioSell = z.infer<typeof ScenarioSchema>["sells"][number];
+
+/** Populate `stock_id` on any sell that's still using the legacy
+ *  `release_ref` field by looking up the referenced release across
+ *  investments + this scenario's own releases. Idempotent: a no-op
+ *  once every sell has a stock_id. */
+export function migrateScenarioSellStockIds(
+  s: z.infer<typeof ScenarioSchema>,
+  holdings: StockHolding[],
+): z.infer<typeof ScenarioSchema> {
+  const sells = s.sells ?? [];
+  if (sells.every((x) => !!x.stock_id)) return s;
+  const releaseToStock = new Map<string, string>();
+  for (const h of holdings) {
+    for (const r of h.releases ?? []) releaseToStock.set(r.id, h.id);
+  }
+  for (const sr of s.releases ?? []) releaseToStock.set(sr.id, sr.stock_id);
+  let changed = false;
+  const next = sells.map((sell) => {
+    if (sell.stock_id) return sell;
+    const sid = sell.release_ref ? releaseToStock.get(sell.release_ref) : undefined;
+    if (!sid) return sell;
+    changed = true;
+    return { ...sell, stock_id: sid };
+  });
+  if (!changed) return s;
+  return { ...s, sells: next };
+}
 
 /** One-shot migration from the legacy `stock_sales` array on a scenario
  *  to the decoupled `releases` + `sells` arrays. Each combined entry

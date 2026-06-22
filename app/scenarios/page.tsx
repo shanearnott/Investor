@@ -74,7 +74,7 @@ export default function ScenariosPage() {
     const clonedSells = (src.sells ?? []).map((s) => ({
       ...s,
       id: newId(),
-      release_ref: releaseIdMap.get(s.release_ref) ?? s.release_ref,
+      release_ref: s.release_ref ? (releaseIdMap.get(s.release_ref) ?? s.release_ref) : undefined,
     }));
     const cloned: Scenario = {
       ...src,
@@ -351,19 +351,17 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
     setD((p) => ({
       ...p,
       releases: (p.releases ?? []).filter((r) => r.id !== id),
-      // Drop any sells that referenced this release so we don't dangle FKs.
-      sells: (p.sells ?? []).filter((s) => s.release_ref !== id),
+      // Sells are now stock-based (FIFO pool), so removing a release
+      // simply shrinks the available kept pool — no sell deletion.
     }));
   };
 
   const addScenarioSell = () => {
-    // Default the release_ref to the first available release across
-    // both pools — investments first, then this scenario's own releases.
-    const firstInvestmentRelease = data.stocks.flatMap((h) => h.releases ?? [])[0];
+    // Default to the first stock — sells now operate on a stock-level
+    // FIFO pool of released-and-kept shares.
+    const firstStock = data.stocks[0];
     setD((p) => {
-      const defaultRef =
-        firstInvestmentRelease?.id ?? (p.releases ?? [])[0]?.id ?? "";
-      if (!defaultRef) return p;
+      if (!firstStock) return p;
       return {
         ...p,
         sells: [
@@ -371,7 +369,7 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
           {
             id: newId(),
             name: "",
-            release_ref: defaultRef,
+            stock_id: firstStock.id,
             sell_date: new Date().toISOString().slice(0, 10),
             sale_tax_rate_pct: 0,
           },
@@ -383,7 +381,8 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
     id: string,
     patch: Partial<{
       name: string;
-      release_ref: string;
+      stock_id: string;
+      release_ref: string | undefined;
       sell_date: string;
       sale_price: number | undefined;
       shares: number | undefined;
@@ -981,38 +980,28 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
               size="sm"
               variant="outline"
               onClick={addScenarioSell}
-              disabled={data.stocks.flatMap((h) => h.releases ?? []).length === 0 && (d.releases ?? []).length === 0}
+              disabled={data.stocks.length === 0}
             >
               <Plus className="h-3.5 w-3.5" /> Add sell
             </Button>
           </div>
           <p className="text-[11px] text-muted-foreground">
-            Each sell references one release event — either an investment
-            release (above on the holding) or a scenario release just
-            defined. Cap-gains tax is on the gain between the referenced
-            release&apos;s price and the sell price.
+            Each sell removes shares from the chosen stock&apos;s pool of
+            released-and-kept shares at the sell date. Shares are drawn
+            FIFO across every release that has happened by then —
+            investments first by date, then scenario releases. Cap-gains
+            is computed per lot against that release&apos;s price; the math
+            panel on Projections shows the full allocation.
           </p>
           {(d.sells ?? []).length === 0 ? (
             <p className="text-[11px] text-muted-foreground">
-              {data.stocks.flatMap((h) => h.releases ?? []).length === 0 && (d.releases ?? []).length === 0
-                ? "Add a release event first."
+              {data.stocks.length === 0
+                ? "Add a stock first."
                 : "No scenario sells."}
             </p>
           ) : (
             <div className="space-y-2">
               {(d.sells ?? []).map((s) => {
-                const releaseOptions: { id: string; label: string }[] = [];
-                for (const h of data.stocks) {
-                  for (const r of h.releases ?? []) {
-                    const tag = `Investments / ${h.ticker || h.company_name || h.id}`;
-                    releaseOptions.push({ id: r.id, label: `${tag} · ${r.name || r.release_date} · ${r.shares} sh` });
-                  }
-                }
-                for (const r of d.releases ?? []) {
-                  const stock = data.stocks.find((h) => h.id === r.stock_id);
-                  const tag = `Scenario / ${stock?.ticker || stock?.company_name || r.stock_id}`;
-                  releaseOptions.push({ id: r.id, label: `${tag} · ${r.name || r.release_date} · ${r.shares} sh` });
-                }
                 return (
                   <div key={s.id} className="rounded-md border p-3 space-y-3">
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -1023,13 +1012,16 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
                           onChange={(e) => updateScenarioSell(s.id, { name: e.target.value })}
                         />
                       </Field>
-                      <Field label="Linked release" hint="Provides the basis and original price.">
+                      <Field label="Stock" hint="Sells draw from this stock's released-kept pool.">
                         <Select
-                          value={s.release_ref}
-                          onChange={(e) => updateScenarioSell(s.id, { release_ref: e.target.value })}
+                          value={s.stock_id ?? ""}
+                          onChange={(e) => updateScenarioSell(s.id, { stock_id: e.target.value })}
                         >
-                          {releaseOptions.map((o) => (
-                            <option key={o.id} value={o.id}>{o.label}</option>
+                          {data.stocks.length === 0 ? (
+                            <option value="">(no stocks)</option>
+                          ) : null}
+                          {data.stocks.map((h) => (
+                            <option key={h.id} value={h.id}>{h.ticker || h.company_name || h.id}</option>
                           ))}
                         </Select>
                       </Field>
