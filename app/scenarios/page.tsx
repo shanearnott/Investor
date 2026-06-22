@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Copy, Plus, Trash2 } from "lucide-react";
 
 import { useData } from "@/components/data-provider";
@@ -8,7 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Label, Select, Textarea } from "@/components/ui/input";
 import { defaultSaleTaxRate, newId, RSU_DEFAULT_TAX_RATES, Scenario, ScenarioSchema, SUPPORTED_JURISDICTIONS } from "@/lib/models";
-import { cn, formatMoney } from "@/lib/utils";
+import { buildNetWorthSeries } from "@/lib/projections";
+import { cn, formatMoney, formatMoneyCompact } from "@/lib/utils";
 
 /** Scroll an inline edit form into view on mount. */
 function useScrollIntoViewOnMount<T extends HTMLElement>() {
@@ -156,6 +157,10 @@ export default function ScenariosPage() {
       <p className="text-sm text-muted-foreground">
         Each scenario is a set of growth assumptions. Use them in <b>Projections</b> and <b>Projects</b>.
       </p>
+
+      {data.scenarios.length > 1 ? (
+        <ScenariosSummary onEdit={(s) => setEditing({ ...s })} />
+      ) : null}
 
       <div className="grid gap-3">
         {data.scenarios.length === 0 ? (
@@ -1237,5 +1242,109 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
       {children}
       {hint ? <p className="text-[11px] text-muted-foreground">{hint}</p> : null}
     </div>
+  );
+}
+
+/** Compact comparison table — one row per scenario, terminal net worth at
+ *  the scenario's own horizon for the killer at-a-glance signal. Click a
+ *  row to jump into edit. */
+function ScenariosSummary({ onEdit }: { onEdit: (s: Scenario) => void }) {
+  const { data } = useData();
+  const ccy = data.settings.primary_currency;
+  const rows = useMemo(() => {
+    return data.scenarios.map((s) => {
+      // Snap to month-start so step boundaries line up with the projection
+      // engine's monthStart logic — keeps the terminal row deterministic.
+      const start = new Date();
+      const startMonth = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1));
+      const series = buildNetWorthSeries({
+        holdings: data.stocks,
+        properties: data.properties,
+        scenario: s,
+        settings: data.settings,
+        config: { horizon_years: s.horizon_years, step_months: 1, start: startMonth },
+      });
+      const last = series[series.length - 1];
+      const customisations =
+        Object.keys(s.stock_overrides ?? {}).length
+        + Object.keys(s.property_overrides ?? {}).length;
+      return {
+        scenario: s,
+        terminal: last?.total ?? 0,
+        terminalReal: last?.real_total,
+        liquid: last?.liquid_equity_total ?? 0,
+        property: last?.property_equity_total ?? 0,
+        cash: (last?.cash_total ?? 0) + (last?.pending_sale_total ?? 0),
+        customisations,
+        releases: (s.releases ?? []).length,
+        sells: (s.sells ?? []).length,
+      };
+    });
+  }, [data.scenarios, data.stocks, data.properties, data.settings]);
+  if (rows.length === 0) return null;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Compare scenarios</CardTitle>
+        <CardDescription>
+          One row per scenario — assumptions, customisations and the
+          projected net worth at each scenario&apos;s own horizon. Click
+          a row to edit.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="overflow-x-auto">
+        <table className="w-full text-xs tabular-nums">
+          <thead>
+            <tr className="text-[10px] uppercase tracking-wide text-muted-foreground border-b">
+              <th className="text-left font-normal px-2 py-1.5">Scenario</th>
+              <th className="text-right font-normal px-2 py-1.5">Horizon</th>
+              <th className="text-right font-normal px-2 py-1.5">Stock %</th>
+              <th className="text-right font-normal px-2 py-1.5">Prop %</th>
+              <th className="text-right font-normal px-2 py-1.5">Infl</th>
+              <th className="text-right font-normal px-2 py-1.5">RSU tax</th>
+              <th className="text-right font-normal px-2 py-1.5">Cust.</th>
+              <th className="text-right font-normal px-2 py-1.5">Rel.</th>
+              <th className="text-right font-normal px-2 py-1.5">Sells</th>
+              <th className="text-right font-normal px-2 py-1.5">Net @ horizon</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr
+                key={r.scenario.id}
+                className="border-b last:border-0 cursor-pointer hover:bg-muted/40"
+                onClick={() => onEdit(r.scenario)}
+              >
+                <td className="px-2 py-1.5 font-medium">{r.scenario.name || "Untitled"}</td>
+                <td className="px-2 py-1.5 text-right">{r.scenario.horizon_years}y</td>
+                <td className="px-2 py-1.5 text-right">{r.scenario.default_stock_growth_pct.toFixed(1)}</td>
+                <td className="px-2 py-1.5 text-right">{r.scenario.default_property_growth_pct.toFixed(1)}</td>
+                <td className="px-2 py-1.5 text-right">{r.scenario.inflation_pct.toFixed(1)}</td>
+                <td className="px-2 py-1.5 text-right">
+                  {r.scenario.rsu_tax_jurisdiction.slice(0, 3)} {r.scenario.rsu_tax_rate_pct}%
+                </td>
+                <td className="px-2 py-1.5 text-right text-muted-foreground">
+                  {r.customisations || "—"}
+                </td>
+                <td className="px-2 py-1.5 text-right text-muted-foreground">
+                  {r.releases || "—"}
+                </td>
+                <td className="px-2 py-1.5 text-right text-muted-foreground">
+                  {r.sells || "—"}
+                </td>
+                <td className="px-2 py-1.5 text-right font-semibold">
+                  {formatMoneyCompact(r.terminal, ccy)}
+                  {r.terminalReal !== undefined && r.scenario.inflation_pct > 0 ? (
+                    <span className="ml-1 text-[10px] text-muted-foreground">
+                      ({formatMoneyCompact(r.terminalReal, ccy)} real)
+                    </span>
+                  ) : null}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </CardContent>
+    </Card>
   );
 }
