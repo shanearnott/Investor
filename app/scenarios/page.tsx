@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useRef, useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Copy, Plus, Trash2 } from "lucide-react";
 
 import { useData } from "@/components/data-provider";
 import { Button } from "@/components/ui/button";
@@ -55,16 +55,11 @@ export default function ScenariosPage() {
     setAdding(false);
     setEditing(blank());
   };
-  const confirmAddClone = () => {
-    const src = data.scenarios.find((s) => s.id === cloneSourceId);
-    if (!src) {
-      setAdding(false);
-      return;
-    }
-    // Fresh ids on the parent + every nested release/sell, and remap
-    // sell.release_ref onto the new release ids so the clone is fully
-    // independent of the source. Sells that point to investment
-    // releases (anything not in src.releases) keep their existing ref.
+  // Fresh ids on the parent + every nested release/sell, and remap
+  // sell.release_ref onto the new release ids so the clone is fully
+  // independent of the source. Sells that point to investment
+  // releases (anything not in src.releases) keep their existing ref.
+  const cloneScenario = (src: Scenario): Scenario => {
     const releaseIdMap = new Map<string, string>();
     const clonedReleases = (src.releases ?? []).map((r) => {
       const newReleaseId = newId();
@@ -76,7 +71,7 @@ export default function ScenariosPage() {
       id: newId(),
       release_ref: s.release_ref ? (releaseIdMap.get(s.release_ref) ?? s.release_ref) : undefined,
     }));
-    const cloned: Scenario = {
+    return {
       ...src,
       id: newId(),
       name: `${src.name || "Scenario"} (copy)`,
@@ -84,8 +79,20 @@ export default function ScenariosPage() {
       sells: clonedSells,
       stock_sales: [],
     };
+  };
+
+  const confirmAddClone = () => {
+    const src = data.scenarios.find((s) => s.id === cloneSourceId);
+    if (!src) {
+      setAdding(false);
+      return;
+    }
     setAdding(false);
-    setEditing(cloned);
+    setEditing(cloneScenario(src));
+  };
+
+  const cloneInPlace = (src: Scenario) => {
+    setEditing(cloneScenario(src));
   };
 
   const save = async (s: Scenario) => {
@@ -178,6 +185,14 @@ export default function ScenariosPage() {
                       onClick={() => setEditing(editing?.id === s.id ? null : { ...s })}
                     >
                       {editing?.id === s.id ? "Close" : "Edit"}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => cloneInPlace(s)}
+                      title="Duplicate this scenario"
+                    >
+                      <Copy className="h-4 w-4" />
                     </Button>
                     <Button size="sm" variant="ghost" onClick={() => remove(s.id)}>
                       <Trash2 className="h-4 w-4" />
