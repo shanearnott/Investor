@@ -365,17 +365,12 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
       const taken = new Set(
         (p.sells ?? []).filter((x) => x.release_ref).map((x) => x.release_ref!),
       );
-      const investmentReleases = data.stocks.flatMap((h) =>
-        (h.releases ?? []).map((r) => ({ stock_id: h.id, release: r })),
-      );
-      investmentReleases.sort((a, b) =>
-        a.release.release_date.localeCompare(b.release.release_date),
-      );
-      const firstFreeInv = investmentReleases.find((x) => !taken.has(x.release.id));
+      const investmentReleases = data.stocks.flatMap((h) => h.releases ?? []);
+      investmentReleases.sort((a, b) => a.release_date.localeCompare(b.release_date));
+      const firstFreeInv = investmentReleases.find((r) => !taken.has(r.id));
       const firstFreeScn = (p.releases ?? []).find((r) => !taken.has(r.id));
-      const defaultRef = firstFreeInv?.release.id ?? firstFreeScn?.id ?? "";
+      const defaultRef = firstFreeInv?.id ?? firstFreeScn?.id ?? "";
       if (!defaultRef) return p;
-      const defaultStockId = firstFreeInv?.stock_id ?? firstFreeScn?.stock_id;
       return {
         ...p,
         sells: [
@@ -384,7 +379,6 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
             id: newId(),
             name: "",
             release_ref: defaultRef,
-            stock_id: defaultStockId,
             sell_date: new Date().toISOString().slice(0, 10),
             sale_tax_rate_pct: 0,
           },
@@ -396,7 +390,6 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
     id: string,
     patch: Partial<{
       name: string;
-      stock_id: string;
       release_ref: string | undefined;
       sell_date: string;
       sale_price: number | undefined;
@@ -1040,11 +1033,7 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
                     .map((x) => x.release_ref!),
                 );
                 const seenReleaseIds = new Set<string>();
-                const releaseOptions: Array<{
-                  id: string;
-                  label: string;
-                  stock_id: string | undefined;
-                }> = [];
+                const releaseOptions: Array<{ id: string; label: string }> = [];
                 const investmentReleases = data.stocks.flatMap((h) =>
                   (h.releases ?? []).map((r) => ({ stock: h, release: r })),
                 );
@@ -1057,7 +1046,7 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
                   seenReleaseIds.add(release.id);
                   const ticker = stock.ticker || stock.company_name || stock.id;
                   const label = `Investments / ${ticker} · ${release.name || release.release_date}`;
-                  releaseOptions.push({ id: release.id, label, stock_id: stock.id });
+                  releaseOptions.push({ id: release.id, label });
                 }
                 for (const r of d.releases ?? []) {
                   if (seenReleaseIds.has(r.id)) continue;
@@ -1066,7 +1055,7 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
                   const stock = data.stocks.find((h) => h.id === r.stock_id);
                   const ticker = stock ? (stock.ticker || stock.company_name || stock.id) : r.stock_id;
                   const label = `Scenario / ${ticker} · ${r.name || r.release_date}`;
-                  releaseOptions.push({ id: r.id, label, stock_id: r.stock_id });
+                  releaseOptions.push({ id: r.id, label });
                 }
                 return (
                   <div key={s.id} className="rounded-md border p-3 space-y-3">
@@ -1081,14 +1070,11 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
                       <Field label="Linked release" hint="Sells draw from this single release's kept shares.">
                         <Select
                           value={s.release_ref ?? ""}
-                          onChange={(e) => {
-                            const ref = e.target.value;
-                            const opt = releaseOptions.find((o) => o.id === ref);
+                          onChange={(e) =>
                             updateScenarioSell(s.id, {
-                              release_ref: ref || undefined,
-                              stock_id: opt?.stock_id ?? s.stock_id,
-                            });
-                          }}
+                              release_ref: e.target.value || undefined,
+                            })
+                          }
                         >
                           {releaseOptions.length === 0 ? (
                             <option value="">(no releases)</option>
