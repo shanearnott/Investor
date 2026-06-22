@@ -1064,6 +1064,12 @@ function ScenarioSaleMath({
                       </div>
                       <div className="flex justify-between"><span>Gross proceeds</span><span>{formatMoney(b.grossSaleNative, b.currency)}</span></div>
                       <div className="flex justify-between"><span>Cap-gains tax ({b.capGainsRatePct.toFixed(1)}%)</span><span>−{formatMoney(b.capGainsTaxNative, b.currency)}</span></div>
+                      {b.strikePaidNative && b.strikePaidNative > 0 ? (
+                        <div className="flex justify-between">
+                          <span>Strike paid at exercise</span>
+                          <span>−{formatMoney(b.strikePaidNative, b.currency)}</span>
+                        </div>
+                      ) : null}
                       <div className="flex justify-between font-semibold text-foreground">
                         <span>Net (native)</span>
                         <span>{formatMoney(b.netNative, b.currency)}</span>

@@ -849,9 +849,12 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
           </div>
           <p className="text-[11px] text-muted-foreground">
             Add a future vest you want to model under this scenario&apos;s
-            jurisdiction. Income tax is realised at the release date. Sells
-            below can pick either a scenario release here or any release
-            you&apos;ve recorded against your investments.
+            jurisdiction. Income tax is realised at the release date.
+            For Stock Options, the release event represents an exercise:
+            strike comes off the sale net, and income tax is applied to
+            the spread (FMV − strike). Sells below can pick either a
+            scenario release here or any release you&apos;ve recorded
+            against your investments.
           </p>
           {data.stocks.length === 0 ? (
             <p className="text-[11px] text-muted-foreground">Add a stock first.</p>
