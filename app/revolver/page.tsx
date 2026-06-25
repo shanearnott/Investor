@@ -55,6 +55,27 @@ function compactNumber(v: number): string {
   return compactFormatter.format(v);
 }
 
+// Compact tooltip/legend styling, matching Projections. Single source of
+// truth so every chart on the page renders the same way.
+const TOOLTIP_WRAPPER_STYLE = { outline: "none" } as const;
+const TOOLTIP_CONTENT_STYLE = {
+  fontSize: 11,
+  padding: "4px 6px",
+  borderRadius: 6,
+  border: "1px solid #e5e7eb",
+  background: "rgba(255,255,255,0.96)",
+  boxShadow: "0 1px 2px rgba(0,0,0,0.06)",
+  lineHeight: "1.3",
+} as const;
+const TOOLTIP_LABEL_STYLE = {
+  fontSize: 11,
+  fontWeight: 500,
+  marginBottom: 2,
+  color: "#111827",
+} as const;
+const TOOLTIP_ITEM_STYLE = { padding: 0, margin: 0, color: "#374151" } as const;
+const LEGEND_WRAPPER_STYLE = { fontSize: 11, paddingTop: 4 } as const;
+
 function parseRevolvers(raw: unknown[]): RevolverScenario[] {
   const out: RevolverScenario[] = [];
   for (const r of raw) {
@@ -931,6 +952,10 @@ function FacilityView({
                 <XAxis dataKey="date" tickFormatter={formatMmmYY} tick={{ fontSize: 11 }} minTickGap={20} />
                 <YAxis tick={{ fontSize: 11 }} tickFormatter={compactNumber} />
                 <Tooltip
+                  wrapperStyle={TOOLTIP_WRAPPER_STYLE}
+                  contentStyle={TOOLTIP_CONTENT_STYLE}
+                  labelStyle={TOOLTIP_LABEL_STYLE}
+                  itemStyle={TOOLTIP_ITEM_STYLE}
                   formatter={(v: number | number[]) =>
                     Array.isArray(v)
                       ? `${formatMoneyCompact(v[0], USD)} → ${formatMoneyCompact(v[1], USD)}`
@@ -938,7 +963,7 @@ function FacilityView({
                   }
                   labelFormatter={(l) => formatMmmYY(String(l))}
                 />
-                <Legend />
+                <Legend wrapperStyle={LEGEND_WRAPPER_STYLE} iconSize={8} />
                 {monthlyLow && monthlyHigh ? (
                   <Area
                     type="monotone"
@@ -948,6 +973,7 @@ function FacilityView({
                     fill="#0ea5e9"
                     fillOpacity={0.18}
                     activeDot={false}
+                    legendType="none"
                   />
                 ) : null}
                 {capitaliseLow && capitaliseHigh ? (
@@ -959,6 +985,7 @@ function FacilityView({
                     fill="#f97316"
                     fillOpacity={0.18}
                     activeDot={false}
+                    legendType="none"
                   />
                 ) : null}
                 <Line type="monotone" dataKey="monthly_balance" name="Pay monthly" stroke="#0ea5e9" dot={false} strokeWidth={2} />
@@ -984,6 +1011,10 @@ function FacilityView({
                 <XAxis dataKey="date" tickFormatter={formatMmmYY} tick={{ fontSize: 11 }} minTickGap={20} />
                 <YAxis tick={{ fontSize: 11 }} tickFormatter={compactNumber} />
                 <Tooltip
+                  wrapperStyle={TOOLTIP_WRAPPER_STYLE}
+                  contentStyle={TOOLTIP_CONTENT_STYLE}
+                  labelStyle={TOOLTIP_LABEL_STYLE}
+                  itemStyle={TOOLTIP_ITEM_STYLE}
                   formatter={(v: number | number[]) =>
                     Array.isArray(v)
                       ? `${formatMoneyCompact(v[0], USD)} → ${formatMoneyCompact(v[1], USD)}`
@@ -991,7 +1022,7 @@ function FacilityView({
                   }
                   labelFormatter={(l) => formatMmmYY(String(l))}
                 />
-                <Legend />
+                <Legend wrapperStyle={LEGEND_WRAPPER_STYLE} iconSize={8} />
                 {monthlyLow && monthlyHigh ? (
                   <Area
                     type="monotone"
@@ -1001,6 +1032,7 @@ function FacilityView({
                     fill="#0ea5e9"
                     fillOpacity={0.18}
                     activeDot={false}
+                    legendType="none"
                   />
                 ) : null}
                 {capitaliseLow && capitaliseHigh ? (
@@ -1012,10 +1044,11 @@ function FacilityView({
                     fill="#f97316"
                     fillOpacity={0.18}
                     activeDot={false}
+                    legendType="none"
                   />
                 ) : null}
                 <Line type="monotone" dataKey="cumulative_interest_monthly" name="Pay monthly" stroke="#0ea5e9" dot={false} strokeWidth={2} />
-                <Line type="monotone" dataKey="cumulative_interest_capitalise" name="Capitalise (accrued)" stroke="#f97316" dot={false} strokeWidth={2} />
+                <Line type="monotone" dataKey="cumulative_interest_capitalise" name="Capitalise" stroke="#f97316" dot={false} strokeWidth={2} />
               </ComposedChart>
             </ResponsiveContainer>
           </div>
@@ -1035,12 +1068,15 @@ function FacilityView({
                 <XAxis dataKey="date" tickFormatter={formatMmmYY} tick={{ fontSize: 11 }} minTickGap={20} />
                 <YAxis tick={{ fontSize: 11 }} tickFormatter={compactNumber} />
                 <Tooltip
+                  wrapperStyle={TOOLTIP_WRAPPER_STYLE}
+                  contentStyle={TOOLTIP_CONTENT_STYLE}
+                  labelStyle={TOOLTIP_LABEL_STYLE}
+                  itemStyle={TOOLTIP_ITEM_STYLE}
                   formatter={(v: number) => formatNumber(v)}
                   labelFormatter={(l) => formatMmmYY(String(l))}
                 />
-                <Legend />
                 <Line type="monotone" dataKey="required_shares" name="Required shares" stroke="#10b981" dot={false} strokeWidth={2} />
-                <ReferenceLine y={scenario.total_shares_available} stroke="#ef4444" strokeDasharray="4 4" label={{ value: "Available", fontSize: 11, fill: "#ef4444" }} />
+                <ReferenceLine y={scenario.total_shares_available} stroke="#ef4444" strokeDasharray="4 4" label={{ value: "Available", fontSize: 10, fill: "#ef4444" }} />
               </ComposedChart>
             </ResponsiveContainer>
           </div>
@@ -1059,12 +1095,15 @@ function FacilityView({
                 <XAxis dataKey="date" tickFormatter={formatMmmYY} tick={{ fontSize: 11 }} minTickGap={20} />
                 <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `${v.toFixed(0)}%`} />
                 <Tooltip
+                  wrapperStyle={TOOLTIP_WRAPPER_STYLE}
+                  contentStyle={TOOLTIP_CONTENT_STYLE}
+                  labelStyle={TOOLTIP_LABEL_STYLE}
+                  itemStyle={TOOLTIP_ITEM_STYLE}
                   formatter={(v: number) => `${v.toFixed(1)}%`}
                   labelFormatter={(l) => formatMmmYY(String(l))}
                 />
-                <Legend />
-                <Line type="monotone" dataKey="ltv_pct" name="Current LTV" stroke="#6366f1" dot={false} strokeWidth={2} />
-                <ReferenceLine y={scenario.maintenance_ltv_pct} stroke="#ef4444" strokeDasharray="4 4" label={{ value: `Maintenance ${scenario.maintenance_ltv_pct}%`, fontSize: 11, fill: "#ef4444" }} />
+                <Line type="monotone" dataKey="ltv_pct" name="LTV" stroke="#6366f1" dot={false} strokeWidth={2} />
+                <ReferenceLine y={scenario.maintenance_ltv_pct} stroke="#ef4444" strokeDasharray="4 4" label={{ value: `Maint ${scenario.maintenance_ltv_pct}%`, fontSize: 10, fill: "#ef4444" }} />
               </ComposedChart>
             </ResponsiveContainer>
           </div>
@@ -1283,13 +1322,17 @@ function SellVsBorrowView({
                 />
                 <YAxis tick={{ fontSize: 11 }} tickFormatter={compactNumber} />
                 <Tooltip
+                  wrapperStyle={TOOLTIP_WRAPPER_STYLE}
+                  contentStyle={TOOLTIP_CONTENT_STYLE}
+                  labelStyle={TOOLTIP_LABEL_STYLE}
+                  itemStyle={TOOLTIP_ITEM_STYLE}
                   formatter={(v: number) => formatMoneyCompact(v, USD)}
                   labelFormatter={(l) => `Future tax ${Number(l).toFixed(1)}%`}
                 />
-                <Legend />
-                <Line type="monotone" dataKey="sell" name="Sell now" stroke="#0ea5e9" dot={false} strokeWidth={2} />
-                <Line type="monotone" dataKey="borrow_monthly" name="Borrow · monthly" stroke="#f97316" dot={false} strokeWidth={2} />
-                <Line type="monotone" dataKey="borrow_capitalise" name="Borrow · capitalise" stroke="#10b981" dot={false} strokeWidth={2} />
+                <Legend wrapperStyle={LEGEND_WRAPPER_STYLE} iconSize={8} />
+                <Line type="monotone" dataKey="sell" name="Sell" stroke="#0ea5e9" dot={false} strokeWidth={2} />
+                <Line type="monotone" dataKey="borrow_monthly" name="Borrow monthly" stroke="#f97316" dot={false} strokeWidth={2} />
+                <Line type="monotone" dataKey="borrow_capitalise" name="Borrow cap." stroke="#10b981" dot={false} strokeWidth={2} />
                 {breakevenTax !== null ? (
                   <ReferenceLine x={breakevenTax} stroke="#ef4444" strokeDasharray="4 4" label={{ value: `Breakeven ${breakevenTax.toFixed(1)}%`, fontSize: 10, fill: "#ef4444", position: "top" }} />
                 ) : null}
