@@ -16,7 +16,14 @@
 
 import { z } from "zod";
 
-import { newId } from "./models";
+import {
+  newId,
+  releaseKeptShares,
+  unvestedSharesAt,
+  vestedSharesAt,
+  type Scenario,
+  type StockHolding,
+} from "./models";
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD");
 
@@ -41,7 +48,18 @@ export const RevolverScenarioSchema = z.object({
   name: z.string().default("Revolver scenario"),
   description: z.string().default(""),
 
-  // Shared inputs
+  /** Optional link to a StockHolding (Investments tab). When set,
+   *  share_price, total_shares_available and the lot list are derived
+   *  from the holding live — the manual fields below become defaults
+   *  used only when no holding is linked. */
+  stock_id: z.string().optional(),
+  /** Optional link to a Scenario (Scenarios tab). When set with a
+   *  stock_id, annual_appreciation_pct is taken from the scenario's
+   *  per-stock override or its default stock growth. */
+  scenario_id: z.string().optional(),
+
+  // Shared inputs (used as the manual / fallback values when no
+  // stock/scenario is linked)
   draw_amount: z.number().nonnegative().default(2_000_000),
   max_draw: z.number().nonnegative().default(5_000_000),
   start_date: isoDate,
@@ -95,6 +113,159 @@ export function newRevolverScenario(name = "Revolver scenario"): RevolverScenari
     lots: [founders, espp, recent],
     selected_lot_id: founders.id,
   });
+}
+
+/** What's actually used by the engine given (optional) links to a stock
+ *  holding + a scenario from the main app. Free-form fields on the
+ *  revolver scenario remain the source of truth when nothing is linked. */
+export type ResolvedRevolverInputs = {
+  share_price: number;
+  total_shares_available: number;
+  annual_appreciation_pct: number;
+  lots: RevolverLot[];
+  selected_lot_id: string;
+  /** Provenance labels surfaced in the UI so the user always sees where
+   *  each derived value came from. */
+  sources: {
+    share_price: string;
+    total_shares_available: string;
+    annual_appreciation_pct: string;
+    lots: string;
+  };
+};
+
+/** Derive lots from a stock holding: one per release event (basis =
+ *  release_price), plus a strike-price lot for Stock Options stocks, plus
+ *  an "Outright" lot if shares_owned_outright > 0. Lot ids are stable
+ *  (derived from release ids) so persisted selections survive edits. */
+function deriveLotsFromStock(stock: StockHolding): RevolverLot[] {
+  const lots: RevolverLot[] = [];
+  if (stock.shares_owned_outright > 0) {
+    lots.push({
+      id: `${stock.id}-outright`,
+      name: "Outright shares",
+      cost_basis: stock.current_share_price,
+    });
+  }
+  if (stock.equity_type === "Stock Options" && (stock.strike_price ?? 0) > 0) {
+    lots.push({
+      id: `${stock.id}-strike`,
+      name: "Options strike",
+      cost_basis: stock.strike_price,
+    });
+  }
+  const sortedReleases = [...(stock.releases ?? [])].sort((a, b) =>
+    a.release_date.localeCompare(b.release_date),
+  );
+  for (const r of sortedReleases) {
+    const kept = releaseKeptShares(r);
+    if (kept <= 0) continue;
+    lots.push({
+      id: `lot-${r.id}`,
+      name: r.name || `Release ${r.release_date}`,
+      cost_basis: r.release_price,
+    });
+  }
+  return lots;
+}
+
+/** Resolve the live values + lots given optional links. Returns
+ *  fallback values from the revolver scenario itself when no holding /
+ *  scenario is linked. */
+export function resolveRevolverInputs(
+  revolver: RevolverScenario,
+  stocks: StockHolding[],
+  scenarios: Scenario[],
+): ResolvedRevolverInputs {
+  const stock = revolver.stock_id ? stocks.find((s) => s.id === revolver.stock_id) ?? null : null;
+  const scenario = revolver.scenario_id ? scenarios.find((s) => s.id === revolver.scenario_id) ?? null : null;
+  const today = new Date();
+
+  // Share price — from the holding's current price (with the scenario's
+  // starting-price override applied if both are linked).
+  let sharePrice = revolver.share_price;
+  let sharePriceSource = "manual";
+  if (stock) {
+    const overrideStart = scenario?.stock_overrides?.[stock.id]?.starting_share_price;
+    sharePrice = overrideStart && overrideStart > 0 ? overrideStart : stock.current_share_price;
+    sharePriceSource = overrideStart
+      ? `${stock.ticker || stock.company_name} · scenario override`
+      : `${stock.ticker || stock.company_name} · current price`;
+  }
+
+  // Total shares available — currently-held vested shares (already net
+  // of investment releases' withholding and sells) plus any unvested
+  // that will arrive over the horizon, so a 5y projection can pledge
+  // shares that vest in years 2-5.
+  let totalShares = revolver.total_shares_available;
+  let totalSharesSource = "manual";
+  if (stock) {
+    const vestedNow = vestedSharesAt(stock, today);
+    const unvestedNow = unvestedSharesAt(stock, today);
+    totalShares = Math.max(0, vestedNow + unvestedNow);
+    totalSharesSource = `${stock.ticker || stock.company_name} · vested + unvested today`;
+  }
+
+  // Annual appreciation — from the scenario's per-stock override if set,
+  // else its default stock growth. Target-price override would imply a
+  // different rate, but we keep this simple and ignore it (user can
+  // still manually edit the field if they unlink the scenario).
+  let appreciation = revolver.annual_appreciation_pct;
+  let appreciationSource = "manual";
+  if (scenario && stock) {
+    const ov = scenario.stock_overrides?.[stock.id]?.annual_price_growth_pct;
+    appreciation = ov !== undefined ? ov : scenario.default_stock_growth_pct;
+    appreciationSource = ov !== undefined
+      ? `${scenario.name} · ${stock.ticker || stock.company_name} override`
+      : `${scenario.name} · default stock growth`;
+  } else if (scenario && !stock) {
+    appreciation = scenario.default_stock_growth_pct;
+    appreciationSource = `${scenario.name} · default stock growth`;
+  }
+
+  // Lots — derived from the stock when linked; manual lots otherwise.
+  let lots = revolver.lots;
+  let selectedLotId = revolver.selected_lot_id;
+  let lotsSource = "manual";
+  if (stock) {
+    lots = deriveLotsFromStock(stock);
+    lotsSource = `${stock.ticker || stock.company_name} · derived from releases`;
+    // Remap the selection: keep the user's selected lot if it still
+    // exists, otherwise drop to the first derived lot. We persist the
+    // user's choice as-is so unlinking restores it cleanly.
+    selectedLotId = lots.find((l) => l.id === revolver.selected_lot_id)?.id ?? lots[0]?.id ?? "";
+  }
+
+  return {
+    share_price: sharePrice,
+    total_shares_available: totalShares,
+    annual_appreciation_pct: appreciation,
+    lots,
+    selected_lot_id: selectedLotId,
+    sources: {
+      share_price: sharePriceSource,
+      total_shares_available: totalSharesSource,
+      annual_appreciation_pct: appreciationSource,
+      lots: lotsSource,
+    },
+  };
+}
+
+/** Apply resolved inputs to produce the effective scenario the engine
+ *  runs against. The engine remains pure — it just sees a RevolverScenario
+ *  with the right values baked in. */
+export function withResolvedInputs(
+  revolver: RevolverScenario,
+  resolved: ResolvedRevolverInputs,
+): RevolverScenario {
+  return {
+    ...revolver,
+    share_price: resolved.share_price,
+    total_shares_available: resolved.total_shares_available,
+    annual_appreciation_pct: resolved.annual_appreciation_pct,
+    lots: resolved.lots,
+    selected_lot_id: resolved.selected_lot_id,
+  };
 }
 
 // ----- date helpers -----
