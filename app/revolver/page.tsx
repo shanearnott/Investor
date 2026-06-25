@@ -17,7 +17,7 @@ import { Copy, Plus, Trash2 } from "lucide-react";
 import { useData } from "@/components/data-provider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input, Label, Select, Textarea } from "@/components/ui/input";
+import { Input, Label, Select } from "@/components/ui/input";
 import { newId } from "@/lib/models";
 import {
   RevolverScenario,
@@ -33,7 +33,7 @@ import {
   withResolvedInputs,
   type FacilityResult,
 } from "@/lib/revolver";
-import { cn, formatMoney, formatMoneyCompact, formatNumber, formatNumberCompact } from "@/lib/utils";
+import { cn, formatMoney, formatMoneyCompact, formatNumber } from "@/lib/utils";
 
 const USD = "USD";
 
@@ -374,25 +374,14 @@ function ScenarioForm({
           <Field label="Scenario name">
             <Input value={scenario.name} onChange={(e) => upd("name", e.target.value)} />
           </Field>
-          <Field label="Cash needed / draw" hint={`Max $${formatNumberCompact(scenario.max_draw)}`}>
+          <Field label="Cash needed / draw">
             <SuffixedInput
               suffix="$"
               type="number"
               min={0}
-              max={scenario.max_draw}
               step={50_000}
               value={scenario.draw_amount}
-              onChange={(e) => upd("draw_amount", Math.min(scenario.max_draw, Math.max(0, Number(e.target.value))))}
-            />
-          </Field>
-          <Field label="Max facility size">
-            <SuffixedInput
-              suffix="$"
-              type="number"
-              min={0}
-              step={500_000}
-              value={scenario.max_draw}
-              onChange={(e) => upd("max_draw", Math.max(0, Number(e.target.value)))}
+              onChange={(e) => upd("draw_amount", Math.max(0, Number(e.target.value)))}
             />
           </Field>
           <Field label="Start date">
@@ -416,9 +405,6 @@ function ScenarioForm({
               onChange={(e) => upd("ipo_date", e.target.value || undefined)}
             />
           </Field>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           <Field label="Interest mode">
             <Select
               value={scenario.interest_mode}
@@ -428,14 +414,19 @@ function ScenarioForm({
               <option value="capitalise">Capitalise (balance compounds)</option>
             </Select>
           </Field>
-          <Field label="Day-count">
-            <Select
-              value={scenario.day_count}
-              onChange={(e) => upd("day_count", e.target.value as RevolverScenario["day_count"])}
-            >
-              <option value="actual360">Actual / 360</option>
-              <option value="monthly30">Monthly approx (rate / 12)</option>
-            </Select>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          <Field label="SOFR base">
+            <SuffixedInput
+              suffix="%/yr"
+              type="number"
+              step={0.01}
+              min={0}
+              max={50}
+              value={scenario.sofr_base_pct}
+              onChange={(e) => upd("sofr_base_pct", Number(e.target.value))}
+            />
           </Field>
           <Field label="Spread over SOFR">
             <SuffixedInput
@@ -446,17 +437,6 @@ function ScenarioForm({
               max={20}
               value={scenario.spread_pct}
               onChange={(e) => upd("spread_pct", Number(e.target.value))}
-            />
-          </Field>
-          <Field label="SOFR base">
-            <SuffixedInput
-              suffix="%/yr"
-              type="number"
-              step={0.01}
-              min={0}
-              max={50}
-              value={scenario.sofr_base_pct}
-              onChange={(e) => upd("sofr_base_pct", Number(e.target.value))}
             />
           </Field>
           <Field
@@ -494,10 +474,10 @@ function ScenarioForm({
           </Field>
         </div>
 
-        {/* Assumption block — visually pop the two undisclosed inputs */}
+        {/* Assumption block — visually pop the undisclosed input */}
         <div className="rounded-md border border-amber-300 bg-amber-50/60 p-3 space-y-2">
           <div className="text-xs font-semibold text-amber-900">Assumptions (not from the term sheet)</div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Field label="Advance rate (max LTV)" hint="UNDISCLOSED — typical SBLOC = 50%.">
               <SuffixedInput
                 suffix="%"
@@ -507,17 +487,6 @@ function ScenarioForm({
                 max={100}
                 value={scenario.advance_rate_pct}
                 onChange={(e) => upd("advance_rate_pct", Number(e.target.value))}
-              />
-            </Field>
-            <Field label="Maintenance LTV" hint="Margin-call trigger.">
-              <SuffixedInput
-                suffix="%"
-                type="number"
-                step={1}
-                min={0}
-                max={100}
-                value={scenario.maintenance_ltv_pct}
-                onChange={(e) => upd("maintenance_ltv_pct", Number(e.target.value))}
               />
             </Field>
             <Field
@@ -539,50 +508,57 @@ function ScenarioForm({
           </div>
         </div>
 
-        {/* SOFR overrides */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <Label>SOFR path overrides</Label>
-            <Button size="sm" variant="outline" onClick={addOverride}>
-              <Plus className="h-3.5 w-3.5" /> Add cut/hike
-            </Button>
-          </div>
-          <p className="text-[11px] text-muted-foreground">
-            Each row sets the base SOFR from that date forward. Spread is
-            added on top. Leave the list empty to keep the base flat.
-          </p>
-          {(scenario.sofr_overrides ?? []).length === 0 ? (
-            <p className="text-[11px] text-muted-foreground">No overrides — base SOFR holds.</p>
-          ) : (
-            <div className="grid grid-cols-1 gap-2">
-              {scenario.sofr_overrides.map((o) => (
-                <div key={o.id} className="grid grid-cols-[1fr_1fr_auto] items-end gap-2 rounded-md border p-2">
-                  <Field label="From">
-                    <Input
-                      type="date"
-                      value={o.from_date}
-                      onChange={(e) => updOverride(o.id, { from_date: e.target.value })}
-                    />
-                  </Field>
-                  <Field label="SOFR">
-                    <SuffixedInput
-                      suffix="%"
-                      type="number"
-                      step={0.05}
-                      min={0}
-                      max={50}
-                      value={o.rate_pct}
-                      onChange={(e) => updOverride(o.id, { rate_pct: Number(e.target.value) })}
-                    />
-                  </Field>
-                  <Button size="sm" variant="ghost" onClick={() => removeOverride(o.id)}>
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
-              ))}
+        {/* SOFR overrides — collapsed under "Advanced" so the empty
+            state doesn't crowd the form. */}
+        <details className="rounded-md border" open={(scenario.sofr_overrides ?? []).length > 0}>
+          <summary className="cursor-pointer px-3 py-2 text-xs font-medium">
+            Advanced · SOFR path overrides
+            {(scenario.sofr_overrides ?? []).length > 0 ? (
+              <span className="ml-2 text-muted-foreground">
+                {scenario.sofr_overrides.length} cut/hike{scenario.sofr_overrides.length === 1 ? "" : "s"}
+              </span>
+            ) : null}
+          </summary>
+          <div className="border-t p-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="text-[11px] text-muted-foreground">
+                Each row sets the base SOFR from that date forward. Spread is added on top.
+              </p>
+              <Button size="sm" variant="outline" onClick={addOverride}>
+                <Plus className="h-3.5 w-3.5" /> Add cut/hike
+              </Button>
             </div>
-          )}
-        </div>
+            {(scenario.sofr_overrides ?? []).length === 0 ? null : (
+              <div className="grid grid-cols-1 gap-2">
+                {scenario.sofr_overrides.map((o) => (
+                  <div key={o.id} className="grid grid-cols-[1fr_1fr_auto] items-end gap-2 rounded-md border p-2">
+                    <Field label="From">
+                      <Input
+                        type="date"
+                        value={o.from_date}
+                        onChange={(e) => updOverride(o.id, { from_date: e.target.value })}
+                      />
+                    </Field>
+                    <Field label="SOFR">
+                      <SuffixedInput
+                        suffix="%"
+                        type="number"
+                        step={0.05}
+                        min={0}
+                        max={50}
+                        value={o.rate_pct}
+                        onChange={(e) => updOverride(o.id, { rate_pct: Number(e.target.value) })}
+                      />
+                    </Field>
+                    <Button size="sm" variant="ghost" onClick={() => removeOverride(o.id)}>
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </details>
 
         {/* Lots + tax (Sell vs Borrow inputs). When a stock is linked,
             lots come from its release events; otherwise the user types
@@ -666,7 +642,7 @@ function ScenarioForm({
           )}
         </div>
 
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Field label="Tax today" hint="CA combined LTCG ≈ 37.1%.">
             <SuffixedInput
               suffix="%"
@@ -689,32 +665,7 @@ function ScenarioForm({
               onChange={(e) => upd("tax_rate_future_pct", Number(e.target.value))}
             />
           </Field>
-          <Field label="Repayment date" hint="Defaults to IPO date if set, else horizon end.">
-            <Input
-              type="date"
-              value={scenario.repayment_date ?? ""}
-              onChange={(e) => upd("repayment_date", e.target.value || undefined)}
-            />
-          </Field>
-          <Field label="Future basis (repayment)" hint="Blank = selected lot's basis.">
-            <SuffixedInput
-              suffix="$"
-              type="number"
-              step={0.01}
-              min={0}
-              value={scenario.future_basis ?? ""}
-              onChange={(e) => upd("future_basis", e.target.value === "" ? undefined : Number(e.target.value))}
-            />
-          </Field>
         </div>
-
-        <Field label="Description">
-          <Textarea
-            value={scenario.description}
-            onChange={(e) => upd("description", e.target.value)}
-            placeholder="e.g. Baseline assumes 50% LTV, Cyprus by 2028."
-          />
-        </Field>
       </CardContent>
     </Card>
   );
