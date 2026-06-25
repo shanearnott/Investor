@@ -22,13 +22,15 @@ import { newId } from "@/lib/models";
 import {
   RevolverScenario,
   RevolverScenarioSchema,
+  ResolvedRevolverInputs,
   computeFacility,
   computeSellVsBorrow,
   newRevolverScenario,
-  priceAt,
+  resolveRevolverInputs,
   solveBreakevenFutureTaxRate,
   solveBreakevenSofr,
   sweepFutureTaxRate,
+  withResolvedInputs,
   type FacilityResult,
 } from "@/lib/revolver";
 import { cn, formatMoney, formatMoneyCompact, formatNumber, formatNumberCompact } from "@/lib/utils";
@@ -124,13 +126,21 @@ export default function RevolverPage() {
     }
   };
 
-  const facilityMonthly = useMemo(() => computeFacility(scenario, "monthly"), [scenario]);
-  const facilityCapitalise = useMemo(() => computeFacility(scenario, "capitalise"), [scenario]);
-  const facility = scenario.interest_mode === "monthly" ? facilityMonthly : facilityCapitalise;
-  const sellVsBorrow = useMemo(() => computeSellVsBorrow(scenario), [scenario]);
-  const breakevenTax = useMemo(() => solveBreakevenFutureTaxRate(scenario), [scenario]);
-  const breakevenSofr = useMemo(() => solveBreakevenSofr(scenario), [scenario]);
-  const taxSweep = useMemo(() => sweepFutureTaxRate(scenario), [scenario]);
+  // Resolve stock-linked / scenario-linked values live; the engine
+  // always sees the effective scenario.
+  const resolved = useMemo(
+    () => resolveRevolverInputs(scenario, data.stocks, data.scenarios),
+    [scenario, data.stocks, data.scenarios],
+  );
+  const effective = useMemo(() => withResolvedInputs(scenario, resolved), [scenario, resolved]);
+
+  const facilityMonthly = useMemo(() => computeFacility(effective, "monthly"), [effective]);
+  const facilityCapitalise = useMemo(() => computeFacility(effective, "capitalise"), [effective]);
+  const facility = effective.interest_mode === "monthly" ? facilityMonthly : facilityCapitalise;
+  const sellVsBorrow = useMemo(() => computeSellVsBorrow(effective), [effective]);
+  const breakevenTax = useMemo(() => solveBreakevenFutureTaxRate(effective), [effective]);
+  const breakevenSofr = useMemo(() => solveBreakevenSofr(effective), [effective]);
+  const taxSweep = useMemo(() => sweepFutureTaxRate(effective), [effective]);
 
   const isStored = stored.some((s) => s.id === scenario.id);
   const dirty = isStored ? JSON.stringify(stored.find((s) => s.id === scenario.id)) !== JSON.stringify(scenario) : true;
@@ -176,6 +186,7 @@ export default function RevolverPage() {
       <ScenarioForm
         scenario={scenario}
         onChange={setScenario}
+        resolved={resolved}
       />
 
       <div className="flex gap-2 border-b pb-0">
@@ -203,14 +214,14 @@ export default function RevolverPage() {
 
       {view === "facility" ? (
         <FacilityView
-          scenario={scenario}
+          scenario={effective}
           facility={facility}
           monthly={facilityMonthly}
           capitalise={facilityCapitalise}
         />
       ) : (
         <SellVsBorrowView
-          scenario={scenario}
+          scenario={effective}
           result={sellVsBorrow}
           breakevenTax={breakevenTax}
           breakevenSofr={breakevenSofr}
@@ -253,11 +264,16 @@ function ScenarioPicker({
 function ScenarioForm({
   scenario,
   onChange,
+  resolved,
 }: {
   scenario: RevolverScenario;
   onChange: (s: RevolverScenario) => void;
+  resolved: ResolvedRevolverInputs;
 }) {
+  const { data } = useData();
   const upd = <K extends keyof RevolverScenario>(k: K, v: RevolverScenario[K]) => onChange({ ...scenario, [k]: v });
+  const linkedToStock = !!scenario.stock_id;
+  const linkedToScenario = !!scenario.scenario_id;
   const addOverride = () => {
     onChange({
       ...scenario,
@@ -300,12 +316,60 @@ function ScenarioForm({
       <CardHeader className="pb-2">
         <CardTitle className="text-base">Inputs</CardTitle>
         <CardDescription>
-          Everything below feeds both views. Advance rate and the SOFR
-          path are <b>assumptions</b>, not facts — the term sheet
-          doesn&apos;t disclose them.
+          Link a stock from <b>Investments</b> and a scenario from
+          <b> Scenarios</b> to drive share price, share count, growth
+          and cost-basis lots from the rest of the app. Advance rate
+          and the SOFR path are <b>assumptions</b>, not facts — the
+          term sheet doesn&apos;t disclose them.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* Link block — picks a stock for derived values + a scenario
+            for growth. Unlinking restores the manual fields. */}
+        <div className="rounded-md border bg-blue-50/60 p-3 space-y-2">
+          <div className="text-xs font-semibold text-blue-900">Link to Investments + Scenarios</div>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <Field
+              label="Linked stock"
+              hint={
+                linkedToStock
+                  ? `Drives share price, shares available, cost-basis lots.`
+                  : "Pick a stock from Investments to derive values automatically."
+              }
+            >
+              <Select
+                value={scenario.stock_id ?? ""}
+                onChange={(e) => upd("stock_id", e.target.value || undefined)}
+              >
+                <option value="">— manual (no link) —</option>
+                {data.stocks.map((h) => (
+                  <option key={h.id} value={h.id}>
+                    {h.ticker || h.company_name || h.id}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field
+              label="Linked scenario"
+              hint={
+                linkedToScenario
+                  ? `Drives annual price appreciation.`
+                  : "Pick a scenario to derive the growth assumption."
+              }
+            >
+              <Select
+                value={scenario.scenario_id ?? ""}
+                onChange={(e) => upd("scenario_id", e.target.value || undefined)}
+              >
+                <option value="">— manual (no link) —</option>
+                {data.scenarios.map((s) => (
+                  <option key={s.id} value={s.id}>{s.name || "Untitled"}</option>
+                ))}
+              </Select>
+            </Field>
+          </div>
+        </div>
+
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           <Field label="Scenario name">
             <Input value={scenario.name} onChange={(e) => upd("name", e.target.value)} />
@@ -395,24 +459,38 @@ function ScenarioForm({
               onChange={(e) => upd("sofr_base_pct", Number(e.target.value))}
             />
           </Field>
-          <Field label="Share price (today)">
-            <SuffixedInput
-              suffix="$"
-              type="number"
-              step={0.01}
-              min={0}
-              value={scenario.share_price}
-              onChange={(e) => upd("share_price", Number(e.target.value))}
-            />
+          <Field
+            label="Share price (today)"
+            hint={linkedToStock ? `From ${resolved.sources.share_price}` : undefined}
+          >
+            {linkedToStock ? (
+              <DerivedValue>{formatMoney(resolved.share_price, USD, { fractionDigits: 2 })}</DerivedValue>
+            ) : (
+              <SuffixedInput
+                suffix="$"
+                type="number"
+                step={0.01}
+                min={0}
+                value={scenario.share_price}
+                onChange={(e) => upd("share_price", Number(e.target.value))}
+              />
+            )}
           </Field>
-          <Field label="Annual price appreciation">
-            <SuffixedInput
-              suffix="%/yr"
-              type="number"
-              step={0.5}
-              value={scenario.annual_appreciation_pct}
-              onChange={(e) => upd("annual_appreciation_pct", Number(e.target.value))}
-            />
+          <Field
+            label="Annual price appreciation"
+            hint={linkedToScenario ? `From ${resolved.sources.annual_appreciation_pct}` : undefined}
+          >
+            {linkedToScenario ? (
+              <DerivedValue>{resolved.annual_appreciation_pct.toFixed(2)} %/yr</DerivedValue>
+            ) : (
+              <SuffixedInput
+                suffix="%/yr"
+                type="number"
+                step={0.5}
+                value={scenario.annual_appreciation_pct}
+                onChange={(e) => upd("annual_appreciation_pct", Number(e.target.value))}
+              />
+            )}
           </Field>
         </div>
 
@@ -442,14 +520,21 @@ function ScenarioForm({
                 onChange={(e) => upd("maintenance_ltv_pct", Number(e.target.value))}
               />
             </Field>
-            <Field label="Total shares available">
-              <Input
-                type="number"
-                min={0}
-                step={1000}
-                value={scenario.total_shares_available}
-                onChange={(e) => upd("total_shares_available", Number(e.target.value))}
-              />
+            <Field
+              label="Total shares available"
+              hint={linkedToStock ? `From ${resolved.sources.total_shares_available}` : undefined}
+            >
+              {linkedToStock ? (
+                <DerivedValue>{formatNumber(resolved.total_shares_available)} sh</DerivedValue>
+              ) : (
+                <Input
+                  type="number"
+                  min={0}
+                  step={1000}
+                  value={scenario.total_shares_available}
+                  onChange={(e) => upd("total_shares_available", Number(e.target.value))}
+                />
+              )}
             </Field>
           </div>
         </div>
@@ -499,13 +584,48 @@ function ScenarioForm({
           )}
         </div>
 
-        {/* Lots + tax (Sell vs Borrow inputs) */}
+        {/* Lots + tax (Sell vs Borrow inputs). When a stock is linked,
+            lots come from its release events; otherwise the user types
+            them in. */}
         <div className="space-y-2">
           <Label>Cost basis lots</Label>
           <p className="text-[11px] text-muted-foreground">
-            Pick which lot is sold first. Selling a high-basis (near-price) lot collapses today&apos;s tax bill toward zero.
+            {linkedToStock ? (
+              <>
+                Derived from <b>{resolved.sources.lots}</b> — pick which one is sold
+                first. Selling a high-basis (near-price) lot collapses today&apos;s tax bill toward zero.
+              </>
+            ) : (
+              <>Pick which lot is sold first. Selling a high-basis (near-price) lot collapses today&apos;s tax bill toward zero.</>
+            )}
           </p>
-          {scenario.lots.length === 0 ? (
+          {linkedToStock ? (
+            resolved.lots.length === 0 ? (
+              <p className="text-[11px] text-muted-foreground">
+                No release events recorded on this stock yet — add one in Investments to give the sell math a basis.
+              </p>
+            ) : (
+              <div className="grid grid-cols-1 gap-2">
+                {resolved.lots.map((l) => (
+                  <label
+                    key={l.id}
+                    className={cn(
+                      "grid grid-cols-[auto_1fr_auto] items-center gap-2 rounded-md border p-2 text-xs",
+                      resolved.selected_lot_id === l.id ? "border-primary" : "",
+                    )}
+                  >
+                    <input
+                      type="radio"
+                      checked={resolved.selected_lot_id === l.id}
+                      onChange={() => upd("selected_lot_id", l.id)}
+                    />
+                    <span className="font-medium">{l.name}</span>
+                    <span className="tabular-nums">{formatMoney(l.cost_basis, USD, { fractionDigits: 2 })}/sh</span>
+                  </label>
+                ))}
+              </div>
+            )
+          ) : scenario.lots.length === 0 ? (
             <Button size="sm" variant="outline" onClick={addLot}>
               <Plus className="h-3.5 w-3.5" /> Add lot
             </Button>
@@ -1054,6 +1174,14 @@ function SellVsBorrowView({
 }
 
 // ----- Small utility components -----
+
+function DerivedValue({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex h-9 items-center rounded-md border border-dashed bg-muted/40 px-3 text-sm font-medium tabular-nums">
+      {children}
+    </div>
+  );
+}
 
 function Kpi({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
