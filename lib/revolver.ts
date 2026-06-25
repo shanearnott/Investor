@@ -388,10 +388,10 @@ export function computeFacility(
     const rate = (sofrAt(scenario, monthEnd) + scenario.spread_pct) / 100;
     lastRate = rate * 100;
 
-    const interest =
-      scenario.day_count === "actual360"
-        ? balance * rate * (days / 360)
-        : balance * rate / 12;
+    // Actual / 360 — the SBLOC standard. (We used to expose a "monthly
+    // approx" toggle here; the difference is rounding noise and the
+    // option just cluttered the form.)
+    const interest = balance * rate * (days / 360);
 
     const cashPaid = mode === "monthly" ? interest : 0;
     const balanceStart = balance;
