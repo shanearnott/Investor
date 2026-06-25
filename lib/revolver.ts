@@ -71,6 +71,12 @@ export const RevolverScenarioSchema = z.object({
   interest_mode: z.enum(["monthly", "capitalise"]).default("monthly"),
 
   sofr_base_pct: z.number().min(0).max(50).default(3.62),
+  /** Optional low/high SOFR shocks. When set, the Facility view renders
+   *  a shaded band on the balance + cumulative-interest charts spanning
+   *  the run-with-low to run-with-high outcomes, with the today line on
+   *  top. Both fields stay optional so existing scenarios still parse. */
+  sofr_low_pct: z.number().min(0).max(50).optional(),
+  sofr_high_pct: z.number().min(0).max(50).optional(),
   sofr_overrides: z.array(SofrOverrideSchema).default([]),
   spread_pct: z.number().min(0).max(20).default(0.5),
 
@@ -448,6 +454,17 @@ export function computeFacility(
     effective_annual_rate_pct: effectiveAnnualRate * 100,
     // unused field anchor so the type infers `number`
   } as FacilityResult & { effective_annual_rate_pct: number };
+}
+
+/** Run computeFacility with the base SOFR shifted to `baseSofr` (overrides
+ *  still apply on top by date). Powers the low/high band shading on the
+ *  Facility view charts. */
+export function computeFacilityAtBaseSofr(
+  scenario: RevolverScenario,
+  mode: "monthly" | "capitalise",
+  baseSofr: number,
+): FacilityResult {
+  return computeFacility({ ...scenario, sofr_base_pct: baseSofr }, mode);
 }
 
 // ----- Sell vs Borrow -----

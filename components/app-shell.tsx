@@ -41,7 +41,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="min-h-dvh">
-      <header className="fixed top-0 left-0 right-0 z-30 flex items-center justify-between gap-2 border-b bg-background/95 backdrop-blur px-3 py-2 sm:px-6 sm:py-3">
+      <header
+        className="fixed top-0 left-0 right-0 z-30 flex items-center justify-between gap-2 border-b bg-background/95 backdrop-blur px-3 py-2 sm:px-6 sm:py-3"
+        style={{ transform: "translateZ(0)" }}
+      >
         <Link href="/" className="flex items-center gap-2 text-lg font-semibold">
           <span className="text-xl">📈</span>
           <span>Investor</span>
@@ -91,7 +94,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <div className="fixed top-[44px] left-0 right-0 z-20 border-b bg-destructive/10 px-4 py-2 text-sm text-destructive sm:top-[52px]">{error}</div>
       ) : null}
       <main className="px-3 pb-24 pt-[60px] sm:px-6 sm:pb-24 sm:pt-[68px]">{children}</main>
-      <nav className="fixed bottom-0 left-0 right-0 z-40 border-t bg-background/95 backdrop-blur sm:hidden">
+      <nav
+        className="fixed bottom-0 left-0 right-0 z-40 border-t bg-background/95 backdrop-blur sm:hidden"
+        style={{
+          // iOS Safari: position:fixed + bottom:0 occasionally floats
+          // mid-viewport during the address-bar collapse animation when
+          // scrolling up. Forcing a layer with translateZ(0) keeps the
+          // nav glued to the visual viewport. Home-indicator safe-area
+          // padding handles iPhones with a notch.
+          transform: "translateZ(0)",
+          paddingBottom: "env(safe-area-inset-bottom, 0px)",
+        }}
+      >
         <ul className="flex overflow-x-auto scrollbar-none [-webkit-overflow-scrolling:touch]">
           {navItems.map(({ href, label, icon: Icon }) => {
             const active =

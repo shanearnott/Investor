@@ -43,6 +43,12 @@
 }
 
 * { border-color: hsl(var(--border)); }
+html, body {
+  /* Disable iOS Safari's rubber-band overscroll on the document. The
+   * combination of address-bar collapse + bounce was the trigger that
+   * occasionally left position:fixed bottom-0 nav floating mid-screen. */
+  overscroll-behavior-y: none;
+}
 body {
   color: hsl(var(--foreground));
   background: hsl(var(--background));
