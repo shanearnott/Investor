@@ -24,7 +24,6 @@ const navItems = [
   { href: "/projections", label: "Projections", icon: LineChart },
   { href: "/projects", label: "Projects", icon: Briefcase },
   { href: "/revolver", label: "Revolver", icon: Landmark },
-  { href: "/settings", label: "Settings", icon: Settings },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -47,45 +46,58 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <span className="text-xl">📈</span>
           <span>Investor</span>
         </Link>
-        {!isDemo ? (
+        <div className="flex items-center gap-2">
+          {!isDemo ? (
+            <Link
+              href="/settings"
+              className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-800 hover:bg-emerald-200 max-w-[50vw] sm:max-w-none"
+              title={driveEmail ? `Synced to Google Drive · ${driveEmail}` : "Connected to Google Drive"}
+            >
+              <Cloud className="h-3 w-3 shrink-0" />
+              <span className="truncate">{driveEmail ?? "Drive connected"}</span>
+            </Link>
+          ) : showDemoBadge ? (
+            <Link
+              href="/settings"
+              className="inline-flex items-center rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800 hover:bg-amber-200"
+              title="Connect Google Drive in Settings to sync across devices"
+            >
+              Demo mode
+            </Link>
+          ) : (
+            <Link
+              href="/settings"
+              className="inline-flex items-center gap-1.5 rounded-full bg-secondary px-2.5 py-1 text-xs font-medium text-muted-foreground hover:bg-accent"
+              title="Local only — connect Google Drive in Settings to sync across devices"
+            >
+              <CloudOff className="h-3 w-3 shrink-0" />
+              <span>Local only</span>
+            </Link>
+          )}
           <Link
             href="/settings"
-            className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-800 hover:bg-emerald-200 max-w-[60vw] sm:max-w-none"
-            title={driveEmail ? `Synced to Google Drive · ${driveEmail}` : "Connected to Google Drive"}
+            className={cn(
+              "inline-flex h-8 w-8 items-center justify-center rounded-full hover:bg-accent",
+              pathname.startsWith("/settings") ? "bg-secondary text-foreground" : "text-muted-foreground",
+            )}
+            aria-label="Settings"
+            title="Settings"
           >
-            <Cloud className="h-3 w-3 shrink-0" />
-            <span className="truncate">{driveEmail ?? "Drive connected"}</span>
+            <Settings className="h-4 w-4" />
           </Link>
-        ) : showDemoBadge ? (
-          <Link
-            href="/settings"
-            className="inline-flex items-center rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800 hover:bg-amber-200"
-            title="Connect Google Drive in Settings to sync across devices"
-          >
-            Demo mode
-          </Link>
-        ) : (
-          <Link
-            href="/settings"
-            className="inline-flex items-center gap-1.5 rounded-full bg-secondary px-2.5 py-1 text-xs font-medium text-muted-foreground hover:bg-accent"
-            title="Local only — connect Google Drive in Settings to sync across devices"
-          >
-            <CloudOff className="h-3 w-3 shrink-0" />
-            <span>Local only</span>
-          </Link>
-        )}
+        </div>
       </header>
       {error ? (
         <div className="fixed top-[44px] left-0 right-0 z-20 border-b bg-destructive/10 px-4 py-2 text-sm text-destructive sm:top-[52px]">{error}</div>
       ) : null}
       <main className="px-3 pb-24 pt-[60px] sm:px-6 sm:pb-24 sm:pt-[68px]">{children}</main>
       <nav className="fixed bottom-0 left-0 right-0 z-40 border-t bg-background/95 backdrop-blur sm:hidden">
-        <ul className="flex justify-around">
+        <ul className="flex overflow-x-auto scrollbar-none [-webkit-overflow-scrolling:touch]">
           {navItems.map(({ href, label, icon: Icon }) => {
             const active =
               href === "/" ? pathname === "/" : pathname.startsWith(href);
             return (
-              <li key={href} className="flex-1">
+              <li key={href} className="flex-1 min-w-[64px]">
                 <Link
                   href={href}
                   className={cn(
