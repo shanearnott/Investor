@@ -198,6 +198,7 @@ export function buildDemoData(): CollectionsMap {
         scenario_id: "demo-sc-base",
       },
     ],
+    revolvers: [],
     settings: {
       primary_currency: "USD",
       secondary_currency: "AUD",
