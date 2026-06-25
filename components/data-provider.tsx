@@ -43,6 +43,7 @@ type DataContextValue = {
   setProperties: (next: Property[]) => Promise<void>;
   setScenarios: (next: Scenario[]) => Promise<void>;
   setProjects: (next: InvestmentProject[]) => Promise<void>;
+  setRevolvers: (next: unknown[]) => Promise<void>;
   setSettings: (next: Settings) => Promise<void>;
   loadDemo: () => void;
   resetLocal: () => void;
@@ -85,6 +86,7 @@ const EMPTY: CollectionsMap = {
   properties: [],
   scenarios: [],
   projects: [],
+  revolvers: [],
   settings: DEFAULT_SETTINGS,
 };
 
@@ -151,11 +153,12 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     setLoading(true);
     setError(null);
     try {
-      const [stocksRaw, properties, scenariosRaw, projects, settings] = await Promise.all([
+      const [stocksRaw, properties, scenariosRaw, projects, revolvers, settings] = await Promise.all([
         loadCollection("stocks", [] as StockHolding[]),
         loadCollection("properties", [] as Property[]),
         loadCollection("scenarios", [] as Scenario[]),
         loadCollection("projects", [] as InvestmentProject[]),
+        loadCollection("revolvers", [] as unknown[]),
         loadCollection("settings", DEFAULT_SETTINGS as Settings),
       ]);
       if (ticket !== inflightLoad.current) return;
@@ -280,6 +283,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         properties: properties ?? [],
         scenarios,
         projects: projects ?? [],
+        revolvers: revolvers ?? [],
         settings: settings ?? DEFAULT_SETTINGS,
       });
     } catch (e) {
@@ -421,6 +425,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
           properties: c.properties ?? [],
           scenarios: c.scenarios ?? [],
           projects: c.projects ?? [],
+          revolvers: (c as CollectionsMap).revolvers ?? [],
           settings: c.settings ?? DEFAULT_SETTINGS,
         };
         await Promise.all([
@@ -428,6 +433,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
           saveCollection("properties", next.properties),
           saveCollection("scenarios", next.scenarios),
           saveCollection("projects", next.projects),
+          saveCollection("revolvers", next.revolvers),
           saveCollection("settings", next.settings),
         ]);
         setData(next);
@@ -481,6 +487,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const setProperties = useCallback((n: Property[]) => persist("properties", n), [persist]);
   const setScenarios = useCallback((n: Scenario[]) => persist("scenarios", n), [persist]);
   const setProjects = useCallback((n: InvestmentProject[]) => persist("projects", n), [persist]);
+  const setRevolvers = useCallback((n: unknown[]) => persist("revolvers", n), [persist]);
   const setSettings = useCallback((n: Settings) => persist("settings", n), [persist]);
 
   const loadDemo = useCallback(() => {
@@ -491,6 +498,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       window.localStorage.setItem("investor:properties.json", JSON.stringify(demo.properties));
       window.localStorage.setItem("investor:scenarios.json", JSON.stringify(demo.scenarios));
       window.localStorage.setItem("investor:projects.json", JSON.stringify(demo.projects));
+      window.localStorage.setItem("investor:revolvers.json", JSON.stringify(demo.revolvers ?? []));
       window.localStorage.setItem("investor:settings.json", JSON.stringify(demo.settings));
     }
   }, []);
@@ -510,6 +518,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       setProperties,
       setScenarios,
       setProjects,
+      setRevolvers,
       setSettings,
       loadDemo,
       resetLocal,
@@ -522,7 +531,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       clearDriveAuth,
       autoSync,
     }),
-    [loading, error, data, setStocks, setProperties, setScenarios, setProjects, setSettings, loadDemo, resetLocal, reload, displayCurrency, setDisplayCurrency, driveToken, driveEmail, setDriveAuth, clearDriveAuth, autoSync],
+    [loading, error, data, setStocks, setProperties, setScenarios, setProjects, setRevolvers, setSettings, loadDemo, resetLocal, reload, displayCurrency, setDisplayCurrency, driveToken, driveEmail, setDriveAuth, clearDriveAuth, autoSync],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

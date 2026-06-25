@@ -624,6 +624,10 @@ export type CollectionsMap = {
   properties: Property[];
   scenarios: Scenario[];
   projects: InvestmentProject[];
+  // Revolver/SBLOC modelling scenarios. Stored as plain JSON; the schema
+  // lives in lib/revolver.ts to keep the heavy financial code out of the
+  // top-level model file.
+  revolvers: unknown[];
   settings: Settings;
 };
 
@@ -632,5 +636,6 @@ export const COLLECTION_FILES: Record<keyof CollectionsMap, string> = {
   properties: "properties.json",
   scenarios: "scenarios.json",
   projects: "projects.json",
+  revolvers: "revolvers.json",
   settings: "settings.json",
 };

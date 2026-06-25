@@ -9,6 +9,7 @@ import {
   Cloud,
   CloudOff,
   Home,
+  Landmark,
   LineChart,
   Settings,
 } from "lucide-react";
@@ -22,6 +23,7 @@ const navItems = [
   { href: "/scenarios", label: "Scenarios", icon: BarChart3 },
   { href: "/projections", label: "Projections", icon: LineChart },
   { href: "/projects", label: "Projects", icon: Briefcase },
+  { href: "/revolver", label: "Revolver", icon: Landmark },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
