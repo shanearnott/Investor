@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
+  Area,
   CartesianGrid,
   ComposedChart,
   Legend,
@@ -24,6 +25,7 @@ import {
   RevolverScenarioSchema,
   ResolvedRevolverInputs,
   computeFacility,
+  computeFacilityAtBaseSofr,
   computeSellVsBorrow,
   newRevolverScenario,
   resolveRevolverInputs,
@@ -136,6 +138,26 @@ export default function RevolverPage() {
 
   const facilityMonthly = useMemo(() => computeFacility(effective, "monthly"), [effective]);
   const facilityCapitalise = useMemo(() => computeFacility(effective, "capitalise"), [effective]);
+  // Optional low/high SOFR runs — both facilities re-run at the
+  // low and high bases for the band shading on the Facility charts.
+  const sofrLow = effective.sofr_low_pct;
+  const sofrHigh = effective.sofr_high_pct;
+  const facilityMonthlyLow = useMemo(
+    () => (sofrLow !== undefined ? computeFacilityAtBaseSofr(effective, "monthly", sofrLow) : null),
+    [effective, sofrLow],
+  );
+  const facilityMonthlyHigh = useMemo(
+    () => (sofrHigh !== undefined ? computeFacilityAtBaseSofr(effective, "monthly", sofrHigh) : null),
+    [effective, sofrHigh],
+  );
+  const facilityCapitaliseLow = useMemo(
+    () => (sofrLow !== undefined ? computeFacilityAtBaseSofr(effective, "capitalise", sofrLow) : null),
+    [effective, sofrLow],
+  );
+  const facilityCapitaliseHigh = useMemo(
+    () => (sofrHigh !== undefined ? computeFacilityAtBaseSofr(effective, "capitalise", sofrHigh) : null),
+    [effective, sofrHigh],
+  );
   const facility = effective.interest_mode === "monthly" ? facilityMonthly : facilityCapitalise;
   const sellVsBorrow = useMemo(() => computeSellVsBorrow(effective), [effective]);
   const breakevenTax = useMemo(() => solveBreakevenFutureTaxRate(effective), [effective]);
@@ -218,6 +240,10 @@ export default function RevolverPage() {
           facility={facility}
           monthly={facilityMonthly}
           capitalise={facilityCapitalise}
+          monthlyLow={facilityMonthlyLow}
+          monthlyHigh={facilityMonthlyHigh}
+          capitaliseLow={facilityCapitaliseLow}
+          capitaliseHigh={facilityCapitaliseHigh}
         />
       ) : (
         <SellVsBorrowView
@@ -417,7 +443,7 @@ function ScenarioForm({
         </div>
 
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-          <Field label="SOFR base">
+          <Field label="SOFR today" hint="Drives the line on the charts.">
             <SuffixedInput
               suffix="%/yr"
               type="number"
@@ -426,6 +452,28 @@ function ScenarioForm({
               max={50}
               value={scenario.sofr_base_pct}
               onChange={(e) => upd("sofr_base_pct", Number(e.target.value))}
+            />
+          </Field>
+          <Field label="SOFR low" hint="Blank = no band. Sets the floor of the shaded area.">
+            <SuffixedInput
+              suffix="%/yr"
+              type="number"
+              step={0.05}
+              min={0}
+              max={50}
+              value={scenario.sofr_low_pct ?? ""}
+              onChange={(e) => upd("sofr_low_pct", e.target.value === "" ? undefined : Number(e.target.value))}
+            />
+          </Field>
+          <Field label="SOFR high" hint="Blank = no band. Sets the ceiling of the shaded area.">
+            <SuffixedInput
+              suffix="%/yr"
+              type="number"
+              step={0.05}
+              min={0}
+              max={50}
+              value={scenario.sofr_high_pct ?? ""}
+              onChange={(e) => upd("sofr_high_pct", e.target.value === "" ? undefined : Number(e.target.value))}
             />
           </Field>
           <Field label="Spread over SOFR">
@@ -678,16 +726,25 @@ function FacilityView({
   facility,
   monthly,
   capitalise,
+  monthlyLow,
+  monthlyHigh,
+  capitaliseLow,
+  capitaliseHigh,
 }: {
   scenario: RevolverScenario;
   facility: FacilityResult;
   monthly: FacilityResult;
   capitalise: FacilityResult;
+  monthlyLow: FacilityResult | null;
+  monthlyHigh: FacilityResult | null;
+  capitaliseLow: FacilityResult | null;
+  capitaliseHigh: FacilityResult | null;
 }) {
   const totalBalanceGrowth = capitalise.ending_balance - scenario.draw_amount;
+  const hasBands = !!(monthlyLow || monthlyHigh || capitaliseLow || capitaliseHigh);
   const chartData = useMemo(() => {
     const len = Math.max(monthly.rows.length, capitalise.rows.length);
-    const rows: Array<{
+    type Row = {
       date: string;
       monthly_balance: number;
       cap_balance: number;
@@ -695,15 +752,33 @@ function FacilityView({
       cumulative_interest_capitalise: number;
       required_shares: number;
       ltv_pct: number;
-    }> = [];
+      /** Recharts range-area expects a [lo, hi] tuple per datum. */
+      monthly_balance_range?: [number, number];
+      cap_balance_range?: [number, number];
+      cumulative_interest_monthly_range?: [number, number];
+      cumulative_interest_capitalise_range?: [number, number];
+    };
+    const rows: Row[] = [];
     let cumMonthly = 0;
     let cumCap = 0;
+    let cumMonthlyLow = 0;
+    let cumMonthlyHigh = 0;
+    let cumCapLow = 0;
+    let cumCapHigh = 0;
     for (let i = 0; i < len; i++) {
       const m = monthly.rows[i];
       const c = capitalise.rows[i];
+      const mLo = monthlyLow?.rows[i];
+      const mHi = monthlyHigh?.rows[i];
+      const cLo = capitaliseLow?.rows[i];
+      const cHi = capitaliseHigh?.rows[i];
       cumMonthly += m?.interest ?? 0;
       cumCap += c?.interest ?? 0;
-      rows.push({
+      cumMonthlyLow += mLo?.interest ?? 0;
+      cumMonthlyHigh += mHi?.interest ?? 0;
+      cumCapLow += cLo?.interest ?? 0;
+      cumCapHigh += cHi?.interest ?? 0;
+      const row: Row = {
         date: m?.date ?? c?.date ?? "",
         monthly_balance: m?.balance_end ?? 0,
         cap_balance: c?.balance_end ?? 0,
@@ -711,10 +786,19 @@ function FacilityView({
         cumulative_interest_capitalise: cumCap,
         required_shares: facility.rows[i]?.required_shares ?? 0,
         ltv_pct: facility.rows[i]?.current_ltv_pct ?? 0,
-      });
+      };
+      if (mLo && mHi) {
+        row.monthly_balance_range = [mLo.balance_end, mHi.balance_end];
+        row.cumulative_interest_monthly_range = [cumMonthlyLow, cumMonthlyHigh];
+      }
+      if (cLo && cHi) {
+        row.cap_balance_range = [cLo.balance_end, cHi.balance_end];
+        row.cumulative_interest_capitalise_range = [cumCapLow, cumCapHigh];
+      }
+      rows.push(row);
     }
     return rows;
-  }, [monthly, capitalise, facility]);
+  }, [monthly, capitalise, monthlyLow, monthlyHigh, capitaliseLow, capitaliseHigh, facility]);
 
   return (
     <div className="space-y-4">
@@ -780,7 +864,10 @@ function FacilityView({
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-base">Outstanding balance</CardTitle>
-          <CardDescription>Pay-monthly stays flat; capitalise compounds.</CardDescription>
+          <CardDescription>
+            Pay-monthly stays flat; capitalise compounds.
+            {hasBands ? " Shaded bands span SOFR low → high." : ""}
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="h-[280px] w-full">
@@ -790,10 +877,36 @@ function FacilityView({
                 <XAxis dataKey="date" tickFormatter={formatMmmYY} tick={{ fontSize: 11 }} minTickGap={20} />
                 <YAxis tick={{ fontSize: 11 }} tickFormatter={compactNumber} />
                 <Tooltip
-                  formatter={(v: number) => formatMoneyCompact(v, USD)}
+                  formatter={(v: number | number[]) =>
+                    Array.isArray(v)
+                      ? `${formatMoneyCompact(v[0], USD)} → ${formatMoneyCompact(v[1], USD)}`
+                      : formatMoneyCompact(v, USD)
+                  }
                   labelFormatter={(l) => formatMmmYY(String(l))}
                 />
                 <Legend />
+                {monthlyLow && monthlyHigh ? (
+                  <Area
+                    type="monotone"
+                    dataKey="monthly_balance_range"
+                    name="Pay monthly · SOFR band"
+                    stroke="none"
+                    fill="#0ea5e9"
+                    fillOpacity={0.18}
+                    activeDot={false}
+                  />
+                ) : null}
+                {capitaliseLow && capitaliseHigh ? (
+                  <Area
+                    type="monotone"
+                    dataKey="cap_balance_range"
+                    name="Capitalise · SOFR band"
+                    stroke="none"
+                    fill="#f97316"
+                    fillOpacity={0.18}
+                    activeDot={false}
+                  />
+                ) : null}
                 <Line type="monotone" dataKey="monthly_balance" name="Pay monthly" stroke="#0ea5e9" dot={false} strokeWidth={2} />
                 <Line type="monotone" dataKey="cap_balance" name="Capitalise" stroke="#f97316" dot={false} strokeWidth={2} />
               </ComposedChart>
@@ -805,6 +918,9 @@ function FacilityView({
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-base">Cumulative interest cost</CardTitle>
+          {hasBands ? (
+            <CardDescription>Shaded bands span SOFR low → high.</CardDescription>
+          ) : null}
         </CardHeader>
         <CardContent>
           <div className="h-[260px] w-full">
@@ -814,10 +930,36 @@ function FacilityView({
                 <XAxis dataKey="date" tickFormatter={formatMmmYY} tick={{ fontSize: 11 }} minTickGap={20} />
                 <YAxis tick={{ fontSize: 11 }} tickFormatter={compactNumber} />
                 <Tooltip
-                  formatter={(v: number) => formatMoneyCompact(v, USD)}
+                  formatter={(v: number | number[]) =>
+                    Array.isArray(v)
+                      ? `${formatMoneyCompact(v[0], USD)} → ${formatMoneyCompact(v[1], USD)}`
+                      : formatMoneyCompact(v, USD)
+                  }
                   labelFormatter={(l) => formatMmmYY(String(l))}
                 />
                 <Legend />
+                {monthlyLow && monthlyHigh ? (
+                  <Area
+                    type="monotone"
+                    dataKey="cumulative_interest_monthly_range"
+                    name="Pay monthly · SOFR band"
+                    stroke="none"
+                    fill="#0ea5e9"
+                    fillOpacity={0.18}
+                    activeDot={false}
+                  />
+                ) : null}
+                {capitaliseLow && capitaliseHigh ? (
+                  <Area
+                    type="monotone"
+                    dataKey="cumulative_interest_capitalise_range"
+                    name="Capitalise · SOFR band"
+                    stroke="none"
+                    fill="#f97316"
+                    fillOpacity={0.18}
+                    activeDot={false}
+                  />
+                ) : null}
                 <Line type="monotone" dataKey="cumulative_interest_monthly" name="Pay monthly" stroke="#0ea5e9" dot={false} strokeWidth={2} />
                 <Line type="monotone" dataKey="cumulative_interest_capitalise" name="Capitalise (accrued)" stroke="#f97316" dot={false} strokeWidth={2} />
               </ComposedChart>
