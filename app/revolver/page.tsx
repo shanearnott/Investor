@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Label, Select } from "@/components/ui/input";
 import { newId } from "@/lib/models";
+import { fetchLatestSofr, type SofrSnapshot } from "@/lib/sofr-feed";
 import {
   RevolverScenario,
   RevolverScenarioSchema,
@@ -300,6 +301,33 @@ function ScenarioForm({
   const upd = <K extends keyof RevolverScenario>(k: K, v: RevolverScenario[K]) => onChange({ ...scenario, [k]: v });
   const linkedToStock = !!scenario.stock_id;
   const linkedToScenario = !!scenario.scenario_id;
+
+  // Live SOFR from the NY Fed Markets API. Fetched once on mount with a
+  // 24h cache; the user clicks "Use" to copy it into the scenario.
+  const [liveSofr, setLiveSofr] = useState<SofrSnapshot | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    fetchLatestSofr().then((snap) => {
+      if (!cancelled) setLiveSofr(snap);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const refreshLiveSofr = async () => {
+    setRefreshing(true);
+    try {
+      const snap = await fetchLatestSofr({ force: true });
+      setLiveSofr(snap);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+  const liveDelta =
+    liveSofr !== null
+      ? Math.abs(scenario.sofr_base_pct - liveSofr.rate_pct) < 1e-9
+      : false;
   const addOverride = () => {
     onChange({
       ...scenario,
@@ -453,6 +481,32 @@ function ScenarioForm({
               value={scenario.sofr_base_pct}
               onChange={(e) => upd("sofr_base_pct", Number(e.target.value))}
             />
+            {liveSofr ? (
+              <div className="mt-1 flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                <span>
+                  NY Fed: <b>{liveSofr.rate_pct.toFixed(2)}%</b> as of {liveSofr.effective_date}
+                </span>
+                {liveDelta ? (
+                  <span className="text-emerald-700">· in sync</span>
+                ) : (
+                  <button
+                    type="button"
+                    className="rounded-md border bg-background px-1.5 py-0.5 font-medium text-foreground hover:bg-accent"
+                    onClick={() => upd("sofr_base_pct", liveSofr.rate_pct)}
+                  >
+                    Use
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="text-muted-foreground hover:underline"
+                  onClick={refreshLiveSofr}
+                  disabled={refreshing}
+                >
+                  {refreshing ? "…" : "refresh"}
+                </button>
+              </div>
+            ) : null}
           </Field>
           <Field label="SOFR low" hint="Blank = no band. Sets the floor of the shaded area.">
             <SuffixedInput
