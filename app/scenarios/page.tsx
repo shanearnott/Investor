@@ -7,6 +7,7 @@ import { useData } from "@/components/data-provider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Label, Select, Textarea } from "@/components/ui/input";
+import { MoneyInput } from "@/components/ui/money-input";
 import { defaultSaleTaxRate, newId, RSU_DEFAULT_TAX_RATES, Scenario, ScenarioSchema, SUPPORTED_JURISDICTIONS } from "@/lib/models";
 import { buildNetWorthSeries } from "@/lib/projections";
 import { cn, formatMoney, formatMoneyCompact } from "@/lib/utils";
@@ -596,17 +597,14 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
                             label="Starting price (today)"
                             hint={`What if today's ${h.ticker || "share"} price was X. Blank = use actual ${formatMoney(h.current_share_price, h.currency, { fractionDigits: 2 })}.`}
                           >
-                            <SuffixedInput
+                            <MoneyInput
                               suffix={h.currency}
-                              type="number"
-                              step="0.01"
-                              min={0}
-                              value={ov.starting_share_price ?? ""}
+                              allowEmpty
+                              value={ov.starting_share_price}
                               placeholder={h.current_share_price.toFixed(2)}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                if (val === "") clearStockField(h.id, "starting_share_price");
-                                else updateStockOv(h.id, { starting_share_price: Number(val) });
+                              onChange={(n) => {
+                                if (n === undefined) clearStockField(h.id, "starting_share_price");
+                                else updateStockOv(h.id, { starting_share_price: n });
                               }}
                             />
                           </Field>
@@ -630,17 +628,14 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
                                 : "Blank = use the rate."
                             }
                           >
-                            <SuffixedInput
+                            <MoneyInput
                               suffix={h.currency}
-                              type="number"
-                              step="0.01"
-                              min={0}
-                              value={ov.target_share_price ?? ""}
+                              allowEmpty
+                              value={ov.target_share_price}
                               placeholder="e.g. 200"
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                if (val === "") clearStockField(h.id, "target_share_price");
-                                else updateStockOv(h.id, { target_share_price: Number(val) });
+                              onChange={(n) => {
+                                if (n === undefined) clearStockField(h.id, "target_share_price");
+                                else updateStockOv(h.id, { target_share_price: n });
                               }}
                             />
                           </Field>
@@ -942,16 +937,11 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
                   </div>
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                     <Field label="Release price" hint="Native currency. Blank = projected price at release.">
-                      <Input
-                        type="number"
-                        step="0.01"
-                        min={0}
-                        value={r.release_price ?? ""}
-                        onChange={(e) =>
-                          updateScenarioRelease(r.id, {
-                            release_price: e.target.value === "" ? undefined : Number(e.target.value),
-                          })
-                        }
+                      <MoneyInput
+                        suffix={null}
+                        allowEmpty
+                        value={r.release_price}
+                        onChange={(n) => updateScenarioRelease(r.id, { release_price: n })}
                       />
                     </Field>
                     <Field label="Release jurisdiction" hint="Where you live at release.">
@@ -1117,16 +1107,11 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
                         />
                       </Field>
                       <Field label="Sale price" hint="Native currency. Blank = projected price at sell.">
-                        <Input
-                          type="number"
-                          step="0.01"
-                          min={0}
-                          value={s.sale_price ?? ""}
-                          onChange={(e) =>
-                            updateScenarioSell(s.id, {
-                              sale_price: e.target.value === "" ? undefined : Number(e.target.value),
-                            })
-                          }
+                        <MoneyInput
+                          suffix={null}
+                          allowEmpty
+                          value={s.sale_price}
+                          onChange={(n) => updateScenarioSell(s.id, { sale_price: n })}
                         />
                       </Field>
                       <Field
