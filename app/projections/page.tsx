@@ -21,7 +21,7 @@ import { useData } from "@/components/data-provider";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Label, Select } from "@/components/ui/input";
 import { convert } from "@/lib/fx";
-import { Property, Scenario, ScenarioSchema, StockHolding, type Settings, vestedSharesAt } from "@/lib/models";
+import { parseISO, Property, releaseKeptShares, releaseWithholdingShares, Scenario, ScenarioSchema, sellSharesFor, StockHolding, type Settings, vestedSharesAt } from "@/lib/models";
 import {
   buildNetWorthSeries,
   holdingSaleAccrual,
@@ -1016,6 +1016,48 @@ function ScenarioSaleMath({
           (soldSharesByStock.get(sale.stockId) ?? 0) + sale.shares,
         );
       }
+      // Per-holding breakdown so the user can see *why* a 100% sell
+      // leaves shares behind (other releases, untouched tranche vests,
+      // future tranche vests within the horizon, scenario withholding,
+      // etc.). Each component is in tranche-counted shares so the user
+      // can reconcile against vestedSharesAt().
+      type TrancheRow = { id: string; name: string; granted: number; vestedByHorizon: number };
+      type ReleaseRow = {
+        id: string;
+        name: string;
+        date: string;
+        gross: number;
+        kept: number;
+        withheld: number;
+        soldIRL: number;
+      };
+      type ScenarioReleaseRow = {
+        id: string;
+        name: string;
+        date: string;
+        gross: number;
+        withheld: number;
+      };
+      type ScenarioSellRow = {
+        id: string;
+        name: string;
+        date: string;
+        releaseName: string;
+        shares: number;
+      };
+      type Breakdown = {
+        tranches: TrancheRow[];
+        investReleases: ReleaseRow[];
+        scenarioReleases: ScenarioReleaseRow[];
+        scenarioSells: ScenarioSellRow[];
+        grantedTotal: number;
+        vestedByHorizon: number;
+        unvestedAtHorizon: number;
+        investWithholding: number;
+        investSells: number;
+        scenarioWithholding: number;
+        scenarioSellsTotal: number;
+      };
       const remaining = holdings
         .map((h) => {
           const v = projectStockValueAt(h, sc, horizon, ccy, settings as Settings);
@@ -1025,7 +1067,108 @@ function ScenarioSaleMath({
             v.shares_vested > 0 ? v.liquid * (freeVested / v.shares_vested) : 0;
           const shares = freeVested + v.shares_unvested;
           const value = liquidFree + v.unvested;
-          return { holding: h, shares, value, projectedPrice: v.projected_price };
+
+          // Tranche-level: granted vs vested-by-horizon.
+          const tranches: TrancheRow[] = h.tranches.map((t) => {
+            const granted = t.vest_events.reduce((n, ev) => n + ev.shares, 0);
+            const vestedByHorizon = t.vest_events.reduce((n, ev) => {
+              const d = parseISO(ev.vest_date);
+              return d && d <= horizon ? n + ev.shares : n;
+            }, 0);
+            return {
+              id: t.id,
+              name: t.name || `Tranche ${t.id.slice(0, 6)}`,
+              granted,
+              vestedByHorizon,
+            };
+          });
+          const grantedTotal = tranches.reduce((n, t) => n + t.granted, 0);
+          const vestedByHorizon = tranches.reduce((n, t) => n + t.vestedByHorizon, 0);
+          const unvestedAtHorizon = Math.max(0, grantedTotal - vestedByHorizon);
+
+          // Per investment release (with how much was sold IRL against it).
+          const releasesById = new Map((h.releases ?? []).map((r) => [r.id, r]));
+          const investSellsByRelease = new Map<string, number>();
+          for (const s of h.sells ?? []) {
+            const d = parseISO(s.sell_date);
+            if (!d || d > horizon) continue;
+            const release = releasesById.get(s.release_id) ?? null;
+            const n = sellSharesFor(s, release);
+            investSellsByRelease.set(s.release_id, (investSellsByRelease.get(s.release_id) ?? 0) + n);
+          }
+          const investReleases: ReleaseRow[] = [];
+          for (const r of h.releases ?? []) {
+            const d = parseISO(r.release_date);
+            if (!d || d > horizon) continue;
+            investReleases.push({
+              id: r.id,
+              name: r.name || `Release ${r.release_date}`,
+              date: r.release_date,
+              gross: r.shares,
+              kept: releaseKeptShares(r),
+              withheld: releaseWithholdingShares(r),
+              soldIRL: investSellsByRelease.get(r.id) ?? 0,
+            });
+          }
+          const investWithholding = investReleases.reduce((n, r) => n + r.withheld, 0);
+          const investSells = investReleases.reduce((n, r) => n + r.soldIRL, 0);
+
+          // Scenario releases on this stock fire by horizon; scenario
+          // withholding shrinks the available pool the same way investment
+          // withholding does, so call it out separately.
+          const scenarioReleases: ScenarioReleaseRow[] = [];
+          for (const sr of sc.releases ?? []) {
+            if (sr.stock_id !== h.id) continue;
+            const d = parseISO(sr.release_date);
+            if (!d || d > horizon) continue;
+            const gross =
+              sr.shares_pct !== undefined && sr.shares_pct > 0
+                ? vestedSharesAt(h, d) * (Math.min(100, Math.max(0, sr.shares_pct)) / 100)
+                : sr.shares;
+            const rate =
+              sr.release_tax_rate_pct !== undefined
+                ? sr.release_tax_rate_pct
+                : 0;
+            const withheld =
+              h.equity_type === "Stock Options"
+                ? 0
+                : Math.max(0, gross * (Math.min(100, Math.max(0, rate)) / 100));
+            scenarioReleases.push({
+              id: sr.id,
+              name: sr.name || `Scenario release ${sr.release_date}`,
+              date: sr.release_date,
+              gross,
+              withheld,
+            });
+          }
+          const scenarioWithholding = scenarioReleases.reduce((n, r) => n + r.withheld, 0);
+
+          // Scenario sells against this stock (resolved sales — gives us
+          // actual share counts and the linked release name).
+          const stockSales = sales.filter((s) => s.stockId === h.id);
+          const scenarioSells: ScenarioSellRow[] = stockSales.map((s, i) => ({
+            id: `${s.stockId}:${i}`,
+            name: s.breakdown?.sellName || s.breakdown?.releaseName || `Sale ${i + 1}`,
+            date: s.breakdown?.sellDate ?? "",
+            releaseName: s.breakdown?.releaseName ?? "—",
+            shares: s.shares,
+          }));
+          const scenarioSellsTotal = scenarioSells.reduce((n, s) => n + s.shares, 0);
+
+          const breakdown: Breakdown = {
+            tranches,
+            investReleases,
+            scenarioReleases,
+            scenarioSells,
+            grantedTotal,
+            vestedByHorizon,
+            unvestedAtHorizon,
+            investWithholding,
+            investSells,
+            scenarioWithholding,
+            scenarioSellsTotal,
+          };
+          return { holding: h, shares, value, projectedPrice: v.projected_price, breakdown };
         })
         .filter((x) => x.shares > 0.5 || x.value > 0.5);
       const remainingTotal = remaining.reduce((n, x) => n + x.value, 0);
@@ -1122,16 +1265,105 @@ function ScenarioSaleMath({
                       <span>Remaining unsold at horizon</span>
                       <span>{horizon.toISOString().slice(0, 10)}</span>
                     </div>
-                    {remaining.map(({ holding, shares, value, projectedPrice }) => (
-                      <div key={holding.id} className="flex justify-between">
-                        <span>
-                          {holding.ticker || holding.company_name || holding.id}
-                          <span className="ml-1 text-[10px] text-muted-foreground">
-                            {formatNumber(Math.round(shares))} sh @ {formatMoney(projectedPrice, holding.currency, { fractionDigits: 2 })}
+                    {remaining.map(({ holding, shares, value, projectedPrice, breakdown }) => (
+                      <details key={holding.id} className="rounded-md border bg-background px-2 py-1">
+                        <summary className="flex cursor-pointer justify-between">
+                          <span>
+                            {holding.ticker || holding.company_name || holding.id}
+                            <span className="ml-1 text-[10px] text-muted-foreground">
+                              {formatNumber(Math.round(shares))} sh @ {formatMoney(projectedPrice, holding.currency, { fractionDigits: 2 })}
+                            </span>
                           </span>
-                        </span>
-                        <span>{formatMoney(value, ccy)}</span>
-                      </div>
+                          <span>{formatMoney(value, ccy)}</span>
+                        </summary>
+                        <div className="mt-1 space-y-1 border-t pt-1 text-[10px] text-muted-foreground">
+                          <div className="font-semibold text-foreground">By tranche</div>
+                          {breakdown.tranches.length === 0 ? (
+                            <div>No tranches recorded.</div>
+                          ) : (
+                            breakdown.tranches.map((t) => (
+                              <div key={t.id} className="flex justify-between">
+                                <span>{t.name}</span>
+                                <span className="tabular-nums">
+                                  {formatNumber(Math.round(t.vestedByHorizon))} / {formatNumber(t.granted)} sh vested
+                                  {t.granted > t.vestedByHorizon ? ` · ${formatNumber(t.granted - t.vestedByHorizon)} still vesting` : ""}
+                                </span>
+                              </div>
+                            ))
+                          )}
+                          {breakdown.investReleases.length > 0 ? (
+                            <>
+                              <div className="font-semibold text-foreground pt-1">Investment releases</div>
+                              {breakdown.investReleases.map((r) => (
+                                <div key={r.id} className="flex justify-between">
+                                  <span>{r.name} · {r.date}</span>
+                                  <span className="tabular-nums">
+                                    {formatNumber(r.gross)} gross · {formatNumber(Math.round(r.withheld))} withheld · {formatNumber(Math.round(r.kept))} kept
+                                    {r.soldIRL > 0 ? ` · ${formatNumber(Math.round(r.soldIRL))} sold IRL` : ""}
+                                  </span>
+                                </div>
+                              ))}
+                            </>
+                          ) : null}
+                          {breakdown.scenarioReleases.length > 0 ? (
+                            <>
+                              <div className="font-semibold text-foreground pt-1">Scenario releases by horizon</div>
+                              {breakdown.scenarioReleases.map((r) => (
+                                <div key={r.id} className="flex justify-between">
+                                  <span>{r.name} · {r.date}</span>
+                                  <span className="tabular-nums">
+                                    {formatNumber(Math.round(r.gross))} gross
+                                    {r.withheld > 0 ? ` · ${formatNumber(Math.round(r.withheld))} withheld` : ""}
+                                  </span>
+                                </div>
+                              ))}
+                            </>
+                          ) : null}
+                          {breakdown.scenarioSells.length > 0 ? (
+                            <>
+                              <div className="font-semibold text-foreground pt-1">Scenario sells by horizon</div>
+                              {breakdown.scenarioSells.map((s) => (
+                                <div key={s.id} className="flex justify-between">
+                                  <span>{s.name} · {s.date} → {s.releaseName}</span>
+                                  <span className="tabular-nums">−{formatNumber(Math.round(s.shares))} sh</span>
+                                </div>
+                              ))}
+                            </>
+                          ) : null}
+                          <div className="border-t pt-1 mt-1 font-semibold text-foreground">
+                            <div className="flex justify-between">
+                              <span>Granted total</span>
+                              <span className="tabular-nums">{formatNumber(breakdown.grantedTotal)} sh</span>
+                            </div>
+                            <div className="flex justify-between text-muted-foreground font-normal">
+                              <span>Vested by horizon</span>
+                              <span className="tabular-nums">{formatNumber(Math.round(breakdown.vestedByHorizon))} sh</span>
+                            </div>
+                            <div className="flex justify-between text-muted-foreground font-normal">
+                              <span>Unvested at horizon (still vesting later)</span>
+                              <span className="tabular-nums">{formatNumber(Math.round(breakdown.unvestedAtHorizon))} sh</span>
+                            </div>
+                            <div className="flex justify-between text-muted-foreground font-normal">
+                              <span>− Investment withholding + sells</span>
+                              <span className="tabular-nums">−{formatNumber(Math.round(breakdown.investWithholding + breakdown.investSells))} sh</span>
+                            </div>
+                            {breakdown.scenarioWithholding > 0 ? (
+                              <div className="flex justify-between text-muted-foreground font-normal">
+                                <span>− Scenario withholding</span>
+                                <span className="tabular-nums">−{formatNumber(Math.round(breakdown.scenarioWithholding))} sh</span>
+                              </div>
+                            ) : null}
+                            <div className="flex justify-between text-muted-foreground font-normal">
+                              <span>− Scenario sells</span>
+                              <span className="tabular-nums">−{formatNumber(Math.round(breakdown.scenarioSellsTotal))} sh</span>
+                            </div>
+                            <div className="flex justify-between text-foreground">
+                              <span>= Remaining</span>
+                              <span className="tabular-nums">{formatNumber(Math.round(shares))} sh</span>
+                            </div>
+                          </div>
+                        </div>
+                      </details>
                     ))}
                     <div className="flex justify-between font-semibold text-foreground border-t pt-1 mt-1">
                       <span>Total remaining</span>
