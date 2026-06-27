@@ -183,58 +183,58 @@ function ReleaseEventsSummary({
 }) {
   const display = settings.primary_currency;
   const today = new Date();
-  const rows = stocks
-    .map((h) => {
-      const events = (h.releases ?? []).filter((r) => {
-        const d = parseISO(r.release_date);
-        return !!d && d <= today;
-      });
-      if (events.length === 0) return null;
-      let shares = 0;
-      let covered = 0;
-      let grossNative = 0;
-      let withheldNative = 0;
-      for (const e of events) {
-        const taxShares = releaseWithholdingShares(e);
-        shares += e.shares;
-        covered += taxShares;
-        grossNative += e.shares * e.release_price;
-        withheldNative += taxShares * e.release_price;
-      }
-      if (shares === 0) return null;
-      const remaining = vestedSharesAt(h, today);
-      const gross = convert(grossNative, h.currency, display, settings);
-      const withheld = convert(withheldNative, h.currency, display, settings);
-      return {
-        id: h.id,
-        label: h.ticker || h.company_name || "—",
-        shares,
+  // One row per release event (past releases only), so multi-release
+  // stocks get every event named individually. Sorted by date so the
+  // user can scan the timeline at a glance.
+  type Row = {
+    key: string;
+    stock: string;
+    name: string;
+    date: string;
+    shares: number;
+    covered: number;
+    grossDisplay: number;
+    withheldDisplay: number;
+  };
+  const rows: Row[] = [];
+  for (const h of stocks) {
+    for (const r of h.releases ?? []) {
+      const d = parseISO(r.release_date);
+      if (!d || d > today) continue;
+      if (r.shares <= 0) continue;
+      const covered = releaseWithholdingShares(r);
+      const grossNative = r.shares * r.release_price;
+      const withheldNative = covered * r.release_price;
+      rows.push({
+        key: `${h.id}:${r.id}`,
+        stock: h.ticker || h.company_name || "—",
+        name: r.name || `Release ${r.release_date}`,
+        date: r.release_date,
+        shares: r.shares,
         covered,
-        remaining,
-        gross,
-        withheld,
-      };
-    })
-    .filter((x): x is NonNullable<typeof x> => x !== null);
+        grossDisplay: convert(grossNative, h.currency, display, settings),
+        withheldDisplay: convert(withheldNative, h.currency, display, settings),
+      });
+    }
+  }
   if (rows.length === 0) return null;
-  const total = rows.reduce(
+  rows.sort((a, b) => a.date.localeCompare(b.date) || a.stock.localeCompare(b.stock));
+  const totals = rows.reduce(
     (acc, r) => ({
       shares: acc.shares + r.shares,
       covered: acc.covered + r.covered,
-      remaining: acc.remaining + r.remaining,
-      gross: acc.gross + r.gross,
-      withheld: acc.withheld + r.withheld,
+      gross: acc.gross + r.grossDisplay,
+      withheld: acc.withheld + r.withheldDisplay,
     }),
-    { shares: 0, covered: 0, remaining: 0, gross: 0, withheld: 0 },
+    { shares: 0, covered: 0, gross: 0, withheld: 0 },
   );
   return (
     <Card>
       <CardHeader>
         <CardTitle className="text-base">Release events</CardTitle>
         <CardDescription>
-          Per stock: shares the user still holds after release events have
-          deducted withholding (and sale events, if any). Money totals are
-          compact (e.g. 2.1M).
+          One row per release event with the name, date and per-event
+          withholding. Money totals are compact (e.g. 2.1M).
         </CardDescription>
       </CardHeader>
       <CardContent className="overflow-x-auto">
@@ -242,7 +242,8 @@ function ReleaseEventsSummary({
           <thead>
             <tr className="text-[10px] uppercase tracking-wide text-muted-foreground border-b">
               <th className="text-left font-normal px-2 py-1.5">Stock</th>
-              <th className="text-right font-normal px-2 py-1.5">Remaining</th>
+              <th className="text-left font-normal px-2 py-1.5">Name</th>
+              <th className="text-left font-normal px-2 py-1.5">Date</th>
               <th className="text-right font-normal px-2 py-1.5">Released</th>
               <th className="text-right font-normal px-2 py-1.5">Withheld</th>
               <th className="text-right font-normal px-2 py-1.5">Gross</th>
@@ -251,23 +252,23 @@ function ReleaseEventsSummary({
           </thead>
           <tbody>
             {rows.map((r) => (
-              <tr key={r.id} className="border-b last:border-0">
-                <td className="px-2 py-1.5 font-medium">{r.label}</td>
-                <td className="px-2 py-1.5 text-right font-semibold">{formatNumberCompact(Math.round(r.remaining))} sh</td>
-                <td className="px-2 py-1.5 text-right">{formatNumberCompact(r.shares)}</td>
+              <tr key={r.key} className="border-b last:border-0">
+                <td className="px-2 py-1.5 font-medium">{r.stock}</td>
+                <td className="px-2 py-1.5">{r.name}</td>
+                <td className="px-2 py-1.5 text-muted-foreground">{r.date}</td>
+                <td className="px-2 py-1.5 text-right font-semibold">{formatNumberCompact(r.shares)}</td>
                 <td className="px-2 py-1.5 text-right text-muted-foreground">−{formatNumberCompact(Math.round(r.covered))}</td>
-                <td className="px-2 py-1.5 text-right">{formatMoneyCompact(r.gross, display)}</td>
-                <td className="px-2 py-1.5 text-right text-muted-foreground">−{formatMoneyCompact(r.withheld, display)}</td>
+                <td className="px-2 py-1.5 text-right">{formatMoneyCompact(r.grossDisplay, display)}</td>
+                <td className="px-2 py-1.5 text-right text-muted-foreground">−{formatMoneyCompact(r.withheldDisplay, display)}</td>
               </tr>
             ))}
             {rows.length > 1 ? (
               <tr className="bg-muted/40">
-                <td className="px-2 py-1.5 font-medium">Total</td>
-                <td className="px-2 py-1.5 text-right font-semibold">{formatNumberCompact(Math.round(total.remaining))} sh</td>
-                <td className="px-2 py-1.5 text-right">{formatNumberCompact(total.shares)}</td>
-                <td className="px-2 py-1.5 text-right text-muted-foreground">−{formatNumberCompact(Math.round(total.covered))}</td>
-                <td className="px-2 py-1.5 text-right">{formatMoneyCompact(total.gross, display)}</td>
-                <td className="px-2 py-1.5 text-right text-muted-foreground">−{formatMoneyCompact(total.withheld, display)}</td>
+                <td className="px-2 py-1.5 font-medium" colSpan={3}>Total</td>
+                <td className="px-2 py-1.5 text-right font-semibold">{formatNumberCompact(totals.shares)}</td>
+                <td className="px-2 py-1.5 text-right text-muted-foreground">−{formatNumberCompact(Math.round(totals.covered))}</td>
+                <td className="px-2 py-1.5 text-right">{formatMoneyCompact(totals.gross, display)}</td>
+                <td className="px-2 py-1.5 text-right text-muted-foreground">−{formatMoneyCompact(totals.withheld, display)}</td>
               </tr>
             ) : null}
           </tbody>
