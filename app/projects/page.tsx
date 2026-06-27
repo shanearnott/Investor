@@ -8,6 +8,7 @@ import { useData } from "@/components/data-provider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Label, Select, Textarea } from "@/components/ui/input";
+import { MoneyInput } from "@/components/ui/money-input";
 import {
   FundingSource,
   InvestmentProject,
@@ -424,7 +425,7 @@ function ProjectForm({
           {d.items.map((item, idx) => (
             <div key={idx} className="grid grid-cols-1 gap-2 rounded-md border p-2 sm:grid-cols-[2fr_1fr_1fr_auto]">
               <Input placeholder="Item" value={item.name} onChange={(e) => updateItem(idx, { ...item, name: e.target.value })} />
-              <Input type="number" step="100" placeholder="Cost" value={item.cost} onChange={(e) => updateItem(idx, { ...item, cost: Number(e.target.value) })} />
+              <MoneyInput suffix={null} placeholder="Cost" value={item.cost} onChange={(n) => updateItem(idx, { ...item, cost: n })} />
               <Select value={item.currency} onChange={(e) => updateItem(idx, { ...item, currency: e.target.value as ProjectItem["currency"] })}>
                 {SUPPORTED_CURRENCIES.map((c) => <option key={c}>{c}</option>)}
               </Select>
@@ -482,12 +483,11 @@ function ProjectForm({
                   : null}
               </Select>
               {fs.kind === "cash" ? (
-                <Input
-                  type="number"
-                  step="100"
-                  placeholder={`Cash available (${data.settings.primary_currency})`}
+                <MoneyInput
+                  suffix={data.settings.primary_currency}
+                  placeholder="Cash available"
                   value={fs.amount_or_shares}
-                  onChange={(e) => updateFunding(idx, { ...fs, amount_or_shares: Number(e.target.value) })}
+                  onChange={(n) => updateFunding(idx, { ...fs, amount_or_shares: n })}
                 />
               ) : null}
               <Button size="icon" variant="ghost" onClick={() => removeFunding(idx)}><Trash2 className="h-4 w-4" /></Button>

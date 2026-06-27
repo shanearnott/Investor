@@ -19,6 +19,7 @@ import { useData } from "@/components/data-provider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Label, Select } from "@/components/ui/input";
+import { MoneyInput } from "@/components/ui/money-input";
 import { newId } from "@/lib/models";
 import { fetchLatestSofr, type SofrSnapshot } from "@/lib/sofr-feed";
 import {
@@ -1383,59 +1384,6 @@ function SuffixedInput({
       <Input className={cn("pr-12", className)} {...props} />
       <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-muted-foreground">
         {suffix}
-      </span>
-    </div>
-  );
-}
-
-/** Dollar input that comma-formats the displayed value when not focused
- *  and exposes the raw digits while editing. Calls onChange with the
- *  parsed number so callers can keep storing numbers, not strings.
- *  Empty string maps to 0 to keep state consistent. */
-function MoneyInput({
-  value,
-  onChange,
-  className,
-  ...props
-}: {
-  value: number;
-  onChange: (n: number) => void;
-  className?: string;
-} & Omit<React.InputHTMLAttributes<HTMLInputElement>, "value" | "onChange" | "type">) {
-  const [focused, setFocused] = useState(false);
-  const [draft, setDraft] = useState(() => String(value));
-  useEffect(() => {
-    if (!focused) setDraft(String(value));
-  }, [value, focused]);
-  const formatted = Number.isFinite(value) ? value.toLocaleString("en-US") : "";
-  return (
-    <div className="relative">
-      <Input
-        type="text"
-        inputMode="decimal"
-        className={cn("pr-6", className)}
-        value={focused ? draft : formatted}
-        onFocus={() => {
-          setFocused(true);
-          setDraft(String(value));
-        }}
-        onBlur={() => setFocused(false)}
-        onChange={(e) => {
-          // Strip any commas the user pasted in, then keep digits + a
-          // single decimal so the field accepts cents.
-          const cleaned = e.target.value.replace(/,/g, "").replace(/[^0-9.]/g, "");
-          setDraft(cleaned);
-          if (cleaned === "" || cleaned === ".") {
-            onChange(0);
-            return;
-          }
-          const n = Number(cleaned);
-          if (Number.isFinite(n)) onChange(n);
-        }}
-        {...props}
-      />
-      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-muted-foreground">
-        $
       </span>
     </div>
   );

@@ -7,6 +7,7 @@ import { useData } from "@/components/data-provider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Label, Select, Textarea } from "@/components/ui/input";
+import { MoneyInput } from "@/components/ui/money-input";
 import { convert } from "@/lib/fx";
 import { formatMoney, formatMoneyCompact, formatNumber, formatNumberCompact } from "@/lib/utils";
 import {
@@ -691,19 +692,14 @@ function StockForm({
             </Select>
           </Field>
           <Field label="Current share price">
-            <Input type="number" step="0.01" value={d.current_share_price} onChange={(e) => update("current_share_price", Number(e.target.value))} />
+            <MoneyInput suffix={d.currency} value={d.current_share_price} onChange={(n) => update("current_share_price", n)} />
           </Field>
           {d.equity_type === "Stock Options" ? (
             <Field
               label="Strike (grant) price"
               hint={`Intrinsic value / option = max(0, current − strike) = ${formatMoney(Math.max(0, d.current_share_price - d.strike_price), d.currency, { fractionDigits: 2 })} today.`}
             >
-              <Input
-                type="number"
-                step="0.01"
-                value={d.strike_price}
-                onChange={(e) => update("strike_price", Number(e.target.value))}
-              />
+              <MoneyInput suffix={d.currency} value={d.strike_price} onChange={(n) => update("strike_price", n)} />
             </Field>
           ) : null}
         </div>
@@ -1006,13 +1002,13 @@ function PropertyForm({
             <Input type="date" value={d.purchase_date ?? ""} onChange={(e) => update("purchase_date", e.target.value || null)} />
           </Field>
           <Field label="Purchase price">
-            <Input type="number" step="1000" value={d.purchase_price} onChange={(e) => update("purchase_price", Number(e.target.value))} />
+            <MoneyInput suffix={d.currency} value={d.purchase_price} onChange={(n) => update("purchase_price", n)} />
           </Field>
           <Field label="Current value">
-            <Input type="number" step="1000" value={d.current_value} onChange={(e) => update("current_value", Number(e.target.value))} />
+            <MoneyInput suffix={d.currency} value={d.current_value} onChange={(n) => update("current_value", n)} />
           </Field>
           <Field label="Mortgage balance">
-            <Input type="number" step="1000" value={d.mortgage_balance} onChange={(e) => update("mortgage_balance", Number(e.target.value))} />
+            <MoneyInput suffix={d.currency} value={d.mortgage_balance} onChange={(n) => update("mortgage_balance", n)} />
           </Field>
           <Field label="Manual growth %/yr" hint={`Resolved: ${provider.rate.toFixed(2)}% via ${provider.source}`}>
             <Input type="number" step="0.1" value={d.annual_growth_pct} onChange={(e) => update("annual_growth_pct", Number(e.target.value))} />
@@ -1099,14 +1095,8 @@ function ReleaseEditor({
             onChange={(e) => onChange({ shares: Number(e.target.value) })}
           />
         </Field>
-        <Field label={`Release price (${holding.currency})`} hint="Per-share FMV at vest; the cost basis for any later sale.">
-          <Input
-            type="number"
-            step="0.01"
-            min={0}
-            value={release.release_price ?? 0}
-            onChange={(e) => onChange({ release_price: Number(e.target.value) })}
-          />
+        <Field label="Release price" hint="Per-share FMV at vest; the cost basis for any later sale.">
+          <MoneyInput suffix={holding.currency} value={release.release_price ?? 0} onChange={(n) => onChange({ release_price: n })} />
         </Field>
       </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -1219,15 +1209,12 @@ function SellEditor({
             onChange={(e) => onChange({ sell_date: e.target.value })}
           />
         </Field>
-        <Field label={`Sell price (${holding.currency})`} hint="Blank = current share price.">
-          <Input
-            type="number"
-            step="0.01"
-            min={0}
-            value={sell.sale_price ?? ""}
-            onChange={(e) =>
-              onChange({ sale_price: e.target.value === "" ? undefined : Number(e.target.value) })
-            }
+        <Field label="Sell price" hint="Blank = current share price.">
+          <MoneyInput
+            suffix={holding.currency}
+            allowEmpty
+            value={sell.sale_price}
+            onChange={(n) => onChange({ sale_price: n })}
           />
         </Field>
         <Field
