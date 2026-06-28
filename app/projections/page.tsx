@@ -1538,16 +1538,68 @@ function ScenarioSaleMath({
                       <span>Remaining unsold at horizon</span>
                       <span>{horizon.toISOString().slice(0, 10)}</span>
                     </div>
-                    {remaining.map(({ holding, shares, value, projectedPrice, breakdown }) => (
+                    {remaining.map(({ holding, shares, value, projectedPrice, breakdown }) => {
+                      // Per-tranche remaining = unreleased + sum of
+                      // kept-unsold across releases. Surface this as a
+                      // visible-without-expanding list under the holding
+                      // header so "which tranches have shares left?" is
+                      // the headline answer, not buried in the expander.
+                      const trancheRemaining = breakdown.tranches
+                        .map((t) => {
+                          const keptUnsold = t.keptUnsold.reduce((n, k) => n + k.shares, 0);
+                          const stillVesting = Math.max(0, t.granted - t.vestedByHorizon);
+                          const total = t.unreleased + keptUnsold + stillVesting;
+                          return {
+                            id: t.id,
+                            name: t.name,
+                            fromDate: t.fromDate,
+                            toDate: t.toDate,
+                            unreleased: t.unreleased,
+                            keptUnsold,
+                            stillVesting,
+                            total,
+                          };
+                        })
+                        .filter((t) => t.total > 0.5)
+                        .sort((a, b) => b.total - a.total);
+                      return (
                       <details key={holding.id} className="rounded-md border bg-background px-2 py-1">
-                        <summary className="flex cursor-pointer justify-between">
-                          <span>
-                            {holding.ticker || holding.company_name || holding.id}
-                            <span className="ml-1 text-[10px] text-muted-foreground">
-                              {formatNumber(Math.round(shares))} sh @ {formatMoney(projectedPrice, holding.currency, { fractionDigits: 2 })}
+                        <summary className="cursor-pointer">
+                          <div className="flex justify-between">
+                            <span>
+                              {holding.ticker || holding.company_name || holding.id}
+                              <span className="ml-1 text-[10px] text-muted-foreground">
+                                {formatNumber(Math.round(shares))} sh @ {formatMoney(projectedPrice, holding.currency, { fractionDigits: 2 })}
+                              </span>
                             </span>
-                          </span>
-                          <span>{formatMoney(value, ccy)}</span>
+                            <span>{formatMoney(value, ccy)}</span>
+                          </div>
+                          {trancheRemaining.length > 0 ? (
+                            <div className="mt-1 ml-2 space-y-0.5 text-[10px]">
+                              {trancheRemaining.map((t) => (
+                                <div key={t.id} className="flex justify-between">
+                                  <span className="text-foreground">
+                                    {t.name}
+                                    {t.fromDate ? (
+                                      <span className="ml-1 text-muted-foreground">
+                                        ({t.fromDate} → {t.toDate})
+                                      </span>
+                                    ) : null}
+                                  </span>
+                                  <span className="tabular-nums text-foreground">
+                                    {formatNumber(Math.round(t.total))} sh
+                                    <span className="ml-1 text-muted-foreground">
+                                      {[
+                                        t.unreleased > 0.5 ? `${formatNumber(Math.round(t.unreleased))} unreleased` : null,
+                                        t.keptUnsold > 0.5 ? `${formatNumber(Math.round(t.keptUnsold))} kept-unsold` : null,
+                                        t.stillVesting > 0.5 ? `${formatNumber(Math.round(t.stillVesting))} still vesting` : null,
+                                      ].filter(Boolean).join(" · ")}
+                                    </span>
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          ) : null}
                         </summary>
                         <div className="mt-1 space-y-1 border-t pt-1 text-[10px] text-muted-foreground">
                           <div className="font-semibold text-foreground">By tranche</div>
@@ -1701,7 +1753,8 @@ function ScenarioSaleMath({
                           </div>
                         </div>
                       </details>
-                    ))}
+                      );
+                    })}
                     <div className="flex justify-between font-semibold text-foreground border-t pt-1 mt-1">
                       <span>Total remaining</span>
                       <span>{formatMoney(remainingTotal, ccy)}</span>
