@@ -33,7 +33,7 @@ import {
   resolvedByHolding,
   startingPriceForScenario,
 } from "@/lib/projections";
-import { formatMoney, formatNumber } from "@/lib/utils";
+import { cn, formatMoney, formatNumber } from "@/lib/utils";
 
 const HORIZON_OPTIONS = [2, 5, 10, 15, 20] as const;
 type HorizonYears = (typeof HORIZON_OPTIONS)[number];
@@ -1035,8 +1035,14 @@ function ScenarioSaleMath({
         name: string;
         fromDate: string;
         toDate: string;
+        /** Granted shares AFTER termination forfeits any post-
+         *  termination vests. The forfeited count is exposed on
+         *  `forfeited` for clarity. */
         granted: number;
         vestedByHorizon: number;
+        /** Shares from this tranche routed to a release event and
+         *  withheld for tax (sell-to-cover or rate%). */
+        withheldFromTranche: number;
         /** Shares from this tranche that no release event covers — i.e.
          *  vested but never routed through a release. Flagged amber on
          *  the UI so the user can see exactly where the leftover lives. */
@@ -1044,6 +1050,12 @@ function ScenarioSaleMath({
         /** Kept shares allocated to this tranche from each release that
          *  haven't been sold by horizon. */
         keptUnsold: Array<{ releaseName: string; shares: number }>;
+        /** Shares from this tranche forfeited because their vest_date
+         *  falls past the scenario's termination_date. */
+        forfeited: number;
+        /** Raw granted shares from the input data, ignoring
+         *  termination. `granted + forfeited === rawGranted`. */
+        rawGranted: number;
       };
       type ReleaseRow = {
         id: string;
@@ -1138,6 +1150,10 @@ function ScenarioSaleMath({
              *  kept pool from this slice. */
             keptByRelease: Map<string, number>;
             soldByRelease: Map<string, number>;
+            /** Map releaseId → shares withheld for tax from this
+             *  slice's contribution to that release. Tracked so we
+             *  can show per-tranche "after withholding". */
+            withheldByRelease: Map<string, number>;
           };
           const slices: Slice[] = [];
           for (const t of adjusted.tranches) {
@@ -1151,6 +1167,7 @@ function ScenarioSaleMath({
                 remaining: ev.shares,
                 keptByRelease: new Map(),
                 soldByRelease: new Map(),
+                withheldByRelease: new Map(),
               });
             }
           }
@@ -1247,8 +1264,12 @@ function ScenarioSaleMath({
               raw.push({ trancheId: s.trancheId, vestDate: s.vestDate, shares: take });
               // Per-slice kept allocation (proportional to keepRatio).
               const keptHere = take * keepRatio;
+              const withheldHere = take * (1 - keepRatio);
               if (keptHere > 0) {
                 s.keptByRelease.set(rel.id, (s.keptByRelease.get(rel.id) ?? 0) + keptHere);
+              }
+              if (withheldHere > 0) {
+                s.withheldByRelease.set(rel.id, (s.withheldByRelease.get(rel.id) ?? 0) + withheldHere);
               }
             }
             releaseAllocs.set(rel.id, aggregateByTranche(raw));
@@ -1372,6 +1393,16 @@ function ScenarioSaleMath({
           // Per-tranche granted + vested + remaining (from the slice
           // state — `remaining` = unreleased, sum of keptByRelease =
           // kept-unsold-by-release).
+          // Build a map of raw (pre-termination) per-tranche granted
+          // so we can show the forfeited count per tranche.
+          const rawGrantedById = new Map<string, number>();
+          for (const t of h.tranches) {
+            rawGrantedById.set(
+              t.id,
+              t.vest_events.reduce((n, ev) => n + ev.shares, 0),
+            );
+          }
+
           const tranches: TrancheRow[] = adjusted.tranches.map((t) => {
             const granted = t.vest_events.reduce((n, ev) => n + ev.shares, 0);
             const vestedByHorizon = t.vest_events.reduce((n, ev) => {
@@ -1382,6 +1413,12 @@ function ScenarioSaleMath({
             const fromDate = trancheSlices.length > 0 ? trancheSlices[0].vestDate : "";
             const toDate = trancheSlices.length > 0 ? trancheSlices[trancheSlices.length - 1].vestDate : "";
             const unreleased = trancheSlices.reduce((n, s) => n + s.remaining, 0);
+            // Per-tranche withheld = sum of withheld portion this
+            // tranche contributed to each release event.
+            const withheldFromTranche = trancheSlices.reduce(
+              (n, s) => n + Array.from(s.withheldByRelease.values()).reduce((m, v) => m + v, 0),
+              0,
+            );
             const keptUnsoldMap = new Map<string, number>();
             for (const s of trancheSlices) {
               for (const [releaseId, shares] of s.keptByRelease) {
@@ -1394,6 +1431,8 @@ function ScenarioSaleMath({
             const keptUnsold = Array.from(keptUnsoldMap.entries())
               .map(([releaseName, shares]) => ({ releaseName, shares }))
               .sort((a, b) => b.shares - a.shares);
+            const rawGranted = rawGrantedById.get(t.id) ?? granted;
+            const forfeited = Math.max(0, rawGranted - granted);
             return {
               id: t.id,
               name: t.name || `Tranche ${t.id.slice(0, 6)}`,
@@ -1401,8 +1440,11 @@ function ScenarioSaleMath({
               toDate,
               granted,
               vestedByHorizon,
+              withheldFromTranche,
               unreleased,
               keptUnsold,
+              forfeited,
+              rawGranted,
             };
           });
           const grantedTotal = tranches.reduce((n, t) => n + t.granted, 0);
@@ -1442,6 +1484,9 @@ function ScenarioSaleMath({
       // already happened IRL but the kept basis carries forward).
       type ReleaseEventRow = {
         id: string;
+        /** Underlying release id (h.releases[i].id for investment,
+         *  sc.releases[i].id for scenario). */
+        releaseRef: string;
         kind: "investment" | "scenario";
         name: string;
         date: string;
@@ -1452,9 +1497,16 @@ function ScenarioSaleMath({
         gross: number;
         kept: number;
         withheld: number;
+        /** withheld / gross × 100 — the effective withholding %. */
         withholdingRatePct: number;
         releasePriceNative: number;
         incomeTaxNative: number;
+        /** Total shares of this release's kept pool sold by horizon
+         *  (IRL sells for investment releases + scenario sells). */
+        soldFromKept: number;
+        soldPctOfKept: number;
+        unsoldFromKept: number;
+        unsoldPctOfKept: number;
         /** True for RSU/Common where the income tax is paid via share
          *  withholding; false for Stock Options where it's a cash
          *  outflow at exercise. */
@@ -1463,6 +1515,26 @@ function ScenarioSaleMath({
          *  tax was settled at vest, included here for context. */
         alreadyPaid: boolean;
       };
+      // Build sold-per-release_ref by horizon — scenario sells +
+      // IRL h.sells against investment releases.
+      const soldByReleaseRef = new Map<string, number>();
+      for (const sale of sales) {
+        const ref = sale.breakdown?.releaseRef;
+        if (!ref) continue;
+        soldByReleaseRef.set(ref, (soldByReleaseRef.get(ref) ?? 0) + sale.shares);
+      }
+      for (const h of holdings) {
+        const releasesById = new Map((h.releases ?? []).map((r) => [r.id, r]));
+        for (const s of h.sells ?? []) {
+          const d = parseISO(s.sell_date);
+          if (!d || d > horizon) continue;
+          const release = releasesById.get(s.release_id) ?? null;
+          const n = sellSharesFor(s, release);
+          if (n <= 0) continue;
+          soldByReleaseRef.set(s.release_id, (soldByReleaseRef.get(s.release_id) ?? 0) + n);
+        }
+      }
+
       const releaseEvents: ReleaseEventRow[] = [];
       const stockById = new Map(holdings.map((h) => [h.id, h]));
       // Investment releases on holdings — past events, but the
@@ -1476,8 +1548,11 @@ function ScenarioSaleMath({
           const withheld = releaseWithholdingShares(r);
           const rate = r.shares > 0 ? (withheld / r.shares) * 100 : 0;
           const isOptions = h.equity_type === "Stock Options";
+          const sold = Math.min(kept, soldByReleaseRef.get(r.id) ?? 0);
+          const unsold = Math.max(0, kept - sold);
           releaseEvents.push({
             id: `inv-${h.id}-${r.id}`,
+            releaseRef: r.id,
             kind: "investment",
             name: r.name || `Release ${r.release_date}`,
             date: r.release_date,
@@ -1491,6 +1566,10 @@ function ScenarioSaleMath({
             withholdingRatePct: rate,
             releasePriceNative: r.release_price,
             incomeTaxNative: withheld * r.release_price,
+            soldFromKept: sold,
+            soldPctOfKept: kept > 0 ? (sold / kept) * 100 : 0,
+            unsoldFromKept: unsold,
+            unsoldPctOfKept: kept > 0 ? (unsold / kept) * 100 : 0,
             taxPaidViaWithholding: !isOptions,
             alreadyPaid: true,
           });
@@ -1505,15 +1584,16 @@ function ScenarioSaleMath({
         if (!d || d > horizon) continue;
         const resolved = releasePool.get(sr.id);
         if (!resolved) continue;
-        const explicitRate = sr.release_tax_rate_pct;
-        const rate = explicitRate !== undefined
-          ? explicitRate
-          : sr.release_jurisdiction
-            ? RSU_DEFAULT_TAX_RATES[sr.release_jurisdiction] ?? 0
-            : 0;
+        const gross = resolved.grossShares;
+        const kept = resolved.keptShares;
+        const withheld = Math.max(0, gross - kept);
+        const effectiveRate = gross > 0 ? (withheld / gross) * 100 : 0;
         const isOptions = stock.equity_type === "Stock Options";
+        const sold = Math.min(kept, soldByReleaseRef.get(sr.id) ?? 0);
+        const unsold = Math.max(0, kept - sold);
         releaseEvents.push({
           id: `scn-${sr.id}`,
+          releaseRef: sr.id,
           kind: "scenario",
           name: sr.name || `Scenario release ${sr.release_date}`,
           date: sr.release_date,
@@ -1521,12 +1601,16 @@ function ScenarioSaleMath({
           currency: stock.currency,
           equityType: stock.equity_type,
           strikePrice: stock.strike_price ?? 0,
-          gross: resolved.grossShares,
-          kept: resolved.keptShares,
-          withheld: Math.max(0, resolved.grossShares - resolved.keptShares),
-          withholdingRatePct: rate,
+          gross,
+          kept,
+          withheld,
+          withholdingRatePct: effectiveRate,
           releasePriceNative: resolved.releasePriceNative,
           incomeTaxNative: resolved.incomeTaxNative,
+          soldFromKept: sold,
+          soldPctOfKept: kept > 0 ? (sold / kept) * 100 : 0,
+          unsoldFromKept: unsold,
+          unsoldPctOfKept: kept > 0 ? (unsold / kept) * 100 : 0,
           taxPaidViaWithholding: !isOptions,
           alreadyPaid: false,
         });
@@ -1633,7 +1717,27 @@ function ScenarioSaleMath({
                           </div>
                           <div className="flex justify-between font-semibold text-foreground border-t pt-1 mt-1">
                             <span>Kept after withholding</span>
-                            <span>{formatNumber(Math.round(e.kept))} sh @ {formatMoney(e.releasePriceNative, e.currency, { fractionDigits: 2 })} basis</span>
+                            <span>
+                              {formatNumber(Math.round(e.kept))} sh @ {formatMoney(e.releasePriceNative, e.currency, { fractionDigits: 2 })} basis
+                              <span className="ml-1 text-[10px] font-normal text-muted-foreground">({(100 - e.withholdingRatePct).toFixed(1)}% of gross)</span>
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Sold from kept (by horizon)</span>
+                            <span>
+                              {formatNumber(Math.round(e.soldFromKept))} sh
+                              <span className="ml-1 text-[10px] text-muted-foreground">({e.soldPctOfKept.toFixed(1)}% of kept)</span>
+                            </span>
+                          </div>
+                          <div className={cn(
+                            "flex justify-between",
+                            e.unsoldFromKept > 0.5 ? "text-amber-800 font-medium" : "text-muted-foreground",
+                          )}>
+                            <span>Unsold from kept</span>
+                            <span>
+                              {formatNumber(Math.round(e.unsoldFromKept))} sh
+                              <span className="ml-1 text-[10px] font-normal">({e.unsoldPctOfKept.toFixed(1)}% of kept)</span>
+                            </span>
                           </div>
                         </div>
                       );
@@ -1727,11 +1831,20 @@ function ScenarioSaleMath({
                       // visible-without-expanding list under the holding
                       // header so "which tranches have shares left?" is
                       // the headline answer, not buried in the expander.
-                      const trancheRemaining = breakdown.tranches
+                      // Sums of remaining + still-vesting + forfeited
+                      // = each tranche's pre-termination grant, so the
+                      // user can reconcile the math even when termination
+                      // forfeits a chunk.
+                      const trancheRows = breakdown.tranches
                         .map((t) => {
                           const keptUnsold = t.keptUnsold.reduce((n, k) => n + k.shares, 0);
                           const stillVesting = Math.max(0, t.granted - t.vestedByHorizon);
                           const total = t.unreleased + keptUnsold + stillVesting;
+                          // Per-tranche withholding rate = withheld / vested-by-horizon
+                          // (% of vested shares lost to tax via releases).
+                          const withholdingPct = t.vestedByHorizon > 0
+                            ? (t.withheldFromTranche / t.vestedByHorizon) * 100
+                            : 0;
                           return {
                             id: t.id,
                             name: t.name,
@@ -1740,11 +1853,18 @@ function ScenarioSaleMath({
                             unreleased: t.unreleased,
                             keptUnsold,
                             stillVesting,
+                            withheldFromTranche: t.withheldFromTranche,
+                            withholdingPct,
+                            granted: t.granted,
+                            vestedByHorizon: t.vestedByHorizon,
+                            rawGranted: t.rawGranted,
+                            forfeited: t.forfeited,
                             total,
                           };
                         })
-                        .filter((t) => t.total > 0.5)
+                        .filter((t) => t.total > 0.5 || t.forfeited > 0.5)
                         .sort((a, b) => b.total - a.total);
+                      const remainingShareTotal = trancheRows.reduce((n, t) => n + t.total, 0) || 1;
                       return (
                       <details key={holding.id} className="rounded-md border bg-background px-2 py-1">
                         <summary className="cursor-pointer">
@@ -1757,30 +1877,45 @@ function ScenarioSaleMath({
                             </span>
                             <span>{formatMoney(value, ccy)}</span>
                           </div>
-                          {trancheRemaining.length > 0 ? (
-                            <div className="mt-1 ml-2 space-y-0.5 text-[10px]">
-                              {trancheRemaining.map((t) => (
-                                <div key={t.id} className="flex justify-between">
-                                  <span className="text-foreground">
-                                    {t.name}
-                                    {t.fromDate ? (
-                                      <span className="ml-1 text-muted-foreground">
-                                        ({t.fromDate} → {t.toDate})
+                          {trancheRows.length > 0 ? (
+                            <div className="mt-1 ml-2 space-y-1 text-[10px]">
+                              {trancheRows.map((t) => {
+                                const pctOfRemaining = t.total > 0
+                                  ? (t.total / remainingShareTotal) * 100
+                                  : 0;
+                                return (
+                                  <div key={t.id} className="space-y-0">
+                                    <div className="flex justify-between">
+                                      <span className="text-foreground font-medium">
+                                        {t.name}
+                                        {t.fromDate ? (
+                                          <span className="ml-1 text-muted-foreground">
+                                            ({t.fromDate} → {t.toDate})
+                                          </span>
+                                        ) : null}
                                       </span>
-                                    ) : null}
-                                  </span>
-                                  <span className="tabular-nums text-foreground">
-                                    {formatNumber(Math.round(t.total))} sh
-                                    <span className="ml-1 text-muted-foreground">
-                                      {[
-                                        t.unreleased > 0.5 ? `${formatNumber(Math.round(t.unreleased))} unreleased` : null,
-                                        t.keptUnsold > 0.5 ? `${formatNumber(Math.round(t.keptUnsold))} kept-unsold` : null,
-                                        t.stillVesting > 0.5 ? `${formatNumber(Math.round(t.stillVesting))} still vesting` : null,
-                                      ].filter(Boolean).join(" · ")}
-                                    </span>
-                                  </span>
-                                </div>
-                              ))}
+                                      <span className="tabular-nums text-foreground font-medium">
+                                        {formatNumber(Math.round(t.total))} sh
+                                        <span className="ml-1 text-muted-foreground">({pctOfRemaining.toFixed(1)}% of remaining)</span>
+                                      </span>
+                                    </div>
+                                    <div className="ml-2 flex justify-between text-muted-foreground">
+                                      <span>
+                                        Granted {formatNumber(t.granted)}
+                                        {t.forfeited > 0.5 ? ` · forfeited ${formatNumber(Math.round(t.forfeited))} (raw ${formatNumber(t.rawGranted)})` : ""} · vested {formatNumber(Math.round(t.vestedByHorizon))}
+                                        {t.withholdingPct > 0.05 ? ` · withheld ${formatNumber(Math.round(t.withheldFromTranche))} (${t.withholdingPct.toFixed(1)}%)` : ""}
+                                      </span>
+                                      <span className="tabular-nums">
+                                        {[
+                                          t.unreleased > 0.5 ? `${formatNumber(Math.round(t.unreleased))} unreleased` : null,
+                                          t.keptUnsold > 0.5 ? `${formatNumber(Math.round(t.keptUnsold))} kept-unsold` : null,
+                                          t.stillVesting > 0.5 ? `${formatNumber(Math.round(t.stillVesting))} still vesting` : null,
+                                        ].filter(Boolean).join(" · ")}
+                                      </span>
+                                    </div>
+                                  </div>
+                                );
+                              })}
                             </div>
                           ) : null}
                         </summary>
