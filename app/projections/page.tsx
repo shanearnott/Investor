@@ -23,6 +23,7 @@ import { Input, Label, Select } from "@/components/ui/input";
 import { convert } from "@/lib/fx";
 import { parseISO, Property, releaseKeptShares, releaseWithholdingShares, Scenario, ScenarioSchema, sellSharesFor, StockHolding, type Settings, vestedSharesAt } from "@/lib/models";
 import {
+  applyScenarioTermination,
   buildNetWorthSeries,
   holdingSaleAccrual,
   projectPropertyValueAt,
@@ -1058,6 +1059,10 @@ function ScenarioSaleMath({
         investSells: number;
         scenarioWithholding: number;
         scenarioSellsTotal: number;
+        /** Scenario stock_overrides[h.id]?.termination_date in ISO. */
+        terminationDate: string | null;
+        /** Vest events forfeited because their vest_date > termination_date. */
+        forfeitedShares: number;
       };
       // Build the engine's release pool once per scenario so the
        // debug breakdown reports identical numbers (gross / kept /
@@ -1074,8 +1079,14 @@ function ScenarioSaleMath({
           const shares = freeVested + v.shares_unvested;
           const value = liquidFree + v.unvested;
 
-          // Tranche-level: granted vs vested-by-horizon.
-          const tranches: TrancheRow[] = h.tranches.map((t) => {
+          // Tranche-level: use the termination-adjusted holding so a
+          // forfeited (post-termination) vest doesn't count toward
+          // "granted" or "vested" here — that's the whole point of
+          // termination. The forfeited count is summed separately so
+          // the reconciliation explains why the remaining row dropped.
+          const adjusted = applyScenarioTermination(h, sc);
+          const terminationDate = sc.stock_overrides?.[h.id]?.termination_date ?? null;
+          const tranches: TrancheRow[] = adjusted.tranches.map((t) => {
             const granted = t.vest_events.reduce((n, ev) => n + ev.shares, 0);
             const vestedByHorizon = t.vest_events.reduce((n, ev) => {
               const d = parseISO(ev.vest_date);
@@ -1091,6 +1102,12 @@ function ScenarioSaleMath({
           const grantedTotal = tranches.reduce((n, t) => n + t.granted, 0);
           const vestedByHorizon = tranches.reduce((n, t) => n + t.vestedByHorizon, 0);
           const unvestedAtHorizon = Math.max(0, grantedTotal - vestedByHorizon);
+          // Forfeited = raw granted − adjusted granted.
+          const rawGranted = h.tranches.reduce(
+            (n, t) => n + t.vest_events.reduce((m, ev) => m + ev.shares, 0),
+            0,
+          );
+          const forfeitedShares = Math.max(0, rawGranted - grantedTotal);
 
           // Per investment release (with how much was sold IRL against it).
           const releasesById = new Map((h.releases ?? []).map((r) => [r.id, r]));
@@ -1170,6 +1187,8 @@ function ScenarioSaleMath({
             investSells,
             scenarioWithholding,
             scenarioSellsTotal,
+            terminationDate,
+            forfeitedShares,
           };
           return { holding: h, shares, value, projectedPrice: v.projected_price, breakdown };
         })
@@ -1335,9 +1354,17 @@ function ScenarioSaleMath({
                           ) : null}
                           <div className="border-t pt-1 mt-1 font-semibold text-foreground">
                             <div className="flex justify-between">
-                              <span>Granted total</span>
+                              <span>Granted total{breakdown.terminationDate ? " (post-termination)" : ""}</span>
                               <span className="tabular-nums">{formatNumber(breakdown.grantedTotal)} sh</span>
                             </div>
+                            {breakdown.forfeitedShares > 0 ? (
+                              <div className="flex justify-between text-amber-700 font-normal">
+                                <span>
+                                  Forfeited (vests past termination {breakdown.terminationDate ?? ""})
+                                </span>
+                                <span className="tabular-nums">−{formatNumber(Math.round(breakdown.forfeitedShares))} sh from grant</span>
+                              </div>
+                            ) : null}
                             <div className="flex justify-between text-muted-foreground font-normal">
                               <span>Vested by horizon</span>
                               <span className="tabular-nums">{formatNumber(Math.round(breakdown.vestedByHorizon))} sh</span>
