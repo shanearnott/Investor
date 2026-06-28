@@ -1023,7 +1023,16 @@ function ScenarioSaleMath({
       // future tranche vests within the horizon, scenario withholding,
       // etc.). Each component is in tranche-counted shares so the user
       // can reconcile against vestedSharesAt().
-      type TrancheRow = { id: string; name: string; granted: number; vestedByHorizon: number };
+      type TrancheRow = {
+        id: string;
+        name: string;
+        granted: number;
+        vestedByHorizon: number;
+        /** Shares from this tranche that no release event covers — i.e.
+         *  vested but never routed through a release. Flagged amber on
+         *  the UI so the user can see exactly where the leftover lives. */
+        unreleased: number;
+      };
       type ReleaseRow = {
         id: string;
         name: string;
@@ -1032,6 +1041,9 @@ function ScenarioSaleMath({
         kept: number;
         withheld: number;
         soldIRL: number;
+        /** Shares still sitting in the kept pool — kept − soldIRL −
+         *  scenarioSold. Flagged amber when > 0. */
+        unsold: number;
       };
       type ScenarioReleaseRow = {
         id: string;
@@ -1039,11 +1051,15 @@ function ScenarioSaleMath({
         date: string;
         gross: number;
         withheld: number;
+        kept: number;
+        /** Same idea as ReleaseRow.unsold but for scenario releases. */
+        unsold: number;
       };
       type ScenarioSellRow = {
         id: string;
         name: string;
         date: string;
+        releaseRef: string;
         releaseName: string;
         shares: number;
       };
@@ -1086,6 +1102,53 @@ function ScenarioSaleMath({
           // the reconciliation explains why the remaining row dropped.
           const adjusted = applyScenarioTermination(h, sc);
           const terminationDate = sc.stock_overrides?.[h.id]?.termination_date ?? null;
+
+          // FIFO allocate cumulative-released-gross across vested
+          // tranche events in vest order. Whatever remains per tranche
+          // is "unreleased" — vested but never routed through any
+          // release event. That's the killer signal for "why didn't
+          // my 100% sell drain this stock?" debugging.
+          type VestEntry = { trancheId: string; date: string; shares: number };
+          const vestEntries: VestEntry[] = [];
+          for (const t of adjusted.tranches) {
+            for (const ev of t.vest_events) {
+              const d = parseISO(ev.vest_date);
+              if (d && d <= horizon) {
+                vestEntries.push({ trancheId: t.id, date: ev.vest_date, shares: ev.shares });
+              }
+            }
+          }
+          vestEntries.sort((a, b) => a.date.localeCompare(b.date));
+          // Sum every release's gross from the engine pool (investment
+          // + scenario) up to horizon, matching how resolveReleasePool
+          // computes releasedGrossCum.
+          let totalReleasedGross = 0;
+          for (const r of h.releases ?? []) {
+            const d = parseISO(r.release_date);
+            if (d && d <= horizon) totalReleasedGross += r.shares;
+          }
+          for (const sr of sc.releases ?? []) {
+            if (sr.stock_id !== h.id) continue;
+            const d = parseISO(sr.release_date);
+            if (!d || d > horizon) continue;
+            const resolved = releasePool.get(sr.id);
+            if (resolved) totalReleasedGross += resolved.grossShares;
+          }
+          // Walk the vest entries FIFO, consuming totalReleasedGross
+          // first. Each tranche ends up with a per-tranche unreleased
+          // count.
+          const unreleasedByTranche = new Map<string, number>();
+          let need = totalReleasedGross;
+          for (const ev of vestEntries) {
+            const taken = Math.min(ev.shares, Math.max(0, need));
+            need -= taken;
+            const remaining = ev.shares - taken;
+            unreleasedByTranche.set(
+              ev.trancheId,
+              (unreleasedByTranche.get(ev.trancheId) ?? 0) + remaining,
+            );
+          }
+
           const tranches: TrancheRow[] = adjusted.tranches.map((t) => {
             const granted = t.vest_events.reduce((n, ev) => n + ev.shares, 0);
             const vestedByHorizon = t.vest_events.reduce((n, ev) => {
@@ -1097,6 +1160,7 @@ function ScenarioSaleMath({
               name: t.name || `Tranche ${t.id.slice(0, 6)}`,
               granted,
               vestedByHorizon,
+              unreleased: Math.max(0, unreleasedByTranche.get(t.id) ?? vestedByHorizon),
             };
           });
           const grantedTotal = tranches.reduce((n, t) => n + t.granted, 0);
@@ -1119,18 +1183,45 @@ function ScenarioSaleMath({
             const n = sellSharesFor(s, release);
             investSellsByRelease.set(s.release_id, (investSellsByRelease.get(s.release_id) ?? 0) + n);
           }
+          // Tally scenario sells against each release_ref so we can
+          // mark "unsold" on the release rows too.
+          const scenarioSoldByRelease = new Map<string, number>();
+          for (const sell of sc.sells ?? []) {
+            if (!sell.release_ref) continue;
+            const sd = parseISO(sell.sell_date);
+            if (!sd || sd > horizon) continue;
+            const matchedSale = sales.find((sale) => {
+              if (sale.stockId !== h.id) return false;
+              const refRelease = (h.releases ?? []).find((rr) => rr.id === sell.release_ref);
+              if (refRelease && sale.breakdown?.releaseDate === refRelease.release_date) return true;
+              const refScn = (sc.releases ?? []).find((rr) => rr.id === sell.release_ref);
+              if (refScn && sale.breakdown?.releaseDate === refScn.release_date) return true;
+              return false;
+            });
+            const sharesSold = matchedSale?.shares ?? 0;
+            scenarioSoldByRelease.set(
+              sell.release_ref,
+              (scenarioSoldByRelease.get(sell.release_ref) ?? 0) + sharesSold,
+            );
+          }
+
           const investReleases: ReleaseRow[] = [];
           for (const r of h.releases ?? []) {
             const d = parseISO(r.release_date);
             if (!d || d > horizon) continue;
+            const kept = releaseKeptShares(r);
+            const soldIRL = investSellsByRelease.get(r.id) ?? 0;
+            const scenarioSold = scenarioSoldByRelease.get(r.id) ?? 0;
+            const unsold = Math.max(0, kept - soldIRL - scenarioSold);
             investReleases.push({
               id: r.id,
               name: r.name || `Release ${r.release_date}`,
               date: r.release_date,
               gross: r.shares,
-              kept: releaseKeptShares(r),
+              kept,
               withheld: releaseWithholdingShares(r),
-              soldIRL: investSellsByRelease.get(r.id) ?? 0,
+              soldIRL,
+              unsold,
             });
           }
           const investWithholding = investReleases.reduce((n, r) => n + r.withheld, 0);
@@ -1153,12 +1244,15 @@ function ScenarioSaleMath({
             const gross = resolved ? resolved.grossShares : 0;
             const kept = resolved ? resolved.keptShares : 0;
             const withheld = Math.max(0, gross - kept);
+            const sold = scenarioSoldByRelease.get(sr.id) ?? 0;
             scenarioReleases.push({
               id: sr.id,
               name: sr.name || `Scenario release ${sr.release_date}`,
               date: sr.release_date,
               gross,
               withheld,
+              kept,
+              unsold: Math.max(0, kept - sold),
             });
           }
           const scenarioWithholding = scenarioReleases.reduce((n, r) => n + r.withheld, 0);
@@ -1170,6 +1264,7 @@ function ScenarioSaleMath({
             id: `${s.stockId}:${i}`,
             name: s.breakdown?.sellName || s.breakdown?.releaseName || `Sale ${i + 1}`,
             date: s.breakdown?.sellDate ?? "",
+            releaseRef: s.breakdown?.releaseName ?? "",
             releaseName: s.breakdown?.releaseName ?? "—",
             shares: s.shares,
           }));
@@ -1309,6 +1404,11 @@ function ScenarioSaleMath({
                                 <span className="tabular-nums">
                                   {formatNumber(Math.round(t.vestedByHorizon))} / {formatNumber(t.granted)} sh vested
                                   {t.granted > t.vestedByHorizon ? ` · ${formatNumber(t.granted - t.vestedByHorizon)} still vesting` : ""}
+                                  {t.unreleased > 0.5 ? (
+                                    <span className="ml-1 rounded bg-amber-100 px-1 text-[10px] font-medium text-amber-900">
+                                      {formatNumber(Math.round(t.unreleased))} unreleased
+                                    </span>
+                                  ) : null}
                                 </span>
                               </div>
                             ))
@@ -1322,6 +1422,11 @@ function ScenarioSaleMath({
                                   <span className="tabular-nums">
                                     {formatNumber(r.gross)} gross · {formatNumber(Math.round(r.withheld))} withheld · {formatNumber(Math.round(r.kept))} kept
                                     {r.soldIRL > 0 ? ` · ${formatNumber(Math.round(r.soldIRL))} sold IRL` : ""}
+                                    {r.unsold > 0.5 ? (
+                                      <span className="ml-1 rounded bg-amber-100 px-1 text-[10px] font-medium text-amber-900">
+                                        {formatNumber(Math.round(r.unsold))} unsold
+                                      </span>
+                                    ) : null}
                                   </span>
                                 </div>
                               ))}
@@ -1336,6 +1441,12 @@ function ScenarioSaleMath({
                                   <span className="tabular-nums">
                                     {formatNumber(Math.round(r.gross))} gross
                                     {r.withheld > 0 ? ` · ${formatNumber(Math.round(r.withheld))} withheld` : ""}
+                                    {r.kept > 0 ? ` · ${formatNumber(Math.round(r.kept))} kept` : ""}
+                                    {r.unsold > 0.5 ? (
+                                      <span className="ml-1 rounded bg-amber-100 px-1 text-[10px] font-medium text-amber-900">
+                                        {formatNumber(Math.round(r.unsold))} unsold
+                                      </span>
+                                    ) : null}
                                   </span>
                                 </div>
                               ))}
