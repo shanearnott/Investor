@@ -27,6 +27,7 @@ import {
   holdingSaleAccrual,
   projectPropertyValueAt,
   projectStockValueAt,
+  resolveReleasePool,
   resolveScenarioSales,
   resolvedByHolding,
   startingPriceForScenario,
@@ -1058,6 +1059,11 @@ function ScenarioSaleMath({
         scenarioWithholding: number;
         scenarioSellsTotal: number;
       };
+      // Build the engine's release pool once per scenario so the
+       // debug breakdown reports identical numbers (gross / kept /
+       // withholding) to the actual simulation — re-deriving from
+       // vestedSharesAt double-deducts and confuses users.
+      const releasePool = resolveReleasePool(sc, holdings, settings as Settings);
       const remaining = holdings
         .map((h) => {
           const v = projectStockValueAt(h, sc, horizon, ccy, settings as Settings);
@@ -1113,26 +1119,23 @@ function ScenarioSaleMath({
           const investWithholding = investReleases.reduce((n, r) => n + r.withheld, 0);
           const investSells = investReleases.reduce((n, r) => n + r.soldIRL, 0);
 
-          // Scenario releases on this stock fire by horizon; scenario
-          // withholding shrinks the available pool the same way investment
-          // withholding does, so call it out separately.
+          // Scenario releases on this stock — pulled from the engine's
+          // own release pool so the gross/withholding/kept numbers
+          // here are identical to what computeScenarioSales sees. The
+          // engine walks all releases (investment + scenario) for the
+          // holding chronologically and caps each scenario release's
+          // gross at `tranche_vested_at_date − previously_released_gross`,
+          // so 100% on a later release only takes what's been newly
+          // vested since the last release.
           const scenarioReleases: ScenarioReleaseRow[] = [];
           for (const sr of sc.releases ?? []) {
             if (sr.stock_id !== h.id) continue;
             const d = parseISO(sr.release_date);
             if (!d || d > horizon) continue;
-            const gross =
-              sr.shares_pct !== undefined && sr.shares_pct > 0
-                ? vestedSharesAt(h, d) * (Math.min(100, Math.max(0, sr.shares_pct)) / 100)
-                : sr.shares;
-            const rate =
-              sr.release_tax_rate_pct !== undefined
-                ? sr.release_tax_rate_pct
-                : 0;
-            const withheld =
-              h.equity_type === "Stock Options"
-                ? 0
-                : Math.max(0, gross * (Math.min(100, Math.max(0, rate)) / 100));
+            const resolved = releasePool.get(sr.id);
+            const gross = resolved ? resolved.grossShares : 0;
+            const kept = resolved ? resolved.keptShares : 0;
+            const withheld = Math.max(0, gross - kept);
             scenarioReleases.push({
               id: sr.id,
               name: sr.name || `Scenario release ${sr.release_date}`,

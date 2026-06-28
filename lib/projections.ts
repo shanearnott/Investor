@@ -344,7 +344,7 @@ export type ResolvedSale = {
 /** Unified release lookup: either an investment release that's been
  *  recorded against the holding (income tax already paid via withholding)
  *  or a scenario-defined release (income tax modelled at release_date). */
-type ResolvedRelease = {
+export type ResolvedRelease = {
   stockId: string;
   holding: StockHolding;
   releaseDate: Date;
@@ -369,7 +369,7 @@ type ResolvedRelease = {
  *  - apply option-aware math: for Stock Options, kept = gross (no
  *    share withholding; tax + strike are cash outflows) and income
  *    tax is computed on the intrinsic spread, not the full FMV. */
-function resolveReleasePool(
+export function resolveReleasePool(
   scenario: Scenario,
   holdings: StockHolding[],
   settings: Settings,
