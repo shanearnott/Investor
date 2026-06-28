@@ -310,6 +310,10 @@ export type ResolvedSale = {
   breakdown?: {
     sellName?: string;
     releaseName?: string;
+    /** Id of the linked release event (investment release id or
+     *  scenario release id), so UI surfaces can match sales to
+     *  releases for per-tranche FIFO tracing without re-deriving. */
+    releaseRef?: string;
     currency: string;
     releaseSource: "investment" | "scenario";
     releaseDate: string;
@@ -573,6 +577,7 @@ export function resolveScenarioSales(
       breakdown: {
         sellName: sell.name || undefined,
         releaseName: releaseNameOf(sell.release_ref, ref.releaseDate.toISOString().slice(0, 10)),
+        releaseRef: sell.release_ref,
         currency: h.currency,
         releaseSource: ref.incomeTaxAlreadyPaid ? "investment" : "scenario",
         releaseDate: ref.releaseDate.toISOString().slice(0, 10),
