@@ -70,7 +70,7 @@ function monthStart(d: Date): Date {
 /** Return a copy of the holding with any tranche vest_events after the
  *  scenario's termination_date removed. Models "I leave / get terminated
  *  on this date — the remaining grants are forfeit." Off by default. */
-function applyScenarioTermination(h: StockHolding, scenario: Scenario): StockHolding {
+export function applyScenarioTermination(h: StockHolding, scenario: Scenario): StockHolding {
   const term = scenario.stock_overrides[h.id]?.termination_date;
   if (!term) return h;
   const limit = parseISO(term);

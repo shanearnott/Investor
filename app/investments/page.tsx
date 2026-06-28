@@ -198,7 +198,9 @@ function ReleaseEventsSummary({
   };
   const rows: Row[] = [];
   for (const h of stocks) {
-    for (const r of h.releases ?? []) {
+    const list = h.releases ?? [];
+    for (let i = 0; i < list.length; i++) {
+      const r = list[i];
       const d = parseISO(r.release_date);
       if (!d || d > today) continue;
       if (r.shares <= 0) continue;
@@ -206,7 +208,9 @@ function ReleaseEventsSummary({
       const grossNative = r.shares * r.release_price;
       const withheldNative = covered * r.release_price;
       rows.push({
-        key: `${h.id}:${r.id}`,
+        // Index in the key so legacy data with duplicate / missing ids
+        // doesn't collide and silently drop rows under React's key-dedup.
+        key: `${h.id}:${i}:${r.id || "noid"}`,
         stock: h.ticker || h.company_name || "—",
         name: r.name || `Release ${r.release_date}`,
         date: r.release_date,
@@ -287,75 +291,77 @@ function SaleEventsSummary({
 }) {
   const display = settings.primary_currency;
   const today = new Date();
-  const rows = stocks
-    .map((h) => {
-      const releasesById = new Map((h.releases ?? []).map((r) => [r.id, r]));
-      const events = (h.sells ?? []).filter((s) => {
-        const d = parseISO(s.sell_date);
-        return !!d && d <= today;
-      });
-      if (events.length === 0) return null;
-      let shares = 0;
-      let grossNative = 0;
-      let costNative = 0;
-      let gainNative = 0;
-      let taxNative = 0;
-      for (const e of events) {
-        const release = releasesById.get(e.release_id) ?? null;
-        const sharesSold = sellSharesFor(e, release);
-        const salePrice = e.sale_price !== undefined && e.sale_price > 0
+  // One row per sell event so multi-sell stocks list each one.
+  type Row = {
+    key: string;
+    stock: string;
+    name: string;
+    date: string;
+    shares: number;
+    gross: number;
+    gain: number;
+    tax: number;
+    net: number;
+    ratePct: number;
+  };
+  const rows: Row[] = [];
+  for (const h of stocks) {
+    const releasesById = new Map((h.releases ?? []).map((r) => [r.id, r]));
+    const list = h.sells ?? [];
+    for (let i = 0; i < list.length; i++) {
+      const e = list[i];
+      const d = parseISO(e.sell_date);
+      if (!d || d > today) continue;
+      const release = releasesById.get(e.release_id) ?? null;
+      const sharesSold = sellSharesFor(e, release);
+      if (sharesSold <= 0) continue;
+      const salePrice =
+        e.sale_price !== undefined && e.sale_price > 0
           ? e.sale_price
           : h.current_share_price;
-        const basis = release && release.release_price > 0
+      const basis =
+        release && release.release_price > 0
           ? release.release_price
           : h.cost_basis_per_share;
-        const gross = sharesSold * salePrice;
-        const cost = sharesSold * basis;
-        const gain = Math.max(0, gross - cost);
-        const rate = e.sale_tax_rate_pct || defaultSaleTaxRate(h.jurisdiction);
-        const tax = gain * (rate / 100);
-        shares += sharesSold;
-        grossNative += gross;
-        costNative += cost;
-        gainNative += gain;
-        taxNative += tax;
-      }
-      if (shares === 0) return null;
-      const gross = convert(grossNative, h.currency, display, settings);
-      const cost = convert(costNative, h.currency, display, settings);
-      const gain = convert(gainNative, h.currency, display, settings);
-      const tax = convert(taxNative, h.currency, display, settings);
-      return {
-        id: h.id,
-        label: h.ticker || h.company_name || "—",
-        shares,
-        gross,
-        cost,
-        gain,
-        tax,
-        net: gross - tax,
+      const grossNative = sharesSold * salePrice;
+      const costNative = sharesSold * basis;
+      const gainNative = Math.max(0, grossNative - costNative);
+      const rate = e.sale_tax_rate_pct || defaultSaleTaxRate(h.jurisdiction);
+      const taxNative = gainNative * (rate / 100);
+      rows.push({
+        key: `${h.id}:${i}:${e.id || "noid"}`,
+        stock: h.ticker || h.company_name || "—",
+        name: e.name || `Sell ${e.sell_date}`,
+        date: e.sell_date,
+        shares: sharesSold,
+        gross: convert(grossNative, h.currency, display, settings),
+        gain: convert(gainNative, h.currency, display, settings),
+        tax: convert(taxNative, h.currency, display, settings),
+        net: convert(grossNative - taxNative, h.currency, display, settings),
         ratePct: gainNative > 0 ? (taxNative / gainNative) * 100 : 0,
-      };
-    })
-    .filter((x): x is NonNullable<typeof x> => x !== null);
+      });
+    }
+  }
   if (rows.length === 0) return null;
+  rows.sort((a, b) => a.date.localeCompare(b.date) || a.stock.localeCompare(b.stock));
   const total = rows.reduce(
     (acc, r) => ({
       shares: acc.shares + r.shares,
       gross: acc.gross + r.gross,
-      cost: acc.cost + r.cost,
       gain: acc.gain + r.gain,
       tax: acc.tax + r.tax,
       net: acc.net + r.net,
     }),
-    { shares: 0, gross: 0, cost: 0, gain: 0, tax: 0, net: 0 },
+    { shares: 0, gross: 0, gain: 0, tax: 0, net: 0 },
   );
   return (
     <Card>
       <CardHeader>
         <CardTitle className="text-base">Sale events</CardTitle>
         <CardDescription>
-          Sales settled to date. Tax is cap-gains on the gain (sell price − release price), not the gross. Informational only — cash isn&apos;t rolled into net worth.
+          One row per sale settled to date. Tax is cap-gains on the gain
+          (sell price − release price), not the gross. Informational only
+          — cash isn&apos;t rolled into net worth.
         </CardDescription>
       </CardHeader>
       <CardContent className="overflow-x-auto">
@@ -363,6 +369,8 @@ function SaleEventsSummary({
           <thead>
             <tr className="text-[10px] uppercase tracking-wide text-muted-foreground border-b">
               <th className="text-left font-normal px-2 py-1.5">Stock</th>
+              <th className="text-left font-normal px-2 py-1.5">Name</th>
+              <th className="text-left font-normal px-2 py-1.5">Date</th>
               <th className="text-right font-normal px-2 py-1.5">Shares</th>
               <th className="text-right font-normal px-2 py-1.5">Gross</th>
               <th className="text-right font-normal px-2 py-1.5">Gain</th>
@@ -372,8 +380,10 @@ function SaleEventsSummary({
           </thead>
           <tbody>
             {rows.map((r) => (
-              <tr key={r.id} className="border-b last:border-0">
-                <td className="px-2 py-1.5 font-medium">{r.label}</td>
+              <tr key={r.key} className="border-b last:border-0">
+                <td className="px-2 py-1.5 font-medium">{r.stock}</td>
+                <td className="px-2 py-1.5">{r.name}</td>
+                <td className="px-2 py-1.5 text-muted-foreground">{r.date}</td>
                 <td className="px-2 py-1.5 text-right">{formatNumberCompact(Math.round(r.shares))}</td>
                 <td className="px-2 py-1.5 text-right">{formatMoneyCompact(r.gross, display)}</td>
                 <td className="px-2 py-1.5 text-right">{formatMoneyCompact(r.gain, display)}</td>
@@ -386,7 +396,7 @@ function SaleEventsSummary({
             ))}
             {rows.length > 1 ? (
               <tr className="bg-muted/40">
-                <td className="px-2 py-1.5 font-medium">Total</td>
+                <td className="px-2 py-1.5 font-medium" colSpan={3}>Total</td>
                 <td className="px-2 py-1.5 text-right">{formatNumberCompact(Math.round(total.shares))}</td>
                 <td className="px-2 py-1.5 text-right">{formatMoneyCompact(total.gross, display)}</td>
                 <td className="px-2 py-1.5 text-right">{formatMoneyCompact(total.gain, display)}</td>
