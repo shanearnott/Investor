@@ -21,7 +21,7 @@ import { useData } from "@/components/data-provider";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Label, Select } from "@/components/ui/input";
 import { convert } from "@/lib/fx";
-import { parseISO, Property, releaseKeptShares, releaseWithholdingShares, Scenario, ScenarioSchema, sellSharesFor, StockHolding, type Settings, vestedSharesAt } from "@/lib/models";
+import { parseISO, Property, releaseKeptShares, releaseWithholdingShares, RSU_DEFAULT_TAX_RATES, Scenario, ScenarioSchema, sellSharesFor, StockHolding, type Settings, vestedSharesAt } from "@/lib/models";
 import {
   applyScenarioTermination,
   buildNetWorthSeries,
@@ -1433,7 +1433,107 @@ function ScenarioSaleMath({
         })
         .filter((x) => x.shares > 0.5 || x.value > 0.5);
       const remainingTotal = remaining.reduce((n, x) => n + x.value, 0);
-      return { scenario: sc, sales, horizon, remaining, remainingTotal };
+
+      // Per-scenario release events. We surface release events as a
+      // distinct section above the sales so the user can see the
+      // *withholding* / income-tax treatment that happens at vest,
+      // separately from the cap-gains treatment at sale. Investment
+      // releases are folded in too (informational — their withholding
+      // already happened IRL but the kept basis carries forward).
+      type ReleaseEventRow = {
+        id: string;
+        kind: "investment" | "scenario";
+        name: string;
+        date: string;
+        stockTicker: string;
+        currency: string;
+        equityType: StockHolding["equity_type"];
+        strikePrice: number;
+        gross: number;
+        kept: number;
+        withheld: number;
+        withholdingRatePct: number;
+        releasePriceNative: number;
+        incomeTaxNative: number;
+        /** True for RSU/Common where the income tax is paid via share
+         *  withholding; false for Stock Options where it's a cash
+         *  outflow at exercise. */
+        taxPaidViaWithholding: boolean;
+        /** True for investment releases that already happened — the
+         *  tax was settled at vest, included here for context. */
+        alreadyPaid: boolean;
+      };
+      const releaseEvents: ReleaseEventRow[] = [];
+      const stockById = new Map(holdings.map((h) => [h.id, h]));
+      // Investment releases on holdings — past events, but the
+      // withholding maths is the same shape.
+      for (const h of holdings) {
+        for (const r of h.releases ?? []) {
+          const d = parseISO(r.release_date);
+          if (!d || d > horizon) continue;
+          if (r.shares <= 0) continue;
+          const kept = releaseKeptShares(r);
+          const withheld = releaseWithholdingShares(r);
+          const rate = r.shares > 0 ? (withheld / r.shares) * 100 : 0;
+          const isOptions = h.equity_type === "Stock Options";
+          releaseEvents.push({
+            id: `inv-${h.id}-${r.id}`,
+            kind: "investment",
+            name: r.name || `Release ${r.release_date}`,
+            date: r.release_date,
+            stockTicker: h.ticker || h.company_name || h.id,
+            currency: h.currency,
+            equityType: h.equity_type,
+            strikePrice: h.strike_price ?? 0,
+            gross: r.shares,
+            kept,
+            withheld,
+            withholdingRatePct: rate,
+            releasePriceNative: r.release_price,
+            incomeTaxNative: withheld * r.release_price,
+            taxPaidViaWithholding: !isOptions,
+            alreadyPaid: true,
+          });
+        }
+      }
+      // Scenario releases — pulled from the engine's pool so the
+      // gross / kept / income tax numbers exactly match the engine.
+      for (const sr of sc.releases ?? []) {
+        const stock = stockById.get(sr.stock_id);
+        if (!stock) continue;
+        const d = parseISO(sr.release_date);
+        if (!d || d > horizon) continue;
+        const resolved = releasePool.get(sr.id);
+        if (!resolved) continue;
+        const explicitRate = sr.release_tax_rate_pct;
+        const rate = explicitRate !== undefined
+          ? explicitRate
+          : sr.release_jurisdiction
+            ? RSU_DEFAULT_TAX_RATES[sr.release_jurisdiction] ?? 0
+            : 0;
+        const isOptions = stock.equity_type === "Stock Options";
+        releaseEvents.push({
+          id: `scn-${sr.id}`,
+          kind: "scenario",
+          name: sr.name || `Scenario release ${sr.release_date}`,
+          date: sr.release_date,
+          stockTicker: stock.ticker || stock.company_name || stock.id,
+          currency: stock.currency,
+          equityType: stock.equity_type,
+          strikePrice: stock.strike_price ?? 0,
+          gross: resolved.grossShares,
+          kept: resolved.keptShares,
+          withheld: Math.max(0, resolved.grossShares - resolved.keptShares),
+          withholdingRatePct: rate,
+          releasePriceNative: resolved.releasePriceNative,
+          incomeTaxNative: resolved.incomeTaxNative,
+          taxPaidViaWithholding: !isOptions,
+          alreadyPaid: false,
+        });
+      }
+      releaseEvents.sort((a, b) => a.date.localeCompare(b.date));
+
+      return { scenario: sc, sales, releaseEvents, horizon, remaining, remainingTotal };
     });
   }, [chosen, holdings, settings, ccy]);
   const totalSales = perScenario.reduce((n, p) => n + p.sales.length, 0);
@@ -1449,13 +1549,16 @@ function ScenarioSaleMath({
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-2">
-        {perScenario.map(({ scenario, sales, horizon, remaining, remainingTotal }) => {
-          if (sales.length === 0 && remaining.length === 0) return null;
+        {perScenario.map(({ scenario, sales, releaseEvents, horizon, remaining, remainingTotal }) => {
+          if (sales.length === 0 && remaining.length === 0 && releaseEvents.length === 0) return null;
           return (
             <details key={scenario.id} className="rounded-md border">
               <summary className="cursor-pointer px-3 py-2 text-sm font-medium">
                 {scenario.name || "Untitled"}{" "}
                 <span className="ml-2 text-xs text-muted-foreground">
+                  {releaseEvents.length > 0 ? (
+                    <>{releaseEvents.length} release{releaseEvents.length === 1 ? "" : "s"} · </>
+                  ) : null}
                   {sales.length} sale{sales.length === 1 ? "" : "s"}
                   {remaining.length > 0 ? (
                     <>
@@ -1465,6 +1568,86 @@ function ScenarioSaleMath({
                 </span>
               </summary>
               <div className="space-y-3 border-t p-3">
+                {releaseEvents.length > 0 ? (
+                  <div className="space-y-2">
+                    <div className="text-[11px] font-semibold text-foreground">
+                      Release events
+                      <span className="ml-2 text-[10px] font-normal text-muted-foreground">
+                        income tax at vest · withholding or cash
+                      </span>
+                    </div>
+                    {releaseEvents.map((e) => {
+                      const isOptions = e.equityType === "Stock Options";
+                      const intrinsic = Math.max(0, e.releasePriceNative - e.strikePrice);
+                      return (
+                        <div
+                          key={e.id}
+                          className="rounded-md bg-muted/40 px-3 py-2 text-[11px] tabular-nums space-y-0.5"
+                        >
+                          <div className="flex justify-between font-semibold text-foreground">
+                            <span>
+                              {e.name}
+                              <span className="ml-2 text-[10px] uppercase tracking-wide text-muted-foreground">
+                                {e.stockTicker} · {e.kind} release
+                                {e.alreadyPaid ? " · already settled" : ""}
+                              </span>
+                            </span>
+                            <span>{e.date}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Gross released × release price</span>
+                            <span>
+                              {formatNumber(Math.round(e.gross))} × {formatMoney(e.releasePriceNative, e.currency, { fractionDigits: 2 })} = {formatMoney(e.gross * e.releasePriceNative, e.currency)}
+                            </span>
+                          </div>
+                          {isOptions && e.strikePrice > 0 ? (
+                            <div className="flex justify-between text-muted-foreground">
+                              <span>Strike (cost at exercise)</span>
+                              <span>−{formatMoney(e.gross * e.strikePrice, e.currency)} <span className="text-[10px]">({formatMoney(e.strikePrice, e.currency, { fractionDigits: 2 })} × {formatNumber(Math.round(e.gross))})</span></span>
+                            </div>
+                          ) : null}
+                          {isOptions ? (
+                            <div className="flex justify-between text-muted-foreground">
+                              <span>Intrinsic spread (taxable at exercise)</span>
+                              <span>{formatMoney(intrinsic, e.currency, { fractionDigits: 2 })} / sh · {formatMoney(e.gross * intrinsic, e.currency)} total</span>
+                            </div>
+                          ) : null}
+                          <div className="flex justify-between font-medium text-foreground">
+                            <span>Withholding rate</span>
+                            <span>{e.withholdingRatePct.toFixed(1)}%</span>
+                          </div>
+                          {e.taxPaidViaWithholding ? (
+                            <div className="flex justify-between">
+                              <span>Shares withheld for tax (sell-to-cover)</span>
+                              <span>−{formatNumber(Math.round(e.withheld))} sh</span>
+                            </div>
+                          ) : (
+                            <div className="flex justify-between">
+                              <span>Shares withheld for tax</span>
+                              <span>0 sh <span className="text-[10px] text-muted-foreground">(options pay tax in cash)</span></span>
+                            </div>
+                          )}
+                          <div className="flex justify-between font-medium text-foreground">
+                            <span>Income tax at release</span>
+                            <span>−{formatMoney(e.incomeTaxNative, e.currency)} <span className="text-[10px] font-normal text-muted-foreground">{e.taxPaidViaWithholding ? "(via withheld shares)" : "(cash outflow)"}</span></span>
+                          </div>
+                          <div className="flex justify-between font-semibold text-foreground border-t pt-1 mt-1">
+                            <span>Kept after withholding</span>
+                            <span>{formatNumber(Math.round(e.kept))} sh @ {formatMoney(e.releasePriceNative, e.currency, { fractionDigits: 2 })} basis</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : null}
+                {sales.length > 0 ? (
+                  <div className="text-[11px] font-semibold text-foreground">
+                    Sale events
+                    <span className="ml-2 text-[10px] font-normal text-muted-foreground">
+                      cap-gains tax · resultant cash
+                    </span>
+                  </div>
+                ) : null}
                 {sales.map((r, i) => {
                   const b = r.breakdown;
                   if (!b) return null;
