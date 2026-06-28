@@ -1335,7 +1335,10 @@ function ScenarioSaleMath({
                         </span>
                         <span>{b.releaseDate} → {b.sellDate}</span>
                       </div>
-                      <div className="flex justify-between"><span>Release: gross / kept</span><span>{formatNumber(Math.round(b.grossSharesAtRelease))} / {formatNumber(Math.round(b.keptSharesAtRelease))} sh @ {formatMoney(b.releasePriceNative, b.currency, { fractionDigits: 2 })}</span></div>
+                      <div className="flex justify-between text-muted-foreground">
+                        <span>Release: gross / kept</span>
+                        <span>{formatNumber(Math.round(b.grossSharesAtRelease))} / {formatNumber(Math.round(b.keptSharesAtRelease))} sh</span>
+                      </div>
                       {b.incomeTaxAtReleaseNative > 0 ? (
                         <div className="flex justify-between text-muted-foreground">
                           <span>
@@ -1345,31 +1348,40 @@ function ScenarioSaleMath({
                           <span>{formatMoney(b.incomeTaxAtReleaseNative, b.currency)}</span>
                         </div>
                       ) : null}
-                      <div className="flex justify-between"><span>Shares sold</span><span>{formatNumber(Math.round(b.sharesSold))}</span></div>
-                      <div className="flex justify-between">
+                      <div className="flex justify-between font-medium text-foreground">
+                        <span>Release price (cost basis)</span>
+                        <span>{formatMoney(b.releasePriceNative, b.currency, { fractionDigits: 2 })} / sh</span>
+                      </div>
+                      <div className="flex justify-between font-medium text-foreground">
                         <span>
                           Sale price{" "}
                           {b.salePriceFromProjection ? (
-                            <span className="text-[10px] text-muted-foreground">(projected)</span>
+                            <span className="text-[10px] font-normal text-muted-foreground">(projected)</span>
                           ) : null}
                         </span>
-                        <span>{formatMoney(b.salePriceNative, b.currency, { fractionDigits: 2 })}</span>
+                        <span>{formatMoney(b.salePriceNative, b.currency, { fractionDigits: 2 })} / sh</span>
                       </div>
-                      <div className="flex justify-between"><span>Gross proceeds</span><span>{formatMoney(b.grossSaleNative, b.currency)}</span></div>
-                      <div className="flex justify-between"><span>Cap-gains tax ({b.capGainsRatePct.toFixed(1)}%)</span><span>−{formatMoney(b.capGainsTaxNative, b.currency)}</span></div>
+                      <div className="flex justify-between">
+                        <span>Shares sold × sale price</span>
+                        <span>{formatNumber(Math.round(b.sharesSold))} × {formatMoney(b.salePriceNative, b.currency, { fractionDigits: 2 })} = {formatMoney(b.grossSaleNative, b.currency)}</span>
+                      </div>
+                      <div className="flex justify-between font-medium text-foreground">
+                        <span>Tax paid</span>
+                        <span>−{formatMoney(b.capGainsTaxNative, b.currency)} <span className="text-[10px] font-normal text-muted-foreground">(cap-gains {b.capGainsRatePct.toFixed(1)}%)</span></span>
+                      </div>
                       {b.strikePaidNative && b.strikePaidNative > 0 ? (
                         <div className="flex justify-between">
                           <span>Strike paid at exercise</span>
                           <span>−{formatMoney(b.strikePaidNative, b.currency)}</span>
                         </div>
                       ) : null}
-                      <div className="flex justify-between font-semibold text-foreground">
-                        <span>Net (native)</span>
+                      <div className="flex justify-between font-semibold text-foreground border-t pt-1 mt-1">
+                        <span>Resultant cash</span>
                         <span>{formatMoney(b.netNative, b.currency)}</span>
                       </div>
                       {b.currency !== ccy ? (
                         <div className="flex justify-between text-muted-foreground">
-                          <span>Net in {ccy}</span>
+                          <span>In {ccy}</span>
                           <span>{formatMoney(b.netPrimary, ccy)}</span>
                         </div>
                       ) : null}
