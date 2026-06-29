@@ -1113,7 +1113,22 @@ function ScenarioSaleMath({
         .map((h) => {
           const v = projectStockValueAt(h, sc, horizon, ccy, settings as Settings);
           const sold = soldSharesByStock.get(h.id) ?? 0;
-          const freeVested = Math.max(0, v.shares_vested - sold);
+          // BUG fix: v.shares_vested from the engine subtracts
+          // investment-side withholding + investment sells, but the
+          // scenario's own release withholding lives in the release
+          // pool, not on the holding. Subtract it here too or the
+          // parent row claims phantom shares that the engine has
+          // already given to tax.
+          let scenarioWithholdingByStock = 0;
+          for (const sr of sc.releases ?? []) {
+            if (sr.stock_id !== h.id) continue;
+            const d = parseISO(sr.release_date);
+            if (!d || d > horizon) continue;
+            const resolved = releasePool.get(sr.id);
+            if (!resolved) continue;
+            scenarioWithholdingByStock += Math.max(0, resolved.grossShares - resolved.keptShares);
+          }
+          const freeVested = Math.max(0, v.shares_vested - sold - scenarioWithholdingByStock);
           const liquidFree =
             v.shares_vested > 0 ? v.liquid * (freeVested / v.shares_vested) : 0;
           const shares = freeVested + v.shares_unvested;
