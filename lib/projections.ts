@@ -704,6 +704,25 @@ export function buildNetWorthSeries(args: {
 
   const resolvedSales = resolveScenarioSales(scenario, holdings, settings);
   const salesByHolding = resolvedByHolding(resolvedSales);
+  const releasePool = resolveReleasePool(scenario, holdings, settings);
+
+  // Group scenario releases by stock so the asOf loop doesn't re-scan
+  // scenario.releases per step.
+  const scenarioReleasesByStock = new Map<string, Array<{ date: Date; gross: number; kept: number; incomeTaxNative: number }>>();
+  for (const sr of scenario.releases ?? []) {
+    const resolved = releasePool.get(sr.id);
+    if (!resolved) continue;
+    const d = parseISO(sr.release_date);
+    if (!d) continue;
+    const list = scenarioReleasesByStock.get(sr.stock_id) ?? [];
+    list.push({
+      date: d,
+      gross: resolved.grossShares,
+      kept: resolved.keptShares,
+      incomeTaxNative: resolved.incomeTaxNative,
+    });
+    scenarioReleasesByStock.set(sr.stock_id, list);
+  }
 
   for (let i = 0; i <= totalMonths; i += step) {
     const asOf = addMonths(startMonth, i);
@@ -721,13 +740,37 @@ export function buildNetWorthSeries(args: {
     for (const h of holdings) {
       const v = projectStockValueAt(h, scenario, asOf, settings.primary_currency, settings);
       const acc = holdingSaleAccrual(salesByHolding.get(h.id) ?? [], v.shares_vested, asOf);
-      // Free (non-earmarked) vested shares track the scenario price; earmarked
-      // shares are valued at the locked sale price (lockedLiquid here, then
-      // pending, then cash) so the sale never causes a scenario-vs-override
-      // jump — the only step is the sale tax on the sell date.
-      const free = Math.max(0, v.shares_vested - acc.scenarioRemovedShares);
+      // Scenario release withholding (RSU/Common) + income tax in cash
+      // (Stock Options) take effect at the release date. v.shares_vested
+      // only nets investment-side events, so we apply the scenario-side
+      // deductions here to keep the chart consistent with the sale math
+      // and the remaining-unsold breakdown.
+      let scenarioWithholdingShares = 0;
+      let scenarioExerciseTaxPrimary = 0;
+      const isOptions = h.equity_type === "Stock Options";
+      for (const ev of scenarioReleasesByStock.get(h.id) ?? []) {
+        if (ev.date > asOf) continue;
+        scenarioWithholdingShares += Math.max(0, ev.gross - ev.kept);
+        if (isOptions) {
+          scenarioExerciseTaxPrimary += convert(
+            ev.incomeTaxNative,
+            h.currency,
+            settings.primary_currency,
+            settings,
+          );
+        }
+      }
+      // Free (non-earmarked) vested shares track the scenario price;
+      // earmarked shares are valued at the locked sale price (lockedLiquid
+      // here, then pending, then cash) so the sale never causes a
+      // scenario-vs-override jump — the only step is the sale tax on the
+      // sell date.
+      const free = Math.max(
+        0,
+        v.shares_vested - acc.scenarioRemovedShares - scenarioWithholdingShares,
+      );
       const liquidFree = v.shares_vested > 0 ? v.liquid * (free / v.shares_vested) : 0;
-      const liquidAdj = liquidFree + acc.lockedLiquid;
+      const liquidAdj = Math.max(0, liquidFree + acc.lockedLiquid - scenarioExerciseTaxPrimary);
       const label = `stock:${h.ticker || h.company_name || h.id}`;
       perAsset[label] = liquidAdj + v.unvested;
       liquid += liquidAdj;
