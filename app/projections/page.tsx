@@ -1786,13 +1786,23 @@ function ScenarioSaleMath({
                         <span>{formatNumber(Math.round(b.grossSharesAtRelease))} / {formatNumber(Math.round(b.keptSharesAtRelease))} sh</span>
                       </div>
                       {b.incomeTaxAtReleaseNative > 0 ? (
-                        <div className="flex justify-between text-muted-foreground">
-                          <span>
-                            Income tax at release (info)
-                            <span className="ml-1 text-[10px]">— pre-paid via cover, not deducted from sale</span>
-                          </span>
-                          <span>{formatMoney(b.incomeTaxAtReleaseNative, b.currency)}</span>
-                        </div>
+                        b.incomeTaxAtReleaseDeductedFromNet ? (
+                          <div className="flex justify-between">
+                            <span>
+                              Income tax at exercise
+                              <span className="ml-1 text-[10px] text-muted-foreground">— options pay tax in cash, deducted from sale net</span>
+                            </span>
+                            <span>−{formatMoney(b.incomeTaxAtReleaseNative, b.currency)}</span>
+                          </div>
+                        ) : (
+                          <div className="flex justify-between text-muted-foreground">
+                            <span>
+                              Income tax at release (info)
+                              <span className="ml-1 text-[10px]">— pre-paid via cover, not deducted from sale</span>
+                            </span>
+                            <span>{formatMoney(b.incomeTaxAtReleaseNative, b.currency)}</span>
+                          </div>
+                        )
                       ) : null}
                       <div className="flex justify-between font-medium text-foreground">
                         <span>Release price (cost basis)</span>
