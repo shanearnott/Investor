@@ -327,11 +327,19 @@ export type ResolvedSale = {
     grossSaleNative: number;
     capGainsRatePct: number;
     capGainsTaxNative: number;
-    /** Informational only — for RSU/Common the income tax was
-     *  realised at the release via the reduced share count (kept =
-     *  gross × (1 − rate%)), not deducted from the sale's net.
-     *  Surfaced so the UI can explain the lifecycle to the user. */
+    /** Income tax owed at the release of these shares (proportional
+     *  to the sale's portion of kept). For RSU/Common it was absorbed
+     *  at the release via the reduced share count (kept = gross × (1
+     *  − rate%)) — informational only, not deducted from net. For
+     *  Stock Options the engine doesn't withhold shares, so this is a
+     *  real cash outflow folded into netNative (see
+     *  `incomeTaxAtReleaseDeductedFromNet`). */
     incomeTaxAtReleaseNative: number;
+    /** True when `incomeTaxAtReleaseNative` was deducted from
+     *  netNative (Stock Options only). When false, the income tax was
+     *  already absorbed by share withholding (RSU/Common) — the line
+     *  should be rendered as informational, not a deduction. */
+    incomeTaxAtReleaseDeductedFromNet: boolean;
     /** Stock Options only: strike paid at exercise (in native
      *  currency). Folded into netNative since the projection doesn't
      *  track cash outflows separately. */
@@ -551,7 +559,7 @@ export function resolveScenarioSales(
         : sell.sale_jurisdiction
           ? defaultSaleTaxRate(sell.sale_jurisdiction)
           : 0;
-    // For Stock Options, the user paid strike per share at exercise
+    // For Stock Options the user paid strike per share at exercise
     // (i.e. at release time). We fold that into the sale net since
     // the projection doesn't track cash outflows separately —
     // simpler than introducing a dedicated cash-out bucket and
@@ -562,12 +570,19 @@ export function resolveScenarioSales(
     const perShareGain = Math.max(0, priceNative - ref.releasePriceNative);
     const capGainsTaxNative =
       shares * perShareGain * (Math.max(0, Math.min(100, capGainsRatePct)) / 100);
-    const netNative = grossNative - capGainsTaxNative - strikeNative;
-    const netPrimary = convert(netNative, h.currency, settings.primary_currency, settings);
     const incomeTaxAtReleaseNative =
       ref.incomeTaxAlreadyPaid || ref.keptShares <= 0
         ? 0
         : ref.incomeTaxNative * (shares / ref.keptShares);
+    // For options the income tax at release is a real cash outflow at
+    // exercise (no share withholding — the engine sets kept = gross
+    // for options). Fold it into the sale net the same way we fold the
+    // strike, otherwise options sales look richer than they are. For
+    // RSU/Common the income tax was already absorbed by reducing kept,
+    // so we don't double-count.
+    const incomeTaxDeductedFromNetNative = isOptions ? incomeTaxAtReleaseNative : 0;
+    const netNative = grossNative - capGainsTaxNative - strikeNative - incomeTaxDeductedFromNetNative;
+    const netPrimary = convert(netNative, h.currency, settings.primary_currency, settings);
     out.push({
       stockId: ref.stockId,
       releaseDate: ref.releaseDate,
@@ -592,6 +607,7 @@ export function resolveScenarioSales(
         capGainsRatePct: capGainsRatePct,
         capGainsTaxNative,
         incomeTaxAtReleaseNative,
+        incomeTaxAtReleaseDeductedFromNet: incomeTaxDeductedFromNetNative > 0,
         strikePaidNative: isOptions ? strikeNative : undefined,
         netNative,
         netPrimary,
