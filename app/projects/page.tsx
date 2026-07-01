@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useRef, useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Copy, Plus, Trash2 } from "lucide-react";
 
 import { CurrencySelector } from "@/components/currency-selector";
 import { useData } from "@/components/data-provider";
@@ -76,6 +76,20 @@ export default function ProjectsPage() {
 
   const remove = async (id: string) => setProjects(data.projects.filter((p) => p.id !== id));
 
+  /** Fresh ids on the parent + every nested item/funding row so the
+   *  clone is fully independent of the source. Dropped straight into
+   *  the editor as an unsaved draft — matches the Scenarios clone flow. */
+  const cloneProject = (src: InvestmentProject) => {
+    const cloned: InvestmentProject = {
+      ...src,
+      id: newId(),
+      name: `${src.name || "Project"} (copy)`,
+      items: src.items.map((item) => ({ ...item })),
+      funding: src.funding.map((fs) => ({ ...fs })),
+    };
+    setEditing(cloned);
+  };
+
   return (
     <div className="mx-auto max-w-5xl space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -109,6 +123,7 @@ export default function ProjectsPage() {
                 scenarios={scenarios}
                 isEditing={editing?.id === p.id}
                 onEdit={() => setEditing(editing?.id === p.id ? null : { ...p })}
+                onClone={() => cloneProject(p)}
                 onDelete={() => remove(p.id)}
               />
               {editing?.id === p.id ? (
@@ -143,12 +158,14 @@ function ProjectCard({
   scenarios,
   isEditing,
   onEdit,
+  onClone,
   onDelete,
 }: {
   project: InvestmentProject;
   scenarios: Scenario[];
   isEditing: boolean;
   onEdit: () => void;
+  onClone: () => void;
   onDelete: () => void;
 }) {
   const { data, displayCurrency } = useData();
@@ -181,6 +198,9 @@ function ProjectCard({
         <div className="flex gap-1">
           <Button size="sm" variant={isEditing ? "default" : "outline"} onClick={onEdit}>
             {isEditing ? "Close" : "Edit"}
+          </Button>
+          <Button size="sm" variant="ghost" onClick={onClone} title="Duplicate this project">
+            <Copy className="h-4 w-4" />
           </Button>
           <Button size="sm" variant="ghost" onClick={onDelete}>
             <Trash2 className="h-4 w-4" />
