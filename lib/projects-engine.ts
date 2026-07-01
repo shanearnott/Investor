@@ -17,7 +17,7 @@ import {
   type Settings,
   type StockHolding,
 } from "./models";
-import { projectPropertyValueAt, projectStockValueAt } from "./projections";
+import { projectPropertyValueAt, projectStockValueAt, resolveReleasePool, resolveScenarioSales } from "./projections";
 import { propertySaleTax, stockSaleTax, yearsBetween } from "./tax";
 
 export type FundingLineResult = {
@@ -80,6 +80,41 @@ export function evaluateProject(args: {
   const holdingsById = new Map(holdings.map((h) => [h.id, h]));
   const propsById = new Map(properties.map((p) => [p.id, p]));
 
+  // Scenario events already earmark shares + cash before the target
+  // date. If we don't subtract them, the engine treats shares that the
+  // scenario has already sold (or scenario release withholding has
+  // taken) as available to fund the project — double-counting.
+  const resolvedSales = resolveScenarioSales(scenario, holdings, settings);
+  const scenarioSoldByStock = new Map<string, number>();
+  const scenarioCashByStock = new Map<string, number>();
+  for (const sale of resolvedSales) {
+    if (sale.sellDate > target) continue;
+    scenarioSoldByStock.set(
+      sale.stockId,
+      (scenarioSoldByStock.get(sale.stockId) ?? 0) + sale.shares,
+    );
+    // sale.netPrimary is in settings.primary_currency already.
+    scenarioCashByStock.set(
+      sale.stockId,
+      (scenarioCashByStock.get(sale.stockId) ?? 0) + sale.netPrimary,
+    );
+  }
+  const releasePool = resolveReleasePool(scenario, holdings, settings);
+  const scenarioWithheldByStock = new Map<string, number>();
+  for (const sr of scenario.releases ?? []) {
+    const d = parseISO(sr.release_date);
+    if (!d || d > target) continue;
+    const resolved = releasePool.get(sr.id);
+    if (!resolved) continue;
+    const withheld = Math.max(0, resolved.grossShares - resolved.keptShares);
+    if (withheld > 0) {
+      scenarioWithheldByStock.set(
+        sr.stock_id,
+        (scenarioWithheldByStock.get(sr.stock_id) ?? 0) + withheld,
+      );
+    }
+  }
+
   const lines: FundingLineResult[] = [];
   // How much net-of-tax funding we still need. Counts down as each source
   // contributes; once it hits 0, later sources emit zero-use lines.
@@ -129,7 +164,14 @@ export function evaluateProject(args: {
 
       const v = projectStockValueAt(h, scenario, target, primary, settings);
       const projectedNative = v.projected_price;
-      const liquidAvail = vestedSharesAt(h, target);
+      const rawVested = vestedSharesAt(h, target);
+      const scenarioSold = scenarioSoldByStock.get(h.id) ?? 0;
+      const scenarioWithheld = scenarioWithheldByStock.get(h.id) ?? 0;
+      const scenarioCashFromStock = scenarioCashByStock.get(h.id) ?? 0;
+      // Effective liquid pool = vested at target minus what the scenario
+      // has already earmarked (withheld at scenario release + sold at
+      // scenario sell) by target date.
+      const liquidAvail = Math.max(0, rawVested - scenarioSold - scenarioWithheld);
       const costBasis = h.cost_basis_per_share > 0 ? h.cost_basis_per_share : h.current_share_price;
       const holdingPeriod = Math.max(
         0,
@@ -137,6 +179,7 @@ export function evaluateProject(args: {
       );
 
       if (liquidAvail <= 0 || projectedNative <= 0) {
+        const drained = liquidAvail <= 0 && (scenarioSold > 0 || scenarioWithheld > 0);
         lines.push({
           kind: "stock",
           asset_label: `${h.ticker || h.company_name}`,
@@ -144,8 +187,16 @@ export function evaluateProject(args: {
           tax: 0,
           net_proceeds: 0,
           detail: {
-            note: liquidAvail <= 0 ? "No liquid shares at target date." : "Projected price ≤ 0.",
+            note: drained
+              ? `Scenario has already earmarked all shares (${fmt0.format(scenarioSold)} sold, ${fmt0.format(scenarioWithheld)} withheld). Add a cash funding line to route the scenario proceeds.`
+              : liquidAvail <= 0
+                ? "No liquid shares at target date."
+                : "Projected price ≤ 0.",
             shares_available: liquidAvail,
+            raw_vested_shares: rawVested,
+            scenario_sold_shares: scenarioSold,
+            scenario_withheld_shares: scenarioWithheld,
+            scenario_cash_from_stock: scenarioCashFromStock,
             projected_price_native: projectedNative,
           },
         });
@@ -215,6 +266,15 @@ export function evaluateProject(args: {
       detail.share_usage_pct = sharePctUsed;
       if (sharesNeeded > 0) {
         detail.usage_note = `${sharePctUsed.toFixed(1)}% of ${fmt0.format(liquidAvail)} available shares used`;
+      }
+      // Break down where the reductions came from so the user can
+      // reconcile against the Sale-math card.
+      detail.raw_vested_shares = rawVested;
+      if (scenarioSold > 0) detail.scenario_sold_shares = scenarioSold;
+      if (scenarioWithheld > 0) detail.scenario_withheld_shares = scenarioWithheld;
+      if (scenarioCashFromStock > 0) {
+        detail.scenario_cash_from_stock = scenarioCashFromStock;
+        detail.scenario_cash_note = `Scenario has already generated ~${fmt0.format(scenarioCashFromStock)} ${primary} of cash from this stock by target — add a cash funding line to route it into the project.`;
       }
       if (isRsu) {
         detail.tax_model = `RSU income tax @ ${(rsuRate * 100).toFixed(0)}% (scenario)`;
