@@ -86,6 +86,36 @@ function fallbackScenario(): Scenario {
  *  i.e. what would actually be in your hands on that date under the scenario.
  *  When asOf is today, projection is a no-op and this collapses to the live
  *  snapshot. */
+/** Sum scenario release withholding shares (RSU) and options income-
+ *  tax cash outflows for `h` up to `asOf`. Same deduction the line
+ *  chart (buildNetWorthSeries) applies, extracted so the pie chart
+ *  can use it too. */
+function scenarioReleaseDeductions(
+  h: StockHolding,
+  scenario: Scenario,
+  releasePool: ReturnType<typeof resolveReleasePool>,
+  asOf: Date,
+  currency: string,
+  settings: Settings,
+): { withholdingShares: number; exerciseTaxNative: number; exerciseTaxPrimary: number } {
+  let withholdingShares = 0;
+  let exerciseTaxNative = 0;
+  const isOptions = h.equity_type === "Stock Options";
+  for (const sr of scenario.releases ?? []) {
+    if (sr.stock_id !== h.id) continue;
+    const d = parseISO(sr.release_date);
+    if (!d || d > asOf) continue;
+    const resolved = releasePool.get(sr.id);
+    if (!resolved) continue;
+    withholdingShares += Math.max(0, resolved.grossShares - resolved.keptShares);
+    if (isOptions) exerciseTaxNative += resolved.incomeTaxNative;
+  }
+  const exerciseTaxPrimary = exerciseTaxNative > 0
+    ? convert(exerciseTaxNative, h.currency, currency, settings)
+    : 0;
+  return { withholdingShares, exerciseTaxNative, exerciseTaxPrimary };
+}
+
 function realisedAtDateByAsset(args: {
   holdings: StockHolding[];
   properties: Property[];
@@ -101,13 +131,17 @@ function realisedAtDateByAsset(args: {
   };
   const resolved = resolveScenarioSales(args.scenario, args.holdings, settingsForCcy);
   const byHolding = resolvedByHolding(resolved);
+  const releasePool = resolveReleasePool(args.scenario, args.holdings, settingsForCcy as Settings);
   let saleCash = 0;
   for (const h of args.holdings) {
     const v = projectStockValueAt(h, args.scenario, args.asOf, args.ccy, settingsForCcy);
     const acc = holdingSaleAccrual(byHolding.get(h.id) ?? [], v.shares_vested, args.asOf);
-    const free = Math.max(0, v.shares_vested - acc.scenarioRemovedShares);
+    const ded = scenarioReleaseDeductions(
+      h, args.scenario, releasePool, args.asOf, args.ccy, settingsForCcy as Settings,
+    );
+    const free = Math.max(0, v.shares_vested - acc.scenarioRemovedShares - ded.withholdingShares);
     const liquidFree = v.shares_vested > 0 ? v.liquid * (free / v.shares_vested) : 0;
-    const liquidAdj = liquidFree + acc.lockedLiquid;
+    const liquidAdj = Math.max(0, liquidFree + acc.lockedLiquid - ded.exerciseTaxPrimary);
     if (liquidAdj > 0) {
       out.push({ name: h.ticker || h.company_name || h.id, value: Math.round(liquidAdj), kind: "stock" });
     }
@@ -147,6 +181,7 @@ function comingByAsset(args: {
   };
   const resolved = resolveScenarioSales(args.scenario, args.holdings, settingsForCcy);
   const byHolding = resolvedByHolding(resolved);
+  const releasePool = resolveReleasePool(args.scenario, args.holdings, settingsForCcy as Settings);
   let cashNow = 0;
   let cashHor = 0;
 
@@ -154,14 +189,34 @@ function comingByAsset(args: {
     const sales = byHolding.get(h.id) ?? [];
     const now = projectStockValueAt(h, args.scenario, args.asOf, args.ccy, settingsForCcy);
     const accNow = holdingSaleAccrual(sales, now.shares_vested, args.asOf);
-    const freeNow = Math.max(0, now.shares_vested - accNow.scenarioRemovedShares);
-    const realisedNow =
-      (now.shares_vested > 0 ? now.liquid * (freeNow / now.shares_vested) : 0) + accNow.lockedLiquid;
+    const dedNow = scenarioReleaseDeductions(
+      h, args.scenario, releasePool, args.asOf, args.ccy, settingsForCcy as Settings,
+    );
+    const freeNow = Math.max(
+      0,
+      now.shares_vested - accNow.scenarioRemovedShares - dedNow.withholdingShares,
+    );
+    const realisedNow = Math.max(
+      0,
+      (now.shares_vested > 0 ? now.liquid * (freeNow / now.shares_vested) : 0)
+        + accNow.lockedLiquid
+        - dedNow.exerciseTaxPrimary,
+    );
     const v = projectStockValueAt(h, args.scenario, horizon, args.ccy, settingsForCcy);
     const accHor = holdingSaleAccrual(sales, v.shares_vested, horizon);
-    const freeHor = Math.max(0, v.shares_vested - accHor.scenarioRemovedShares);
-    const horizonTotal =
-      (v.shares_vested > 0 ? v.liquid * (freeHor / v.shares_vested) : 0) + accHor.lockedLiquid + v.unvested;
+    const dedHor = scenarioReleaseDeductions(
+      h, args.scenario, releasePool, horizon, args.ccy, settingsForCcy as Settings,
+    );
+    const freeHor = Math.max(
+      0,
+      v.shares_vested - accHor.scenarioRemovedShares - dedHor.withholdingShares,
+    );
+    const horizonTotal = Math.max(
+      0,
+      (v.shares_vested > 0 ? v.liquid * (freeHor / v.shares_vested) : 0)
+        + accHor.lockedLiquid
+        - dedHor.exerciseTaxPrimary,
+    ) + v.unvested;
     const coming = Math.max(0, horizonTotal - realisedNow);
     if (coming > 0) out.push({ name: h.ticker || h.company_name || h.id, value: Math.round(coming), kind: "stock" });
     cashNow += accNow.cash + accNow.pending;
