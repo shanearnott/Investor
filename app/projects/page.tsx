@@ -485,7 +485,7 @@ function ProjectForm({
               {fs.kind === "cash" ? (
                 <MoneyInput
                   suffix={data.settings.primary_currency}
-                  placeholder="Cash available"
+                  placeholder="blank = solve for required"
                   value={fs.amount_or_shares}
                   onChange={(n) => updateFunding(idx, { ...fs, amount_or_shares: n })}
                 />

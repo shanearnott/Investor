@@ -161,22 +161,38 @@ export function evaluateProject(args: {
   for (const fs of project.funding) {
     if (fs.kind === "cash") {
       // Cash is the only kind where the user must say *how much* they
-      // have — it's not derivable from any tracked asset.
+      // have — it's not derivable from any tracked asset. If the
+      // amount is 0/blank we interpret that as "solve for it" — the
+      // line reports the exact cash required to close the funding gap,
+      // and treats itself as the closing source. Users who genuinely
+      // want $0 cash can just remove the funding line instead.
       const cashAvail = Math.max(0, fs.amount_or_shares);
-      const use = remaining > 0 ? Math.min(remaining, cashAvail) : 0;
-      totalAvailableNet += cashAvail;
+      const isPlaceholder = fs.amount_or_shares === 0 && remaining > 0;
+      const use = isPlaceholder
+        ? remaining
+        : (remaining > 0 ? Math.min(remaining, cashAvail) : 0);
+      const effectiveAvail = isPlaceholder ? use : cashAvail;
+      totalAvailableNet += effectiveAvail;
       lines.push({
         kind: "cash",
-        asset_label: `Cash · ${fmt0.format(cashAvail)} ${primary} available`,
+        asset_label: isPlaceholder
+          ? `Cash required · ${fmt0.format(use)} ${primary} to close funding gap`
+          : `Cash · ${fmt0.format(cashAvail)} ${primary} available`,
         gross_proceeds: use,
         tax: 0,
         net_proceeds: use,
         detail: {
-          cash_available: cashAvail,
+          cash_available: effectiveAvail,
           cash_used: use,
-          cash_remaining: cashAvail - use,
-          fully_used: cashAvail > 0 && use >= cashAvail,
-          note: use === 0 && remaining <= 0 ? "Not needed — project already funded." : undefined,
+          cash_remaining: effectiveAvail - use,
+          fully_used: effectiveAvail > 0 && use >= effectiveAvail,
+          is_placeholder: isPlaceholder || undefined,
+          usage_note: isPlaceholder
+            ? "Blank amount — engine solved for the cash needed to close the gap."
+            : undefined,
+          note: !isPlaceholder && use === 0 && remaining <= 0
+            ? "Not needed — project already funded."
+            : undefined,
         },
       });
       remaining -= use;
