@@ -390,37 +390,73 @@ export default function ProjectionsPage() {
   }, [lineData, compareMonth]);
   const compareBase = chosen.find((s) => s.id === compareBaseId) ?? null;
   const compareOthers = chosen.filter((s) => s.id !== compareBase?.id);
-  const compareData = useMemo(() => {
-    if (!compareBase) return [] as Array<Record<string, number | string>>;
-    const baseSeries = seriesByScenario[compareBase.id] ?? [];
-    const baseByDate = new Map(baseSeries.map((r) => [r.date, r.total]));
-    return baseSeries.map((baseRow) => {
-      const row: Record<string, number | string> = { date: baseRow.date };
-      const baseTotal = baseByDate.get(baseRow.date) ?? 0;
-      for (const s of compareOthers) {
-        const other = (seriesByScenario[s.id] ?? []).find((x) => x.date === baseRow.date);
-        row[s.name] = Math.round((other?.total ?? 0) - baseTotal);
-      }
-      return row;
-    });
-  }, [compareBase, compareOthers, seriesByScenario]);
+  // Resolve the highlight month to the closest projection step available
+  // in the base scenario's series, so lookup is trivial.
   const compareHighlightDate = useMemo(() => {
-    if (!compareMonth || compareData.length === 0) return "";
+    if (!compareBase) return "";
+    const base = seriesByScenario[compareBase.id] ?? [];
+    if (base.length === 0) return "";
+    if (!compareMonth) return base[base.length - 1].date;
     const target = `${compareMonth}-01`;
-    if (compareData.some((r) => r.date === target)) return target;
-    // Snap to the closest available step.
-    let best = compareData[0].date as string;
+    let best = base[0].date;
     let bestDiff = Math.abs(new Date(best).getTime() - new Date(target).getTime());
-    for (const r of compareData) {
-      const d = Math.abs(new Date(r.date as string).getTime() - new Date(target).getTime());
+    for (const r of base) {
+      const d = Math.abs(new Date(r.date).getTime() - new Date(target).getTime());
       if (d < bestDiff) {
-        best = r.date as string;
+        best = r.date;
         bestDiff = d;
       }
     }
     return best;
-  }, [compareMonth, compareData]);
-  const compareHighlightRow = compareData.find((r) => r.date === compareHighlightDate);
+  }, [compareBase, compareMonth, seriesByScenario]);
+  // One row per non-base scenario. Each row carries three signed
+  // category deltas (stock / property / cash) so a horizontal stacked
+  // bar chart renders positives to the right of zero and negatives to
+  // the left — the tornado shape. Filter chips zero-out a category so
+  // the segment disappears without collapsing the row.
+  const compareData = useMemo(() => {
+    if (!compareBase || !compareHighlightDate) return [] as Array<{
+      name: string;
+      colour: string;
+      stock: number;
+      property: number;
+      cash: number;
+      total: number;
+    }>;
+    const baseRow = (seriesByScenario[compareBase.id] ?? []).find((x) => x.date === compareHighlightDate);
+    if (!baseRow) return [];
+    const baseStock = baseRow.liquid_equity_total + baseRow.unvested_equity_total;
+    const baseProperty = baseRow.property_equity_total;
+    const baseCash = baseRow.cash_total + baseRow.pending_sale_total;
+    return compareOthers.map((s) => {
+      const idx = chosen.findIndex((c) => c.id === s.id);
+      const other = (seriesByScenario[s.id] ?? []).find((x) => x.date === compareHighlightDate);
+      const otherStock = (other?.liquid_equity_total ?? 0) + (other?.unvested_equity_total ?? 0);
+      const otherProperty = other?.property_equity_total ?? 0;
+      const otherCash = (other?.cash_total ?? 0) + (other?.pending_sale_total ?? 0);
+      const stock = lineShowStocks ? Math.round(otherStock - baseStock) : 0;
+      const property = lineShowProperty ? Math.round(otherProperty - baseProperty) : 0;
+      const cash = lineShowCash ? Math.round(otherCash - baseCash) : 0;
+      return {
+        name: s.name,
+        colour: PIE_COLORS[idx % PIE_COLORS.length],
+        stock,
+        property,
+        cash,
+        total: stock + property + cash,
+      };
+    });
+  }, [compareBase, compareOthers, chosen, compareHighlightDate, seriesByScenario, lineShowStocks, lineShowProperty, lineShowCash]);
+  // Symmetric domain so both wings render at a comparable scale.
+  const compareDomainAbs = useMemo(() => {
+    let m = 0;
+    for (const r of compareData) {
+      const posSum = Math.max(0, r.stock) + Math.max(0, r.property) + Math.max(0, r.cash);
+      const negSum = Math.min(0, r.stock) + Math.min(0, r.property) + Math.min(0, r.cash);
+      m = Math.max(m, Math.abs(posSum), Math.abs(negSum));
+    }
+    return m || 1;
+  }, [compareData]);
 
   // As-of date for the wealth-allocation pie chart. YYYY-MM is enough — pin
   // to the 1st of the chosen month. Defaults to today; user can slide it
@@ -678,6 +714,18 @@ export default function ProjectionsPage() {
             </CardContent>
           </Card>
 
+          <NestedAllocationCard
+            ccy={ccy}
+            horizonYears={horizonYears}
+            scenarioName={chosen[0]?.name ?? "—"}
+            realised={realisedPie}
+            coming={comingPie}
+            asOfMonth={asOfMonth}
+            setAsOfMonth={setAsOfMonth}
+            isToday={isToday}
+            todayMonthISO={todayMonthISO}
+          />
+
           {compareBase && compareOthers.length > 0 ? (
             <Card>
               <CardHeader className="pb-2">
@@ -685,7 +733,7 @@ export default function ProjectionsPage() {
                   <div>
                     <CardTitle className="text-base">Compare vs baseline</CardTitle>
                     <CardDescription>
-                      Each line is <b>{`{scenario} − ${compareBase.name}`}</b> at every step. Above the zero line = ahead of {compareBase.name}, below = behind.
+                      Stacked delta bar per scenario at <b>{compareHighlightDate ? formatMmmYY(compareHighlightDate) : "—"}</b> minus <b>{compareBase.name}</b>. Each bar breaks into stocks / property / cash; positives push right, negatives push left. Zero = matches the base.
                     </CardDescription>
                   </div>
                   <div className="flex flex-wrap items-end gap-2">
@@ -712,20 +760,65 @@ export default function ProjectionsPage() {
                     </div>
                   </div>
                 </div>
+                <div className="mt-2 flex flex-wrap items-center gap-1">
+                  <span className="text-[11px] text-muted-foreground mr-1">Show</span>
+                  <button
+                    type="button"
+                    onClick={() => setLineShowStocks((v) => !v)}
+                    className={
+                      lineShowStocks
+                        ? "rounded-full border border-primary bg-primary text-primary-foreground px-2.5 py-1 text-[11px] font-medium"
+                        : "rounded-full border px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:bg-accent"
+                    }
+                  >
+                    📊 Stocks
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLineShowProperty((v) => !v)}
+                    className={
+                      lineShowProperty
+                        ? "rounded-full border border-primary bg-primary text-primary-foreground px-2.5 py-1 text-[11px] font-medium"
+                        : "rounded-full border px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:bg-accent"
+                    }
+                  >
+                    🏠 Properties
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLineShowCash((v) => !v)}
+                    className={
+                      lineShowCash
+                        ? "rounded-full border border-primary bg-primary text-primary-foreground px-2.5 py-1 text-[11px] font-medium"
+                        : "rounded-full border px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:bg-accent"
+                    }
+                  >
+                    💵 Cash
+                  </button>
+                </div>
               </CardHeader>
               <CardContent>
-                <div className="h-[280px] w-full">
+                <div style={{ height: Math.max(160, 60 + compareData.length * 44) }} className="w-full">
                   <ResponsiveContainer>
-                    <ComposedChart data={compareData} margin={{ top: 10, right: 16, left: 0, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                    <ComposedChart
+                      data={compareData}
+                      layout="vertical"
+                      margin={{ top: 8, right: 24, left: 0, bottom: 0 }}
+                      stackOffset="sign"
+                    >
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" horizontal={false} />
                       <XAxis
-                        dataKey="date"
+                        type="number"
                         tick={{ fontSize: 11 }}
-                        minTickGap={20}
-                        {...(janJulTicks.length > 0 ? { ticks: janJulTicks } : {})}
-                        tickFormatter={formatMmmYY}
+                        tickFormatter={(v) => (v === 0 ? "0" : v > 0 ? `+${compactNumber(v)}` : `−${compactNumber(-v)}`)}
+                        domain={[-compareDomainAbs, compareDomainAbs]}
                       />
-                      <YAxis tick={{ fontSize: 11 }} tickFormatter={compactNumber} />
+                      <YAxis
+                        type="category"
+                        dataKey="name"
+                        tick={{ fontSize: 11 }}
+                        width={90}
+                      />
                       <Tooltip
                         wrapperStyle={{ outline: "none" }}
                         contentStyle={{
@@ -737,84 +830,46 @@ export default function ProjectionsPage() {
                           lineHeight: "1.3",
                         }}
                         labelStyle={{ fontSize: 11, fontWeight: 500, marginBottom: 2 }}
-                        formatter={(v: number) => (v >= 0 ? `+${formatMoney(v, ccy)}` : `−${formatMoney(-v, ccy)}`)}
-                        labelFormatter={(l) => formatMmmYY(String(l))}
+                        formatter={(v: number) => (v === 0 ? "0" : v > 0 ? `+${formatMoney(v, ccy)}` : `−${formatMoney(-v, ccy)}`)}
                       />
                       <Legend wrapperStyle={{ fontSize: 11, paddingTop: 4 }} iconSize={8} />
-                      <ReferenceLine y={0} stroke="#6b7280" strokeDasharray="4 4" />
-                      {compareHighlightDate ? (
-                        <ReferenceLine
-                          x={compareHighlightDate}
-                          stroke="#ef4444"
-                          strokeDasharray="4 4"
-                          label={{ value: formatMmmYY(compareHighlightDate), fontSize: 10, fill: "#ef4444", position: "top" }}
-                        />
+                      <ReferenceLine x={0} stroke="#6b7280" />
+                      {lineShowStocks ? (
+                        <Bar dataKey="stock" name="Stocks" stackId="delta" fill="#0ea5e9" isAnimationActive animationDuration={600} />
                       ) : null}
-                      {compareOthers.map((s) => {
-                        const idx = chosen.findIndex((c) => c.id === s.id);
-                        const colour = PIE_COLORS[idx % PIE_COLORS.length];
-                        return (
-                          <Line
-                            key={s.id}
-                            type="monotone"
-                            dataKey={s.name}
-                            stroke={colour}
-                            strokeWidth={2}
-                            dot={false}
-                            activeDot={{ r: 3 }}
-                            isAnimationActive
-                            animationDuration={700}
-                            animationEasing="ease-out"
-                          />
-                        );
-                      })}
+                      {lineShowProperty ? (
+                        <Bar dataKey="property" name="Properties" stackId="delta" fill="#059669" isAnimationActive animationDuration={600} />
+                      ) : null}
+                      {lineShowCash ? (
+                        <Bar dataKey="cash" name="Cash" stackId="delta" fill="#d97706" isAnimationActive animationDuration={600} />
+                      ) : null}
                     </ComposedChart>
                   </ResponsiveContainer>
                 </div>
-                {compareHighlightRow ? (
-                  <div className="mt-2 rounded-md border bg-muted/40 px-3 py-2 text-xs">
-                    <div className="mb-1 font-medium">
-                      At {formatMmmYY(compareHighlightDate)} vs <b>{compareBase.name}</b>
-                    </div>
-                    <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">
-                      {compareOthers.map((s) => {
-                        const idx = chosen.findIndex((c) => c.id === s.id);
-                        const colour = PIE_COLORS[idx % PIE_COLORS.length];
-                        const delta = (compareHighlightRow[s.name] as number) ?? 0;
-                        const sign = delta >= 0 ? "+" : "−";
-                        return (
-                          <div key={s.id} className="flex items-center justify-between tabular-nums">
-                            <span className="flex items-center gap-1.5">
-                              <span
-                                className="inline-block h-2 w-2 rounded-sm"
-                                style={{ background: colour }}
-                              />
-                              <span className="font-medium">{s.name}</span>
-                            </span>
-                            <span className={delta >= 0 ? "text-emerald-700 font-medium" : "text-rose-700 font-medium"}>
-                              {sign}{formatMoney(Math.abs(delta), ccy)}
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
+                <div className="mt-2 rounded-md border bg-muted/40 px-3 py-2 text-xs">
+                  <div className="mb-1 font-medium">
+                    Δ at {compareHighlightDate ? formatMmmYY(compareHighlightDate) : "—"} vs <b>{compareBase.name}</b>
                   </div>
-                ) : null}
+                  <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">
+                    {compareData.map((r) => (
+                      <div key={r.name} className="flex items-center justify-between tabular-nums">
+                        <span className="flex items-center gap-1.5">
+                          <span
+                            className="inline-block h-2 w-2 rounded-sm"
+                            style={{ background: r.colour }}
+                          />
+                          <span className="font-medium">{r.name}</span>
+                        </span>
+                        <span className={r.total >= 0 ? "text-emerald-700 font-medium" : "text-rose-700 font-medium"}>
+                          {r.total >= 0 ? "+" : "−"}{formatMoney(Math.abs(r.total), ccy)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </CardContent>
             </Card>
           ) : null}
-
-          <NestedAllocationCard
-            ccy={ccy}
-            horizonYears={horizonYears}
-            scenarioName={chosen[0]?.name ?? "—"}
-            realised={realisedPie}
-            coming={comingPie}
-            asOfMonth={asOfMonth}
-            setAsOfMonth={setAsOfMonth}
-            isToday={isToday}
-            todayMonthISO={todayMonthISO}
-          />
         </>
       ) : null}
 
