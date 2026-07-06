@@ -247,6 +247,21 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
 
+      <Card>
+        <CardHeader>
+          <CardTitle>Build info</CardTitle>
+          <CardDescription>
+            Use this to confirm whether the page you&apos;re looking at
+            matches the latest deploy. If the build id doesn&apos;t
+            match what&apos;s on GitHub&apos;s main branch, hard-refresh
+            to bust the PWA cache.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <BuildInfoSection />
+        </CardContent>
+      </Card>
+
       <div className="flex justify-end gap-2">
         {savedNote ? <span className="text-sm text-emerald-700 self-center">{savedNote}</span> : null}
         {error ? <span className="text-sm text-destructive self-center">{error}</span> : null}
@@ -790,6 +805,36 @@ function TaxSummaryExportSection() {
       </div>
       <p className="text-[11px] text-muted-foreground">
         Opens in a new tab. Use your browser&apos;s print dialog (Cmd/Ctrl-P) and choose <b>Save as PDF</b>.
+      </p>
+    </div>
+  );
+}
+
+function BuildInfoSection() {
+  const buildId = process.env.NEXT_PUBLIC_BUILD_ID || "dev";
+  const buildTimeRaw = process.env.NEXT_PUBLIC_BUILD_TIME;
+  const buildTime = buildTimeRaw
+    ? new Date(buildTimeRaw).toLocaleString(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : "unknown";
+  return (
+    <div className="space-y-2 text-sm">
+      <div className="flex items-center justify-between gap-2 rounded-md border bg-muted/40 px-3 py-2">
+        <span className="text-xs text-muted-foreground">Build id</span>
+        <code className="text-xs font-medium tabular-nums">{buildId}</code>
+      </div>
+      <div className="flex items-center justify-between gap-2 rounded-md border bg-muted/40 px-3 py-2">
+        <span className="text-xs text-muted-foreground">Built at</span>
+        <span className="text-xs tabular-nums">{buildTime}</span>
+      </div>
+      <p className="text-[11px] text-muted-foreground">
+        On GitHub Actions builds, the build id is the first 7 chars of the
+        commit sha. Local builds are stamped <code>local-&lt;millis&gt;</code>.
       </p>
     </div>
   );
