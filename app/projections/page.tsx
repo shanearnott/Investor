@@ -366,10 +366,34 @@ export default function ProjectionsPage() {
       .filter((d) => typeof d === "string" && (d.endsWith("-01-01") || d.endsWith("-07-01")));
   }, [lineData]);
 
+  // Shared as-of date used by both the wealth-allocation pie and the
+  // Compare vs baseline tornado. Defaults to today; user slides it
+  // ±horizonYears forward/back and both charts update in sync.
+  const todayMonthISO = new Date().toISOString().slice(0, 7);
+  const [asOfMonth, setAsOfMonth] = useState<string>(todayMonthISO);
+  const asOfDate = useMemo(() => {
+    const [y, m] = asOfMonth.split("-").map(Number);
+    if (!y || !m) return new Date();
+    return new Date(Date.UTC(y, m - 1, 1));
+  }, [asOfMonth]);
+  const isToday = asOfMonth === todayMonthISO;
+  // Shrinking the horizon should pull the as-of back inside the new
+  // window if the user was at, say, +5y and just dropped horizon to 2y.
+  useEffect(() => {
+    const [y, m] = asOfMonth.split("-").map(Number);
+    if (!y || !m) return;
+    const t = new Date();
+    const offset = (y - t.getUTCFullYear()) * 12 + ((m - 1) - t.getUTCMonth());
+    const max = horizonYears * 12;
+    const clamped = Math.max(-max, Math.min(max, offset));
+    if (clamped === offset) return;
+    const d = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth() + clamped, 1));
+    setAsOfMonth(d.toISOString().slice(0, 7));
+  }, [horizonYears, asOfMonth]);
+
   // Comparison chart: picks a base scenario, plots each other selected
-  // scenario as a signed delta (their total − base total) at every step
-  // so above/below reads as gain/loss vs the base. Highlight month adds
-  // a vertical marker + a summary row at that date.
+  // scenario as a signed stacked delta (their total − base total) at
+  // the highlight date so above/below reads as gain/loss vs the base.
   const [compareBaseId, setCompareBaseId] = useState<string>("");
   useEffect(() => {
     // Reset the base if it's not in the current selection (or empty).
@@ -381,13 +405,6 @@ export default function ProjectionsPage() {
       setCompareBaseId(chosen[0].id);
     }
   }, [chosen, compareBaseId]);
-  const [compareMonth, setCompareMonth] = useState<string>("");
-  useEffect(() => {
-    // Default the highlight month to the last row of the line data.
-    if (compareMonth) return;
-    const last = lineData[lineData.length - 1]?.date as string | undefined;
-    if (last) setCompareMonth(last.slice(0, 7));
-  }, [lineData, compareMonth]);
   const compareBase = chosen.find((s) => s.id === compareBaseId) ?? null;
   const compareOthers = chosen.filter((s) => s.id !== compareBase?.id);
   // Resolve the highlight month to the closest projection step available
@@ -396,8 +413,8 @@ export default function ProjectionsPage() {
     if (!compareBase) return "";
     const base = seriesByScenario[compareBase.id] ?? [];
     if (base.length === 0) return "";
-    if (!compareMonth) return base[base.length - 1].date;
-    const target = `${compareMonth}-01`;
+    if (!asOfMonth) return base[base.length - 1].date;
+    const target = `${asOfMonth}-01`;
     let best = base[0].date;
     let bestDiff = Math.abs(new Date(best).getTime() - new Date(target).getTime());
     for (const r of base) {
@@ -408,7 +425,7 @@ export default function ProjectionsPage() {
       }
     }
     return best;
-  }, [compareBase, compareMonth, seriesByScenario]);
+  }, [compareBase, asOfMonth, seriesByScenario]);
   // One row per non-base scenario. Each row carries three signed
   // category deltas (stock / property / cash) so a horizontal stacked
   // bar chart renders positives to the right of zero and negatives to
@@ -457,34 +474,6 @@ export default function ProjectionsPage() {
     }
     return m || 1;
   }, [compareData]);
-
-  // As-of date for the wealth-allocation pie chart. YYYY-MM is enough — pin
-  // to the 1st of the chosen month. Defaults to today; user can slide it
-  // forward to see "what would the realised vs coming split look like in 2y?"
-  const todayMonthISO = new Date().toISOString().slice(0, 7);
-  const [asOfMonth, setAsOfMonth] = useState<string>(todayMonthISO);
-  const asOfDate = useMemo(() => {
-    const [y, m] = asOfMonth.split("-").map(Number);
-    if (!y || !m) return new Date();
-    return new Date(Date.UTC(y, m - 1, 1));
-  }, [asOfMonth]);
-  const isToday = asOfMonth === todayMonthISO;
-
-  // Pie as-of slider tracks the line chart's horizon, so the user can
-  // scrub ±horizonYears around today. Shrinking the horizon should pull
-  // the as-of back inside the new window if the user was at, say, +5y
-  // and just dropped horizon to 2y.
-  useEffect(() => {
-    const [y, m] = asOfMonth.split("-").map(Number);
-    if (!y || !m) return;
-    const t = new Date();
-    const offset = (y - t.getUTCFullYear()) * 12 + ((m - 1) - t.getUTCMonth());
-    const max = horizonYears * 12;
-    const clamped = Math.max(-max, Math.min(max, offset));
-    if (clamped === offset) return;
-    const d = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth() + clamped, 1));
-    setAsOfMonth(d.toISOString().slice(0, 7));
-  }, [horizonYears, asOfMonth]);
 
   const pieScenario = chosen[0];
   const realisedPie: Slice[] = pieScenario
@@ -751,14 +740,14 @@ export default function ProjectionsPage() {
                     </div>
                     <div className="flex w-full flex-col gap-0.5 sm:w-64">
                       <div className="flex items-center justify-between gap-2">
-                        <Label className="text-[11px] text-muted-foreground">Highlight</Label>
+                        <Label className="text-[11px] text-muted-foreground">As-of</Label>
                         <span className="text-xs tabular-nums font-medium">
-                          {compareMonth ? formatMmmYY(`${compareMonth}-01`) : "—"}
+                          {formatMmmYY(`${asOfMonth}-01`)}
                         </span>
-                        {compareMonth && compareMonth !== todayMonthISO ? (
+                        {!isToday ? (
                           <button
                             type="button"
-                            onClick={() => setCompareMonth(todayMonthISO)}
+                            onClick={() => setAsOfMonth(todayMonthISO)}
                             className="rounded-full border px-2 py-0.5 text-[10px] text-muted-foreground hover:bg-accent"
                           >
                             Today
@@ -771,8 +760,7 @@ export default function ProjectionsPage() {
                         max={horizonYears * 12}
                         step={1}
                         value={(() => {
-                          if (!compareMonth) return horizonYears * 12;
-                          const [y, m] = compareMonth.split("-").map(Number);
+                          const [y, m] = asOfMonth.split("-").map(Number);
                           const t = new Date();
                           return (y - t.getUTCFullYear()) * 12 + ((m - 1) - t.getUTCMonth());
                         })()}
@@ -780,10 +768,10 @@ export default function ProjectionsPage() {
                           const offset = Number(e.target.value);
                           const t = new Date();
                           const d = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth() + offset, 1));
-                          setCompareMonth(d.toISOString().slice(0, 7));
+                          setAsOfMonth(d.toISOString().slice(0, 7));
                         }}
                         className="h-6 w-full accent-foreground"
-                        aria-label="Highlight date"
+                        aria-label="As-of date"
                       />
                     </div>
                   </div>
