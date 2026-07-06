@@ -10,6 +10,7 @@ import {
   Line,
   Pie,
   PieChart,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -365,6 +366,62 @@ export default function ProjectionsPage() {
       .filter((d) => typeof d === "string" && (d.endsWith("-01-01") || d.endsWith("-07-01")));
   }, [lineData]);
 
+  // Comparison chart: picks a base scenario, plots each other selected
+  // scenario as a signed delta (their total − base total) at every step
+  // so above/below reads as gain/loss vs the base. Highlight month adds
+  // a vertical marker + a summary row at that date.
+  const [compareBaseId, setCompareBaseId] = useState<string>("");
+  useEffect(() => {
+    // Reset the base if it's not in the current selection (or empty).
+    if (chosen.length === 0) {
+      if (compareBaseId !== "") setCompareBaseId("");
+      return;
+    }
+    if (!chosen.some((s) => s.id === compareBaseId)) {
+      setCompareBaseId(chosen[0].id);
+    }
+  }, [chosen, compareBaseId]);
+  const [compareMonth, setCompareMonth] = useState<string>("");
+  useEffect(() => {
+    // Default the highlight month to the last row of the line data.
+    if (compareMonth) return;
+    const last = lineData[lineData.length - 1]?.date as string | undefined;
+    if (last) setCompareMonth(last.slice(0, 7));
+  }, [lineData, compareMonth]);
+  const compareBase = chosen.find((s) => s.id === compareBaseId) ?? null;
+  const compareOthers = chosen.filter((s) => s.id !== compareBase?.id);
+  const compareData = useMemo(() => {
+    if (!compareBase) return [] as Array<Record<string, number | string>>;
+    const baseSeries = seriesByScenario[compareBase.id] ?? [];
+    const baseByDate = new Map(baseSeries.map((r) => [r.date, r.total]));
+    return baseSeries.map((baseRow) => {
+      const row: Record<string, number | string> = { date: baseRow.date };
+      const baseTotal = baseByDate.get(baseRow.date) ?? 0;
+      for (const s of compareOthers) {
+        const other = (seriesByScenario[s.id] ?? []).find((x) => x.date === baseRow.date);
+        row[s.name] = Math.round((other?.total ?? 0) - baseTotal);
+      }
+      return row;
+    });
+  }, [compareBase, compareOthers, seriesByScenario]);
+  const compareHighlightDate = useMemo(() => {
+    if (!compareMonth || compareData.length === 0) return "";
+    const target = `${compareMonth}-01`;
+    if (compareData.some((r) => r.date === target)) return target;
+    // Snap to the closest available step.
+    let best = compareData[0].date as string;
+    let bestDiff = Math.abs(new Date(best).getTime() - new Date(target).getTime());
+    for (const r of compareData) {
+      const d = Math.abs(new Date(r.date as string).getTime() - new Date(target).getTime());
+      if (d < bestDiff) {
+        best = r.date as string;
+        bestDiff = d;
+      }
+    }
+    return best;
+  }, [compareMonth, compareData]);
+  const compareHighlightRow = compareData.find((r) => r.date === compareHighlightDate);
+
   // As-of date for the wealth-allocation pie chart. YYYY-MM is enough — pin
   // to the 1st of the chosen month. Defaults to today; user can slide it
   // forward to see "what would the realised vs coming split look like in 2y?"
@@ -620,6 +677,132 @@ export default function ProjectionsPage() {
               </div>
             </CardContent>
           </Card>
+
+          {compareBase && compareOthers.length > 0 ? (
+            <Card>
+              <CardHeader className="pb-2">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div>
+                    <CardTitle className="text-base">Compare vs baseline</CardTitle>
+                    <CardDescription>
+                      Each line is <b>{`{scenario} − ${compareBase.name}`}</b> at every step. Above the zero line = ahead of {compareBase.name}, below = behind.
+                    </CardDescription>
+                  </div>
+                  <div className="flex flex-wrap items-end gap-2">
+                    <div className="flex flex-col gap-0.5">
+                      <Label className="text-[11px] text-muted-foreground">Base</Label>
+                      <Select
+                        value={compareBaseId}
+                        onChange={(e) => setCompareBaseId(e.target.value)}
+                        className="text-xs h-8"
+                      >
+                        {chosen.map((s) => (
+                          <option key={s.id} value={s.id}>{s.name}</option>
+                        ))}
+                      </Select>
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                      <Label className="text-[11px] text-muted-foreground">Highlight</Label>
+                      <Input
+                        type="month"
+                        value={compareMonth}
+                        onChange={(e) => setCompareMonth(e.target.value)}
+                        className="text-xs h-8"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="h-[280px] w-full">
+                  <ResponsiveContainer>
+                    <ComposedChart data={compareData} margin={{ top: 10, right: 16, left: 0, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                      <XAxis
+                        dataKey="date"
+                        tick={{ fontSize: 11 }}
+                        minTickGap={20}
+                        {...(janJulTicks.length > 0 ? { ticks: janJulTicks } : {})}
+                        tickFormatter={formatMmmYY}
+                      />
+                      <YAxis tick={{ fontSize: 11 }} tickFormatter={compactNumber} />
+                      <Tooltip
+                        wrapperStyle={{ outline: "none" }}
+                        contentStyle={{
+                          fontSize: 11,
+                          padding: "4px 6px",
+                          borderRadius: 6,
+                          border: "1px solid #e5e7eb",
+                          background: "rgba(255,255,255,0.96)",
+                          lineHeight: "1.3",
+                        }}
+                        labelStyle={{ fontSize: 11, fontWeight: 500, marginBottom: 2 }}
+                        formatter={(v: number) => (v >= 0 ? `+${formatMoney(v, ccy)}` : `−${formatMoney(-v, ccy)}`)}
+                        labelFormatter={(l) => formatMmmYY(String(l))}
+                      />
+                      <Legend wrapperStyle={{ fontSize: 11, paddingTop: 4 }} iconSize={8} />
+                      <ReferenceLine y={0} stroke="#6b7280" strokeDasharray="4 4" />
+                      {compareHighlightDate ? (
+                        <ReferenceLine
+                          x={compareHighlightDate}
+                          stroke="#ef4444"
+                          strokeDasharray="4 4"
+                          label={{ value: formatMmmYY(compareHighlightDate), fontSize: 10, fill: "#ef4444", position: "top" }}
+                        />
+                      ) : null}
+                      {compareOthers.map((s) => {
+                        const idx = chosen.findIndex((c) => c.id === s.id);
+                        const colour = PIE_COLORS[idx % PIE_COLORS.length];
+                        return (
+                          <Line
+                            key={s.id}
+                            type="monotone"
+                            dataKey={s.name}
+                            stroke={colour}
+                            strokeWidth={2}
+                            dot={false}
+                            activeDot={{ r: 3 }}
+                            isAnimationActive
+                            animationDuration={700}
+                            animationEasing="ease-out"
+                          />
+                        );
+                      })}
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                </div>
+                {compareHighlightRow ? (
+                  <div className="mt-2 rounded-md border bg-muted/40 px-3 py-2 text-xs">
+                    <div className="mb-1 font-medium">
+                      At {formatMmmYY(compareHighlightDate)} vs <b>{compareBase.name}</b>
+                    </div>
+                    <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">
+                      {compareOthers.map((s) => {
+                        const idx = chosen.findIndex((c) => c.id === s.id);
+                        const colour = PIE_COLORS[idx % PIE_COLORS.length];
+                        const delta = (compareHighlightRow[s.name] as number) ?? 0;
+                        const sign = delta >= 0 ? "+" : "−";
+                        return (
+                          <div key={s.id} className="flex items-center justify-between tabular-nums">
+                            <span className="flex items-center gap-1.5">
+                              <span
+                                className="inline-block h-2 w-2 rounded-sm"
+                                style={{ background: colour }}
+                              />
+                              <span className="font-medium">{s.name}</span>
+                            </span>
+                            <span className={delta >= 0 ? "text-emerald-700 font-medium" : "text-rose-700 font-medium"}>
+                              {sign}{formatMoney(Math.abs(delta), ccy)}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
+              </CardContent>
+            </Card>
+          ) : null}
 
           <NestedAllocationCard
             ccy={ccy}
