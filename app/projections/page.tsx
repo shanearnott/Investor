@@ -749,13 +749,41 @@ export default function ProjectionsPage() {
                         ))}
                       </Select>
                     </div>
-                    <div className="flex flex-col gap-0.5">
-                      <Label className="text-[11px] text-muted-foreground">Highlight</Label>
-                      <Input
-                        type="month"
-                        value={compareMonth}
-                        onChange={(e) => setCompareMonth(e.target.value)}
-                        className="text-xs h-8"
+                    <div className="flex w-full flex-col gap-0.5 sm:w-64">
+                      <div className="flex items-center justify-between gap-2">
+                        <Label className="text-[11px] text-muted-foreground">Highlight</Label>
+                        <span className="text-xs tabular-nums font-medium">
+                          {compareMonth ? formatMmmYY(`${compareMonth}-01`) : "—"}
+                        </span>
+                        {compareMonth && compareMonth !== todayMonthISO ? (
+                          <button
+                            type="button"
+                            onClick={() => setCompareMonth(todayMonthISO)}
+                            className="rounded-full border px-2 py-0.5 text-[10px] text-muted-foreground hover:bg-accent"
+                          >
+                            Today
+                          </button>
+                        ) : null}
+                      </div>
+                      <input
+                        type="range"
+                        min={-horizonYears * 12}
+                        max={horizonYears * 12}
+                        step={1}
+                        value={(() => {
+                          if (!compareMonth) return horizonYears * 12;
+                          const [y, m] = compareMonth.split("-").map(Number);
+                          const t = new Date();
+                          return (y - t.getUTCFullYear()) * 12 + ((m - 1) - t.getUTCMonth());
+                        })()}
+                        onChange={(e) => {
+                          const offset = Number(e.target.value);
+                          const t = new Date();
+                          const d = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth() + offset, 1));
+                          setCompareMonth(d.toISOString().slice(0, 7));
+                        }}
+                        className="h-6 w-full accent-foreground"
+                        aria-label="Highlight date"
                       />
                     </div>
                   </div>
