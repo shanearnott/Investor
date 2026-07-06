@@ -8,6 +8,10 @@ const fs = require("fs");
 const path = require("path");
 
 const id = (process.env.GITHUB_SHA || "").slice(0, 7) || `local-${Date.now()}`;
+const time = new Date().toISOString();
 const out = path.resolve(__dirname, "..", ".env.production.local");
-fs.writeFileSync(out, `NEXT_PUBLIC_BUILD_ID=${id}\n`);
-console.log(`[set-build-id] NEXT_PUBLIC_BUILD_ID=${id}`);
+fs.writeFileSync(
+  out,
+  `NEXT_PUBLIC_BUILD_ID=${id}\nNEXT_PUBLIC_BUILD_TIME=${time}\n`,
+);
+console.log(`[set-build-id] NEXT_PUBLIC_BUILD_ID=${id} NEXT_PUBLIC_BUILD_TIME=${time}`);
