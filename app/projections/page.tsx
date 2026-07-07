@@ -263,7 +263,10 @@ export default function ProjectionsPage() {
       return scenarios[0] ? [scenarios[0].id] : [];
     });
   }, [scenarios]);
-  const chosen = scenarios.filter((s) => selectedIds.includes(s.id));
+  const chosen = useMemo(
+    () => scenarios.filter((s) => selectedIds.includes(s.id)),
+    [scenarios, selectedIds],
+  );
 
   // Shared horizon for both the line chart and the wealth-allocation pie.
   // Decoupled from each scenario's `horizon_years` (which still drives
@@ -405,8 +408,14 @@ export default function ProjectionsPage() {
       setCompareBaseId(chosen[0].id);
     }
   }, [chosen, compareBaseId]);
-  const compareBase = chosen.find((s) => s.id === compareBaseId) ?? null;
-  const compareOthers = chosen.filter((s) => s.id !== compareBase?.id);
+  const compareBase = useMemo(
+    () => chosen.find((s) => s.id === compareBaseId) ?? null,
+    [chosen, compareBaseId],
+  );
+  const compareOthers = useMemo(
+    () => chosen.filter((s) => s.id !== compareBase?.id),
+    [chosen, compareBase],
+  );
   // Resolve the highlight month to the closest projection step available
   // in the base scenario's series, so lookup is trivial.
   const compareHighlightDate = useMemo(() => {
@@ -817,6 +826,7 @@ export default function ProjectionsPage() {
                 <div style={{ height: Math.max(160, 60 + compareData.length * 44) }} className="w-full">
                   <ResponsiveContainer>
                     <ComposedChart
+                      key={compareHighlightDate}
                       data={compareData}
                       layout="vertical"
                       margin={{ top: 8, right: 24, left: 0, bottom: 0 }}
@@ -851,13 +861,13 @@ export default function ProjectionsPage() {
                       <Legend wrapperStyle={{ fontSize: 11, paddingTop: 4 }} iconSize={8} />
                       <ReferenceLine x={0} stroke="#6b7280" />
                       {lineShowStocks ? (
-                        <Bar dataKey="stock" name="Stocks" stackId="delta" fill="#0ea5e9" isAnimationActive animationDuration={600} />
+                        <Bar dataKey="stock" name="Stocks" stackId="delta" fill="#0ea5e9" isAnimationActive={false} />
                       ) : null}
                       {lineShowProperty ? (
-                        <Bar dataKey="property" name="Properties" stackId="delta" fill="#059669" isAnimationActive animationDuration={600} />
+                        <Bar dataKey="property" name="Properties" stackId="delta" fill="#059669" isAnimationActive={false} />
                       ) : null}
                       {lineShowCash ? (
-                        <Bar dataKey="cash" name="Cash" stackId="delta" fill="#d97706" isAnimationActive animationDuration={600} />
+                        <Bar dataKey="cash" name="Cash" stackId="delta" fill="#d97706" isAnimationActive={false} />
                       ) : null}
                     </ComposedChart>
                   </ResponsiveContainer>
