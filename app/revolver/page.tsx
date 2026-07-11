@@ -660,12 +660,12 @@ function FacilityView({
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-base">Monthly schedule</CardTitle>
-          <CardDescription>Click to expand the full per-month table.</CardDescription>
+          <CardDescription>Click each mode to expand the full per-month table.</CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-3">
           <details>
             <summary className="cursor-pointer text-sm font-medium">
-              {facility.rows.length} months · {facility.mode === "monthly" ? "Pay monthly" : "Capitalise"}
+              Pay monthly · {monthly.rows.length} months
             </summary>
             <div className="overflow-x-auto pt-2">
               <table className="w-full text-[11px] tabular-nums">
@@ -679,13 +679,45 @@ function FacilityView({
                   </tr>
                 </thead>
                 <tbody>
-                  {facility.rows.map((r) => (
+                  {monthly.rows.map((r) => (
                     <tr key={r.month_index} className="border-b last:border-0">
                       <td className="px-2 py-1">{formatMmmYY(r.date)}</td>
                       <td className="px-2 py-1 text-right">{r.rate_pct.toFixed(2)}%</td>
                       <td className="px-2 py-1 text-right">{formatMoneyCompact(r.balance_end, USD)}</td>
                       <td className="px-2 py-1 text-right">{formatMoneyCompact(r.interest, USD)}</td>
                       <td className="px-2 py-1 text-right">{formatMoneyCompact(r.cash_paid, USD)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </details>
+
+          <details>
+            <summary className="cursor-pointer text-sm font-medium">
+              Capitalise · {capitalise.rows.length} months · loan grows by interest each month
+            </summary>
+            <div className="overflow-x-auto pt-2">
+              <table className="w-full text-[11px] tabular-nums">
+                <thead>
+                  <tr className="text-[10px] uppercase tracking-wide text-muted-foreground border-b">
+                    <th className="text-left font-normal px-2 py-1">Date</th>
+                    <th className="text-right font-normal px-2 py-1">Rate</th>
+                    <th className="text-right font-normal px-2 py-1">Interest added</th>
+                    <th className="text-right font-normal px-2 py-1">Δ vs start</th>
+                    <th className="text-right font-normal px-2 py-1">Total loan</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {capitalise.rows.map((r) => (
+                    <tr key={r.month_index} className="border-b last:border-0">
+                      <td className="px-2 py-1">{formatMmmYY(r.date)}</td>
+                      <td className="px-2 py-1 text-right">{r.rate_pct.toFixed(2)}%</td>
+                      <td className="px-2 py-1 text-right">{formatMoneyCompact(r.interest, USD)}</td>
+                      <td className="px-2 py-1 text-right">
+                        {formatMoneyCompact(r.balance_end - scenario.draw_amount, USD)}
+                      </td>
+                      <td className="px-2 py-1 text-right">{formatMoneyCompact(r.balance_end, USD)}</td>
                     </tr>
                   ))}
                 </tbody>
