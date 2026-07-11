@@ -211,7 +211,158 @@ export default function RevolverPage() {
         capitaliseLow={facilityCapitaliseLow}
         capitaliseHigh={facilityCapitaliseHigh}
       />
+
+      <ScenarioComparisonView active={scenario} stored={stored} />
     </div>
+  );
+}
+
+const COMPARE_COLORS = [
+  "#0ea5e9", // sky
+  "#f97316", // orange
+  "#8b5cf6", // violet
+  "#22c55e", // green
+  "#e11d48", // rose
+  "#eab308", // amber
+  "#06b6d4", // cyan
+  "#84cc16", // lime
+];
+
+function ScenarioComparisonView({
+  active,
+  stored,
+}: {
+  active: RevolverScenario;
+  stored: RevolverScenario[];
+}) {
+  // Prefer the in-memory edited version of the active scenario over its
+  // stored copy so the comparison stays live while the user tweaks inputs.
+  const scenarios = useMemo(() => {
+    const list = [...stored];
+    const i = list.findIndex((s) => s.id === active.id);
+    if (i >= 0) list[i] = active;
+    else if (stored.length >= 1) list.push(active);
+    return list;
+  }, [stored, active]);
+
+  const facilities = useMemo(
+    () => scenarios.map((s) => ({ scenario: s, facility: computeFacility(s, s.interest_mode) })),
+    [scenarios],
+  );
+
+  const chartData = useMemo(() => {
+    const dateSet = new Set<string>();
+    for (const { facility } of facilities) for (const r of facility.rows) dateSet.add(r.date);
+    const dates = Array.from(dateSet).sort();
+
+    // Cumulative repayment obligation per scenario per date =
+    //   (balance at that date) + (cash paid to date) − (initial draw).
+    // This is what the borrower still owes on top of the drawn principal.
+    // For pay-monthly it's the cash paid so far; for capitalise it's the
+    // accrued interest folded into the balance.
+    const perScenario = new Map<string, Map<string, number>>();
+    for (const { scenario, facility } of facilities) {
+      const m = new Map<string, number>();
+      let cashPaid = 0;
+      for (const r of facility.rows) {
+        cashPaid += r.cash_paid;
+        m.set(r.date, r.balance_end + cashPaid - scenario.draw_amount);
+      }
+      perScenario.set(scenario.id, m);
+    }
+
+    return dates.map((date) => {
+      const row: Record<string, string | number> = { date };
+      for (const { scenario } of facilities) {
+        const v = perScenario.get(scenario.id)?.get(date);
+        if (v !== undefined) row[`s_${scenario.id}`] = v;
+      }
+      return row;
+    });
+  }, [facilities]);
+
+  if (scenarios.length < 2) return null;
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base">Scenario comparison · repayment cost</CardTitle>
+        <CardDescription>
+          Cumulative repayment obligation over time — cash interest paid
+          plus any interest folded into the balance. Each scenario uses
+          its own configured mode.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="h-[300px] w-full">
+          <ResponsiveContainer>
+            <ComposedChart data={chartData} margin={{ top: 10, right: 16, left: 0, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+              <XAxis dataKey="date" tickFormatter={formatMmmYY} tick={{ fontSize: 11 }} minTickGap={20} />
+              <YAxis tick={{ fontSize: 11 }} tickFormatter={compactNumber} />
+              <Tooltip
+                wrapperStyle={TOOLTIP_WRAPPER_STYLE}
+                contentStyle={TOOLTIP_CONTENT_STYLE}
+                labelStyle={TOOLTIP_LABEL_STYLE}
+                itemStyle={TOOLTIP_ITEM_STYLE}
+                formatter={(v: number) => formatMoney(v, USD, { fractionDigits: 2 })}
+                labelFormatter={(l) => formatMmmYY(String(l))}
+              />
+              <Legend wrapperStyle={LEGEND_WRAPPER_STYLE} iconSize={8} />
+              {scenarios.map((s, i) => (
+                <Line
+                  key={s.id}
+                  type="monotone"
+                  dataKey={`s_${s.id}`}
+                  name={s.name || "Untitled"}
+                  stroke={COMPARE_COLORS[i % COMPARE_COLORS.length]}
+                  dot={false}
+                  strokeWidth={2}
+                  connectNulls
+                  isAnimationActive={false}
+                />
+              ))}
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs tabular-nums">
+            <thead>
+              <tr className="text-[10px] uppercase tracking-wide text-muted-foreground border-b">
+                <th className="text-left font-normal px-2 py-1.5">Scenario</th>
+                <th className="text-right font-normal px-2 py-1.5">Draw</th>
+                <th className="text-left font-normal px-2 py-1.5">Mode</th>
+                <th className="text-right font-normal px-2 py-1.5">Total interest</th>
+                <th className="text-right font-normal px-2 py-1.5">Ending balance</th>
+                <th className="text-right font-normal px-2 py-1.5">Total repayment</th>
+              </tr>
+            </thead>
+            <tbody>
+              {facilities.map(({ scenario, facility }, i) => {
+                const totalRepayment = facility.ending_balance + facility.total_cash_interest;
+                return (
+                  <tr key={scenario.id} className="border-b last:border-0">
+                    <td className="px-2 py-1.5">
+                      <span
+                        className="mr-1.5 inline-block h-2 w-2 rounded-full align-middle"
+                        style={{ background: COMPARE_COLORS[i % COMPARE_COLORS.length] }}
+                      />
+                      {scenario.name || "Untitled"}
+                    </td>
+                    <td className="px-2 py-1.5 text-right">{formatMoney(scenario.draw_amount, USD)}</td>
+                    <td className="px-2 py-1.5">{facility.mode === "monthly" ? "Pay monthly" : "Capitalise"}</td>
+                    <td className="px-2 py-1.5 text-right">{formatMoney(facility.total_interest, USD)}</td>
+                    <td className="px-2 py-1.5 text-right">{formatMoney(facility.ending_balance, USD)}</td>
+                    <td className="px-2 py-1.5 text-right">{formatMoney(totalRepayment, USD)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
