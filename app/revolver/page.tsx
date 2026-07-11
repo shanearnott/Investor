@@ -7,7 +7,6 @@ import {
   ComposedChart,
   Legend,
   Line,
-  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -25,16 +24,9 @@ import { fetchLatestSofr, type SofrSnapshot } from "@/lib/sofr-feed";
 import {
   RevolverScenario,
   RevolverScenarioSchema,
-  ResolvedRevolverInputs,
   computeFacility,
   computeFacilityAtBaseSofr,
-  computeSellVsBorrow,
   newRevolverScenario,
-  resolveRevolverInputs,
-  solveBreakevenFutureTaxRate,
-  solveBreakevenSofr,
-  sweepFutureTaxRate,
-  withResolvedInputs,
   type FacilityResult,
 } from "@/lib/revolver";
 import { cn, formatMoney, formatMoneyCompact, formatNumber } from "@/lib/utils";
@@ -56,8 +48,7 @@ function compactNumber(v: number): string {
   return compactFormatter.format(v);
 }
 
-// Compact tooltip/legend styling, matching Projections. Single source of
-// truth so every chart on the page renders the same way.
+// Compact tooltip/legend styling, matching Projections.
 const TOOLTIP_WRAPPER_STYLE = { outline: "none" } as const;
 const TOOLTIP_CONTENT_STYLE = {
   fontSize: 11,
@@ -90,7 +81,6 @@ export default function RevolverPage() {
   const { data, setRevolvers } = useData();
   const stored = useMemo(() => parseRevolvers(data.revolvers ?? []), [data.revolvers]);
   const [activeId, setActiveId] = useState<string>("");
-  const [view, setView] = useState<"facility" | "sell-vs-borrow">("facility");
 
   // Seed from storage; if empty, create an unsaved default scenario in memory
   // so the page is interactive on first visit.
@@ -128,12 +118,7 @@ export default function RevolverPage() {
       ...scenario,
       id: newId(),
       name: `${scenario.name || "Revolver"} (copy)`,
-      lots: scenario.lots.map((l) => ({ ...l, id: newId() })),
-      sofr_overrides: (scenario.sofr_overrides ?? []).map((o) => ({ ...o, id: newId() })),
     };
-    // Re-point selected lot at the cloned lot in the same position.
-    const idx = scenario.lots.findIndex((l) => l.id === scenario.selected_lot_id);
-    if (idx >= 0 && cloned.lots[idx]) cloned.selected_lot_id = cloned.lots[idx].id;
     setScenario(cloned);
     setActiveId(cloned.id);
   };
@@ -151,41 +136,27 @@ export default function RevolverPage() {
     }
   };
 
-  // Resolve stock-linked / scenario-linked values live; the engine
-  // always sees the effective scenario.
-  const resolved = useMemo(
-    () => resolveRevolverInputs(scenario, data.stocks, data.scenarios),
-    [scenario, data.stocks, data.scenarios],
-  );
-  const effective = useMemo(() => withResolvedInputs(scenario, resolved), [scenario, resolved]);
-
-  const facilityMonthly = useMemo(() => computeFacility(effective, "monthly"), [effective]);
-  const facilityCapitalise = useMemo(() => computeFacility(effective, "capitalise"), [effective]);
-  // Optional low/high SOFR runs — both facilities re-run at the
-  // low and high bases for the band shading on the Facility charts.
-  const sofrLow = effective.sofr_low_pct;
-  const sofrHigh = effective.sofr_high_pct;
+  const facilityMonthly = useMemo(() => computeFacility(scenario, "monthly"), [scenario]);
+  const facilityCapitalise = useMemo(() => computeFacility(scenario, "capitalise"), [scenario]);
+  const sofrLow = scenario.sofr_low_pct;
+  const sofrHigh = scenario.sofr_high_pct;
   const facilityMonthlyLow = useMemo(
-    () => (sofrLow !== undefined ? computeFacilityAtBaseSofr(effective, "monthly", sofrLow) : null),
-    [effective, sofrLow],
+    () => (sofrLow !== undefined ? computeFacilityAtBaseSofr(scenario, "monthly", sofrLow) : null),
+    [scenario, sofrLow],
   );
   const facilityMonthlyHigh = useMemo(
-    () => (sofrHigh !== undefined ? computeFacilityAtBaseSofr(effective, "monthly", sofrHigh) : null),
-    [effective, sofrHigh],
+    () => (sofrHigh !== undefined ? computeFacilityAtBaseSofr(scenario, "monthly", sofrHigh) : null),
+    [scenario, sofrHigh],
   );
   const facilityCapitaliseLow = useMemo(
-    () => (sofrLow !== undefined ? computeFacilityAtBaseSofr(effective, "capitalise", sofrLow) : null),
-    [effective, sofrLow],
+    () => (sofrLow !== undefined ? computeFacilityAtBaseSofr(scenario, "capitalise", sofrLow) : null),
+    [scenario, sofrLow],
   );
   const facilityCapitaliseHigh = useMemo(
-    () => (sofrHigh !== undefined ? computeFacilityAtBaseSofr(effective, "capitalise", sofrHigh) : null),
-    [effective, sofrHigh],
+    () => (sofrHigh !== undefined ? computeFacilityAtBaseSofr(scenario, "capitalise", sofrHigh) : null),
+    [scenario, sofrHigh],
   );
-  const facility = effective.interest_mode === "monthly" ? facilityMonthly : facilityCapitalise;
-  const sellVsBorrow = useMemo(() => computeSellVsBorrow(effective), [effective]);
-  const breakevenTax = useMemo(() => solveBreakevenFutureTaxRate(effective), [effective]);
-  const breakevenSofr = useMemo(() => solveBreakevenSofr(effective), [effective]);
-  const taxSweep = useMemo(() => sweepFutureTaxRate(effective), [effective]);
+  const facility = scenario.interest_mode === "monthly" ? facilityMonthly : facilityCapitalise;
 
   const isStored = stored.some((s) => s.id === scenario.id);
   const dirty = isStored ? JSON.stringify(stored.find((s) => s.id === scenario.id)) !== JSON.stringify(scenario) : true;
@@ -196,7 +167,7 @@ export default function RevolverPage() {
         <div>
           <h1 className="text-xl font-semibold">Revolver</h1>
           <p className="text-xs text-muted-foreground">
-            JP Morgan Anduril Executive Lending Program — model the facility and decide sell vs borrow.
+            Simple SBLOC-style revolving loan model — pick a draw amount and SOFR path.
           </p>
         </div>
         <div className="flex gap-1">
@@ -228,55 +199,18 @@ export default function RevolverPage() {
         />
       ) : null}
 
-      <ScenarioForm
+      <ScenarioForm scenario={scenario} onChange={setScenario} />
+
+      <FacilityView
         scenario={scenario}
-        onChange={setScenario}
-        resolved={resolved}
+        facility={facility}
+        monthly={facilityMonthly}
+        capitalise={facilityCapitalise}
+        monthlyLow={facilityMonthlyLow}
+        monthlyHigh={facilityMonthlyHigh}
+        capitaliseLow={facilityCapitaliseLow}
+        capitaliseHigh={facilityCapitaliseHigh}
       />
-
-      <div className="flex gap-2 border-b pb-0">
-        <button
-          type="button"
-          onClick={() => setView("facility")}
-          className={cn(
-            "px-3 py-2 text-sm font-medium border-b-2 -mb-px",
-            view === "facility" ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground",
-          )}
-        >
-          Facility model
-        </button>
-        <button
-          type="button"
-          onClick={() => setView("sell-vs-borrow")}
-          className={cn(
-            "px-3 py-2 text-sm font-medium border-b-2 -mb-px",
-            view === "sell-vs-borrow" ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground",
-          )}
-        >
-          Sell vs Borrow
-        </button>
-      </div>
-
-      {view === "facility" ? (
-        <FacilityView
-          scenario={effective}
-          facility={facility}
-          monthly={facilityMonthly}
-          capitalise={facilityCapitalise}
-          monthlyLow={facilityMonthlyLow}
-          monthlyHigh={facilityMonthlyHigh}
-          capitaliseLow={facilityCapitaliseLow}
-          capitaliseHigh={facilityCapitaliseHigh}
-        />
-      ) : (
-        <SellVsBorrowView
-          scenario={effective}
-          result={sellVsBorrow}
-          breakevenTax={breakevenTax}
-          breakevenSofr={breakevenSofr}
-          taxSweep={taxSweep}
-        />
-      )}
     </div>
   );
 }
@@ -313,16 +247,11 @@ function ScenarioPicker({
 function ScenarioForm({
   scenario,
   onChange,
-  resolved,
 }: {
   scenario: RevolverScenario;
   onChange: (s: RevolverScenario) => void;
-  resolved: ResolvedRevolverInputs;
 }) {
-  const { data } = useData();
   const upd = <K extends keyof RevolverScenario>(k: K, v: RevolverScenario[K]) => onChange({ ...scenario, [k]: v });
-  const linkedToStock = !!scenario.stock_id;
-  const linkedToScenario = !!scenario.scenario_id;
 
   // Live SOFR from the NY Fed Markets API. Fetched once on mount with a
   // 24h cache; the user clicks "Use" to copy it into the scenario.
@@ -350,102 +279,17 @@ function ScenarioForm({
     liveSofr !== null
       ? Math.abs(scenario.sofr_base_pct - liveSofr.rate_pct) < 1e-9
       : false;
-  const addOverride = () => {
-    onChange({
-      ...scenario,
-      sofr_overrides: [
-        ...(scenario.sofr_overrides ?? []),
-        { id: newId(), from_date: new Date().toISOString().slice(0, 10), rate_pct: scenario.sofr_base_pct },
-      ],
-    });
-  };
-  const updOverride = (id: string, patch: Partial<{ from_date: string; rate_pct: number }>) => {
-    onChange({
-      ...scenario,
-      sofr_overrides: (scenario.sofr_overrides ?? []).map((o) => (o.id === id ? { ...o, ...patch } : o)),
-    });
-  };
-  const removeOverride = (id: string) => {
-    onChange({ ...scenario, sofr_overrides: (scenario.sofr_overrides ?? []).filter((o) => o.id !== id) });
-  };
-
-  const addLot = () => {
-    onChange({
-      ...scenario,
-      lots: [...scenario.lots, { id: newId(), name: `Lot ${scenario.lots.length + 1}`, cost_basis: 0 }],
-    });
-  };
-  const updLot = (id: string, patch: Partial<{ name: string; cost_basis: number }>) => {
-    onChange({ ...scenario, lots: scenario.lots.map((l) => (l.id === id ? { ...l, ...patch } : l)) });
-  };
-  const removeLot = (id: string) => {
-    const next = scenario.lots.filter((l) => l.id !== id);
-    onChange({
-      ...scenario,
-      lots: next,
-      selected_lot_id: scenario.selected_lot_id === id ? next[0]?.id ?? "" : scenario.selected_lot_id,
-    });
-  };
 
   return (
     <Card>
       <CardHeader className="pb-2">
         <CardTitle className="text-base">Inputs</CardTitle>
         <CardDescription>
-          Link a stock from <b>Investments</b> and a scenario from
-          <b> Scenarios</b> to drive share price, share count, growth
-          and cost-basis lots from the rest of the app. Advance rate
-          and the SOFR path are <b>assumptions</b>, not facts — the
-          term sheet doesn&apos;t disclose them.
+          Loan amount, dates, interest mode, and SOFR — the balance and
+          interest curves fall out of these.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* Link block — picks a stock for derived values + a scenario
-            for growth. Unlinking restores the manual fields. */}
-        <div className="rounded-md border bg-blue-50/60 p-3 space-y-2">
-          <div className="text-xs font-semibold text-blue-900">Link to Investments + Scenarios</div>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            <Field
-              label="Linked stock"
-              hint={
-                linkedToStock
-                  ? `Drives share price, shares available, cost-basis lots.`
-                  : "Pick a stock from Investments to derive values automatically."
-              }
-            >
-              <Select
-                value={scenario.stock_id ?? ""}
-                onChange={(e) => upd("stock_id", e.target.value || undefined)}
-              >
-                <option value="">— manual (no link) —</option>
-                {data.stocks.map((h) => (
-                  <option key={h.id} value={h.id}>
-                    {h.ticker || h.company_name || h.id}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            <Field
-              label="Linked scenario"
-              hint={
-                linkedToScenario
-                  ? `Drives annual price appreciation.`
-                  : "Pick a scenario to derive the growth assumption."
-              }
-            >
-              <Select
-                value={scenario.scenario_id ?? ""}
-                onChange={(e) => upd("scenario_id", e.target.value || undefined)}
-              >
-                <option value="">— manual (no link) —</option>
-                {data.scenarios.map((s) => (
-                  <option key={s.id} value={s.id}>{s.name || "Untitled"}</option>
-                ))}
-              </Select>
-            </Field>
-          </div>
-        </div>
-
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           <Field label="Scenario name">
             <Input value={scenario.name} onChange={(e) => upd("name", e.target.value)} />
@@ -455,6 +299,15 @@ function ScenarioForm({
               value={scenario.draw_amount}
               onChange={(n) => upd("draw_amount", Math.max(0, n))}
             />
+          </Field>
+          <Field label="Interest mode">
+            <Select
+              value={scenario.interest_mode}
+              onChange={(e) => upd("interest_mode", e.target.value as RevolverScenario["interest_mode"])}
+            >
+              <option value="monthly">Pay monthly (cash out)</option>
+              <option value="capitalise">Capitalise (balance compounds)</option>
+            </Select>
           </Field>
           <Field label="Start date">
             <Input
@@ -477,18 +330,9 @@ function ScenarioForm({
               onChange={(e) => upd("ipo_date", e.target.value || undefined)}
             />
           </Field>
-          <Field label="Interest mode">
-            <Select
-              value={scenario.interest_mode}
-              onChange={(e) => upd("interest_mode", e.target.value as RevolverScenario["interest_mode"])}
-            >
-              <option value="monthly">Pay monthly (cash out)</option>
-              <option value="capitalise">Capitalise (balance compounds)</option>
-            </Select>
-          </Field>
         </div>
 
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <Field label="SOFR today" hint="Drives the line on the charts.">
             <SuffixedInput
               suffix="%/yr"
@@ -559,231 +403,11 @@ function ScenarioForm({
               onChange={(e) => upd("spread_pct", Number(e.target.value))}
             />
           </Field>
-          <Field
-            label="Share price (today)"
-            hint={linkedToStock ? `From ${resolved.sources.share_price}` : undefined}
-          >
-            {linkedToStock ? (
-              <DerivedValue>{formatMoney(resolved.share_price, USD, { fractionDigits: 2 })}</DerivedValue>
-            ) : (
-              <MoneyInput
-                value={scenario.share_price}
-                onChange={(n) => upd("share_price", Math.max(0, n))}
-              />
-            )}
-          </Field>
-          <Field
-            label="Annual price appreciation"
-            hint={linkedToScenario ? `From ${resolved.sources.annual_appreciation_pct}` : undefined}
-          >
-            {linkedToScenario ? (
-              <DerivedValue>{resolved.annual_appreciation_pct.toFixed(2)} %/yr</DerivedValue>
-            ) : (
-              <SuffixedInput
-                suffix="%/yr"
-                type="number"
-                step={0.5}
-                value={scenario.annual_appreciation_pct}
-                onChange={(e) => upd("annual_appreciation_pct", Number(e.target.value))}
-              />
-            )}
-          </Field>
-        </div>
-
-        {/* Assumption block — visually pop the undisclosed input */}
-        <div className="rounded-md border border-amber-300 bg-amber-50/60 p-3 space-y-2">
-          <div className="text-xs font-semibold text-amber-900">Assumptions (not from the term sheet)</div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Field label="Advance rate (max LTV)" hint="UNDISCLOSED — typical SBLOC = 50%.">
-              <SuffixedInput
-                suffix="%"
-                type="number"
-                step={1}
-                min={0}
-                max={100}
-                value={scenario.advance_rate_pct}
-                onChange={(e) => upd("advance_rate_pct", Number(e.target.value))}
-              />
-            </Field>
-            <Field
-              label="Total shares available"
-              hint={linkedToStock ? `From ${resolved.sources.total_shares_available}` : undefined}
-            >
-              {linkedToStock ? (
-                <DerivedValue>{formatNumber(resolved.total_shares_available)} sh</DerivedValue>
-              ) : (
-                <Input
-                  type="number"
-                  min={0}
-                  step={1000}
-                  value={scenario.total_shares_available}
-                  onChange={(e) => upd("total_shares_available", Number(e.target.value))}
-                />
-              )}
-            </Field>
-          </div>
-        </div>
-
-        {/* SOFR overrides — collapsed under "Advanced" so the empty
-            state doesn't crowd the form. */}
-        <details className="rounded-md border" open={(scenario.sofr_overrides ?? []).length > 0}>
-          <summary className="cursor-pointer px-3 py-2 text-xs font-medium">
-            Advanced · SOFR path overrides
-            {(scenario.sofr_overrides ?? []).length > 0 ? (
-              <span className="ml-2 text-muted-foreground">
-                {scenario.sofr_overrides.length} cut/hike{scenario.sofr_overrides.length === 1 ? "" : "s"}
-              </span>
-            ) : null}
-          </summary>
-          <div className="border-t p-3 space-y-2">
-            <div className="flex items-center justify-between">
-              <p className="text-[11px] text-muted-foreground">
-                Each row sets the base SOFR from that date forward. Spread is added on top.
-              </p>
-              <Button size="sm" variant="outline" onClick={addOverride}>
-                <Plus className="h-3.5 w-3.5" /> Add cut/hike
-              </Button>
-            </div>
-            {(scenario.sofr_overrides ?? []).length === 0 ? null : (
-              <div className="grid grid-cols-1 gap-2">
-                {scenario.sofr_overrides.map((o) => (
-                  <div key={o.id} className="grid grid-cols-[1fr_1fr_auto] items-end gap-2 rounded-md border p-2">
-                    <Field label="From">
-                      <Input
-                        type="date"
-                        value={o.from_date}
-                        onChange={(e) => updOverride(o.id, { from_date: e.target.value })}
-                      />
-                    </Field>
-                    <Field label="SOFR">
-                      <SuffixedInput
-                        suffix="%"
-                        type="number"
-                        step={0.05}
-                        min={0}
-                        max={50}
-                        value={o.rate_pct}
-                        onChange={(e) => updOverride(o.id, { rate_pct: Number(e.target.value) })}
-                      />
-                    </Field>
-                    <Button size="sm" variant="ghost" onClick={() => removeOverride(o.id)}>
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </details>
-
-        {/* Lots + tax (Sell vs Borrow inputs). When a stock is linked,
-            lots come from its release events; otherwise the user types
-            them in. */}
-        <div className="space-y-2">
-          <Label>Cost basis lots</Label>
-          <p className="text-[11px] text-muted-foreground">
-            {linkedToStock ? (
-              <>
-                Derived from <b>{resolved.sources.lots}</b> — pick which one is sold
-                first. Selling a high-basis (near-price) lot collapses today&apos;s tax bill toward zero.
-              </>
-            ) : (
-              <>Pick which lot is sold first. Selling a high-basis (near-price) lot collapses today&apos;s tax bill toward zero.</>
-            )}
-          </p>
-          {linkedToStock ? (
-            resolved.lots.length === 0 ? (
-              <p className="text-[11px] text-muted-foreground">
-                No release events recorded on this stock yet — add one in Investments to give the sell math a basis.
-              </p>
-            ) : (
-              <div className="grid grid-cols-1 gap-2">
-                {resolved.lots.map((l) => (
-                  <label
-                    key={l.id}
-                    className={cn(
-                      "grid grid-cols-[auto_1fr_auto] items-center gap-2 rounded-md border p-2 text-xs",
-                      resolved.selected_lot_id === l.id ? "border-primary" : "",
-                    )}
-                  >
-                    <input
-                      type="radio"
-                      checked={resolved.selected_lot_id === l.id}
-                      onChange={() => upd("selected_lot_id", l.id)}
-                    />
-                    <span className="font-medium">{l.name}</span>
-                    <span className="tabular-nums">{formatMoney(l.cost_basis, USD, { fractionDigits: 2 })}/sh</span>
-                  </label>
-                ))}
-              </div>
-            )
-          ) : scenario.lots.length === 0 ? (
-            <Button size="sm" variant="outline" onClick={addLot}>
-              <Plus className="h-3.5 w-3.5" /> Add lot
-            </Button>
-          ) : (
-            <div className="grid grid-cols-1 gap-2">
-              {scenario.lots.map((l) => (
-                <div key={l.id} className="grid grid-cols-[auto_1fr_1fr_auto] items-end gap-2 rounded-md border p-2">
-                  <div className="self-center">
-                    <input
-                      type="radio"
-                      checked={scenario.selected_lot_id === l.id}
-                      onChange={() => upd("selected_lot_id", l.id)}
-                      title="Selected lot"
-                    />
-                  </div>
-                  <Field label="Name">
-                    <Input value={l.name} onChange={(e) => updLot(l.id, { name: e.target.value })} />
-                  </Field>
-                  <Field label="Basis / share">
-                    <MoneyInput
-                      value={l.cost_basis}
-                      onChange={(n) => updLot(l.id, { cost_basis: Math.max(0, n) })}
-                    />
-                  </Field>
-                  <Button size="sm" variant="ghost" onClick={() => removeLot(l.id)}>
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
-              ))}
-              <Button size="sm" variant="outline" onClick={addLot}>
-                <Plus className="h-3.5 w-3.5" /> Add lot
-              </Button>
-            </div>
-          )}
-        </div>
-
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field label="Tax today" hint="CA combined LTCG ≈ 37.1%.">
-            <SuffixedInput
-              suffix="%"
-              type="number"
-              step={0.1}
-              min={0}
-              max={100}
-              value={scenario.tax_rate_today_pct}
-              onChange={(e) => upd("tax_rate_today_pct", Number(e.target.value))}
-            />
-          </Field>
-          <Field label="Tax at future sale" hint="Cyprus NRA = 0% on listed securities.">
-            <SuffixedInput
-              suffix="%"
-              type="number"
-              step={0.1}
-              min={0}
-              max={100}
-              value={scenario.tax_rate_future_pct}
-              onChange={(e) => upd("tax_rate_future_pct", Number(e.target.value))}
-            />
-          </Field>
         </div>
       </CardContent>
     </Card>
   );
 }
-
-// ----- Facility view -----
 
 function FacilityView({
   scenario,
@@ -814,8 +438,6 @@ function FacilityView({
       cap_balance: number;
       cumulative_interest_monthly: number;
       cumulative_interest_capitalise: number;
-      required_shares: number;
-      ltv_pct: number;
       /** Recharts range-area expects a [lo, hi] tuple per datum. */
       monthly_balance_range?: [number, number];
       cap_balance_range?: [number, number];
@@ -848,8 +470,6 @@ function FacilityView({
         cap_balance: c?.balance_end ?? 0,
         cumulative_interest_monthly: cumMonthly,
         cumulative_interest_capitalise: cumCap,
-        required_shares: facility.rows[i]?.required_shares ?? 0,
-        ltv_pct: facility.rows[i]?.current_ltv_pct ?? 0,
       };
       if (mLo && mHi) {
         row.monthly_balance_range = [mLo.balance_end, mHi.balance_end];
@@ -862,17 +482,15 @@ function FacilityView({
       rows.push(row);
     }
     return rows;
-  }, [monthly, capitalise, monthlyLow, monthlyHigh, capitaliseLow, capitaliseHigh, facility]);
+  }, [monthly, capitalise, monthlyLow, monthlyHigh, capitaliseLow, capitaliseHigh]);
 
   return (
     <div className="space-y-4">
       {/* KPI cards */}
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <Kpi label="Total interest" value={formatMoney(facility.total_interest, USD)} hint={facility.mode === "monthly" ? "Cash paid out" : "Rolled into balance"} />
         <Kpi label="Ending balance" value={formatMoney(facility.ending_balance, USD)} />
         <Kpi label="Effective all-in rate" value={`${facility.effective_annual_rate_pct.toFixed(2)} %/yr`} hint="Geometric over horizon" />
-        <Kpi label="Peak shares pledged" value={formatNumber(facility.peak_required_shares)} hint={`${formatNumber(scenario.total_shares_available)} available`} />
-        <Kpi label="Ending LTV" value={`${facility.ending_ltv_pct.toFixed(1)} %`} hint={`Maintenance ${scenario.maintenance_ltv_pct.toFixed(0)}%`} />
         {facility.mode === "capitalise" ? (
           <Kpi label="Total balance growth" value={formatMoney(totalBalanceGrowth, USD)} />
         ) : (
@@ -909,15 +527,10 @@ function FacilityView({
                 <td className="px-2 py-1.5 text-right">{formatMoney(monthly.total_cash_interest, USD)}</td>
                 <td className="px-2 py-1.5 text-right">$0</td>
               </tr>
-              <tr className="border-b">
+              <tr>
                 <td className="px-2 py-1.5">Ending balance</td>
                 <td className="px-2 py-1.5 text-right">{formatMoney(monthly.ending_balance, USD)}</td>
                 <td className="px-2 py-1.5 text-right">{formatMoney(capitalise.ending_balance, USD)}</td>
-              </tr>
-              <tr>
-                <td className="px-2 py-1.5">Peak collateral shares</td>
-                <td className="px-2 py-1.5 text-right">{formatNumber(monthly.peak_required_shares)}</td>
-                <td className="px-2 py-1.5 text-right">{formatNumber(capitalise.peak_required_shares)}</td>
               </tr>
             </tbody>
           </table>
@@ -1046,61 +659,6 @@ function FacilityView({
 
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">Required collateral shares</CardTitle>
-          <CardDescription>Reference line: total shares available.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="h-[260px] w-full">
-            <ResponsiveContainer>
-              <ComposedChart data={chartData} margin={{ top: 10, right: 16, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                <XAxis dataKey="date" tickFormatter={formatMmmYY} tick={{ fontSize: 11 }} minTickGap={20} />
-                <YAxis tick={{ fontSize: 11 }} tickFormatter={compactNumber} />
-                <Tooltip
-                  wrapperStyle={TOOLTIP_WRAPPER_STYLE}
-                  contentStyle={TOOLTIP_CONTENT_STYLE}
-                  labelStyle={TOOLTIP_LABEL_STYLE}
-                  itemStyle={TOOLTIP_ITEM_STYLE}
-                  formatter={(v: number) => formatNumber(v)}
-                  labelFormatter={(l) => formatMmmYY(String(l))}
-                />
-                <Line type="monotone" dataKey="required_shares" name="Required shares" stroke="#10b981" dot={false} strokeWidth={2} />
-                <ReferenceLine y={scenario.total_shares_available} stroke="#ef4444" strokeDasharray="4 4" label={{ value: "Available", fontSize: 10, fill: "#ef4444" }} />
-              </ComposedChart>
-            </ResponsiveContainer>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base">LTV vs maintenance threshold</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="h-[260px] w-full">
-            <ResponsiveContainer>
-              <ComposedChart data={chartData} margin={{ top: 10, right: 16, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                <XAxis dataKey="date" tickFormatter={formatMmmYY} tick={{ fontSize: 11 }} minTickGap={20} />
-                <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `${v.toFixed(0)}%`} />
-                <Tooltip
-                  wrapperStyle={TOOLTIP_WRAPPER_STYLE}
-                  contentStyle={TOOLTIP_CONTENT_STYLE}
-                  labelStyle={TOOLTIP_LABEL_STYLE}
-                  itemStyle={TOOLTIP_ITEM_STYLE}
-                  formatter={(v: number) => `${v.toFixed(1)}%`}
-                  labelFormatter={(l) => formatMmmYY(String(l))}
-                />
-                <Line type="monotone" dataKey="ltv_pct" name="LTV" stroke="#6366f1" dot={false} strokeWidth={2} />
-                <ReferenceLine y={scenario.maintenance_ltv_pct} stroke="#ef4444" strokeDasharray="4 4" label={{ value: `Maint ${scenario.maintenance_ltv_pct}%`, fontSize: 10, fill: "#ef4444" }} />
-              </ComposedChart>
-            </ResponsiveContainer>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader className="pb-2">
           <CardTitle className="text-base">Monthly schedule</CardTitle>
           <CardDescription>Click to expand the full per-month table.</CardDescription>
         </CardHeader>
@@ -1114,32 +672,20 @@ function FacilityView({
                 <thead>
                   <tr className="text-[10px] uppercase tracking-wide text-muted-foreground border-b">
                     <th className="text-left font-normal px-2 py-1">Date</th>
+                    <th className="text-right font-normal px-2 py-1">Rate</th>
                     <th className="text-right font-normal px-2 py-1">Balance</th>
                     <th className="text-right font-normal px-2 py-1">Interest</th>
                     <th className="text-right font-normal px-2 py-1">Cash paid</th>
-                    <th className="text-right font-normal px-2 py-1">Req. shares</th>
-                    <th className="text-right font-normal px-2 py-1">LTV</th>
-                    <th className="text-right font-normal px-2 py-1">Headroom</th>
                   </tr>
                 </thead>
                 <tbody>
                   {facility.rows.map((r) => (
-                    <tr
-                      key={r.month_index}
-                      className={cn(
-                        "border-b last:border-0",
-                        (r.flags.ltv_breach || r.flags.undercollateralised) && "bg-rose-50",
-                      )}
-                    >
+                    <tr key={r.month_index} className="border-b last:border-0">
                       <td className="px-2 py-1">{formatMmmYY(r.date)}</td>
+                      <td className="px-2 py-1 text-right">{r.rate_pct.toFixed(2)}%</td>
                       <td className="px-2 py-1 text-right">{formatMoneyCompact(r.balance_end, USD)}</td>
                       <td className="px-2 py-1 text-right">{formatMoneyCompact(r.interest, USD)}</td>
                       <td className="px-2 py-1 text-right">{formatMoneyCompact(r.cash_paid, USD)}</td>
-                      <td className="px-2 py-1 text-right">{formatNumber(r.required_shares)}</td>
-                      <td className="px-2 py-1 text-right">{r.current_ltv_pct.toFixed(1)}%</td>
-                      <td className={cn("px-2 py-1 text-right", r.margin_call_headroom < 0 ? "text-rose-700 font-semibold" : "")}>
-                        {formatMoneyCompact(r.margin_call_headroom, USD)}
-                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -1148,216 +694,6 @@ function FacilityView({
           </details>
         </CardContent>
       </Card>
-    </div>
-  );
-}
-
-// ----- Sell vs Borrow view -----
-
-function SellVsBorrowView({
-  scenario,
-  result,
-  breakevenTax,
-  breakevenSofr,
-  taxSweep,
-}: {
-  scenario: RevolverScenario;
-  result: ReturnType<typeof computeSellVsBorrow>;
-  breakevenTax: number | null;
-  breakevenSofr: number | null;
-  taxSweep: ReturnType<typeof sweepFutureTaxRate>;
-}) {
-  const leaderLabel: Record<typeof result.verdict.leader, string> = {
-    sell: "Sell wins",
-    borrow_monthly: "Borrow (pay monthly) wins",
-    borrow_capitalise: "Borrow (capitalise) wins",
-  };
-  const absDelta = Math.abs(result.verdict.delta);
-
-  return (
-    <div className="space-y-4">
-      {/* Verdict */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base">Verdict at horizon</CardTitle>
-          <CardDescription>
-            Live: terminal net worth on each path, including future tax and
-            (pay-monthly) cumulative interest paid in cash.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-2">
-          <div className="text-2xl font-semibold tabular-nums">
-            {leaderLabel[result.verdict.leader]}{" "}
-            <span className="text-base font-normal text-muted-foreground">by {formatMoney(absDelta, USD)}</span>
-          </div>
-          <p className="text-xs text-muted-foreground">{result.verdict.explanation}</p>
-        </CardContent>
-      </Card>
-
-      {/* Side-by-side path table */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base">Path comparison</CardTitle>
-          <CardDescription>
-            All amounts in USD. Terminal net worth = remaining shares ×
-            price-at-horizon, less cumulative cash interest (borrow
-            pay-monthly only).
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="overflow-x-auto">
-          <table className="w-full text-xs tabular-nums">
-            <thead>
-              <tr className="text-[10px] uppercase tracking-wide text-muted-foreground border-b">
-                <th className="text-left font-normal px-2 py-1.5">Metric</th>
-                <th className="text-right font-normal px-2 py-1.5">Sell now</th>
-                <th className="text-right font-normal px-2 py-1.5">Borrow · monthly</th>
-                <th className="text-right font-normal px-2 py-1.5">Borrow · capitalise</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr className="border-b">
-                <td className="px-2 py-1.5">Tax paid now</td>
-                <td className="px-2 py-1.5 text-right">{formatMoney(result.sell.tax_paid_now, USD)}</td>
-                <td className="px-2 py-1.5 text-right">$0</td>
-                <td className="px-2 py-1.5 text-right">$0</td>
-              </tr>
-              <tr className="border-b">
-                <td className="px-2 py-1.5">Cumulative cash interest</td>
-                <td className="px-2 py-1.5 text-right">—</td>
-                <td className="px-2 py-1.5 text-right">{formatMoney(result.borrow_monthly.total_cash_interest, USD)}</td>
-                <td className="px-2 py-1.5 text-right">$0 <span className="text-[10px] text-muted-foreground">(rolled in)</span></td>
-              </tr>
-              <tr className="border-b">
-                <td className="px-2 py-1.5">Balance at repayment</td>
-                <td className="px-2 py-1.5 text-right">—</td>
-                <td className="px-2 py-1.5 text-right">{formatMoney(result.borrow_monthly.balance_at_repayment, USD)}</td>
-                <td className="px-2 py-1.5 text-right">{formatMoney(result.borrow_capitalise.balance_at_repayment, USD)}</td>
-              </tr>
-              <tr className="border-b">
-                <td className="px-2 py-1.5">Tax paid future</td>
-                <td className="px-2 py-1.5 text-right">$0</td>
-                <td className="px-2 py-1.5 text-right">{formatMoney(result.borrow_monthly.tax_paid_future, USD)}</td>
-                <td className="px-2 py-1.5 text-right">{formatMoney(result.borrow_capitalise.tax_paid_future, USD)}</td>
-              </tr>
-              <tr className="border-b">
-                <td className="px-2 py-1.5">Shares disposed</td>
-                <td className="px-2 py-1.5 text-right">{formatNumber(result.sell.shares_sold)}</td>
-                <td className="px-2 py-1.5 text-right">{formatNumber(result.borrow_monthly.shares_sold_to_repay)}</td>
-                <td className="px-2 py-1.5 text-right">{formatNumber(result.borrow_capitalise.shares_sold_to_repay)}</td>
-              </tr>
-              <tr className="border-b">
-                <td className="px-2 py-1.5">Shares retained @ horizon</td>
-                <td className="px-2 py-1.5 text-right">{formatNumber(result.sell.remaining_shares)}</td>
-                <td className="px-2 py-1.5 text-right">{formatNumber(result.borrow_monthly.remaining_shares)}</td>
-                <td className="px-2 py-1.5 text-right">{formatNumber(result.borrow_capitalise.remaining_shares)}</td>
-              </tr>
-              <tr className="bg-muted/40">
-                <td className="px-2 py-1.5 font-semibold">Terminal net worth</td>
-                <td className={cn("px-2 py-1.5 text-right font-semibold", result.verdict.leader === "sell" && "text-emerald-700")}>
-                  {formatMoney(result.sell.terminal_net_worth, USD)}
-                </td>
-                <td className={cn("px-2 py-1.5 text-right font-semibold", result.verdict.leader === "borrow_monthly" && "text-emerald-700")}>
-                  {formatMoney(result.borrow_monthly.terminal_net_worth, USD)}
-                </td>
-                <td className={cn("px-2 py-1.5 text-right font-semibold", result.verdict.leader === "borrow_capitalise" && "text-emerald-700")}>
-                  {formatMoney(result.borrow_capitalise.terminal_net_worth, USD)}
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </CardContent>
-      </Card>
-
-      {/* Breakeven solvers */}
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-        <Kpi
-          label="Breakeven future tax rate"
-          value={breakevenTax !== null ? `${breakevenTax.toFixed(2)} %` : "—"}
-          hint={
-            breakevenTax !== null
-              ? `Borrow wins iff future sale rate < ${breakevenTax.toFixed(2)}%`
-              : "No crossover in [0%, 100%] — sell dominates"
-          }
-        />
-        <Kpi
-          label="Breakeven SOFR (with 0% future tax)"
-          value={breakevenSofr !== null ? `${breakevenSofr.toFixed(2)} %` : "—"}
-          hint={
-            breakevenSofr !== null
-              ? `Borrow wins iff SOFR < ${breakevenSofr.toFixed(2)}%`
-              : "No crossover in [0%, 20%] — sell dominates"
-          }
-        />
-      </div>
-
-      {/* Sweep chart */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base">Terminal net worth across future tax rates</CardTitle>
-          <CardDescription>
-            Holding everything else fixed, where does Sell intersect each Borrow path?
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="h-[300px] w-full">
-            <ResponsiveContainer>
-              <ComposedChart data={taxSweep} margin={{ top: 10, right: 16, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                <XAxis
-                  dataKey="tax_pct"
-                  tickFormatter={(v) => `${Number(v).toFixed(0)}%`}
-                  tick={{ fontSize: 11 }}
-                  label={{ value: "Future tax rate", position: "insideBottomRight", offset: -5, fontSize: 11 }}
-                />
-                <YAxis tick={{ fontSize: 11 }} tickFormatter={compactNumber} />
-                <Tooltip
-                  wrapperStyle={TOOLTIP_WRAPPER_STYLE}
-                  contentStyle={TOOLTIP_CONTENT_STYLE}
-                  labelStyle={TOOLTIP_LABEL_STYLE}
-                  itemStyle={TOOLTIP_ITEM_STYLE}
-                  formatter={(v: number) => formatMoneyCompact(v, USD)}
-                  labelFormatter={(l) => `Future tax ${Number(l).toFixed(1)}%`}
-                />
-                <Legend wrapperStyle={LEGEND_WRAPPER_STYLE} iconSize={8} />
-                <Line type="monotone" dataKey="sell" name="Sell" stroke="#0ea5e9" dot={false} strokeWidth={2} />
-                <Line type="monotone" dataKey="borrow_monthly" name="Borrow monthly" stroke="#f97316" dot={false} strokeWidth={2} />
-                <Line type="monotone" dataKey="borrow_capitalise" name="Borrow cap." stroke="#10b981" dot={false} strokeWidth={2} />
-                {breakevenTax !== null ? (
-                  <ReferenceLine x={breakevenTax} stroke="#ef4444" strokeDasharray="4 4" label={{ value: `Breakeven ${breakevenTax.toFixed(1)}%`, fontSize: 10, fill: "#ef4444", position: "top" }} />
-                ) : null}
-              </ComposedChart>
-            </ResponsiveContainer>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Inputs snapshot for transparency */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base">Inputs snapshot</CardTitle>
-        </CardHeader>
-        <CardContent className="overflow-x-auto">
-          <table className="w-full text-xs tabular-nums">
-            <tbody>
-              <tr className="border-b"><td className="px-2 py-1">Cash needed</td><td className="px-2 py-1 text-right">{formatMoney(result.inputs_snapshot.cash_needed, USD)}</td></tr>
-              <tr className="border-b"><td className="px-2 py-1">Price today / horizon / repayment</td><td className="px-2 py-1 text-right">{formatMoney(result.inputs_snapshot.price_today, USD)} → {formatMoney(result.inputs_snapshot.price_horizon, USD)} (repay {formatMoney(result.inputs_snapshot.price_repayment, USD)})</td></tr>
-              <tr className="border-b"><td className="px-2 py-1">Basis today / future</td><td className="px-2 py-1 text-right">{formatMoney(result.inputs_snapshot.basis_today, USD)} / {formatMoney(result.inputs_snapshot.basis_future, USD)}</td></tr>
-              <tr className="border-b"><td className="px-2 py-1">Tax today / future</td><td className="px-2 py-1 text-right">{result.inputs_snapshot.tax_today_pct.toFixed(2)}% / {result.inputs_snapshot.tax_future_pct.toFixed(2)}%</td></tr>
-              <tr><td className="px-2 py-1">Repayment date / horizon</td><td className="px-2 py-1 text-right">{result.inputs_snapshot.repayment_date} → {result.inputs_snapshot.horizon_date}</td></tr>
-            </tbody>
-          </table>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-// ----- Small utility components -----
-
-function DerivedValue({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex h-9 items-center rounded-md border border-dashed bg-muted/40 px-3 text-sm font-medium tabular-nums">
-      {children}
     </div>
   );
 }
