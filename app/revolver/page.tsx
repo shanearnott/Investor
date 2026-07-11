@@ -246,9 +246,23 @@ function ScenarioComparisonView({
   }, [stored, active]);
 
   const facilities = useMemo(
-    () => scenarios.map((s) => ({ scenario: s, facility: computeFacility(s, s.interest_mode) })),
+    () =>
+      scenarios.map((s) => {
+        const base = computeFacility(s, s.interest_mode);
+        const low =
+          s.sofr_low_pct !== undefined
+            ? computeFacilityAtBaseSofr(s, s.interest_mode, s.sofr_low_pct)
+            : null;
+        const high =
+          s.sofr_high_pct !== undefined
+            ? computeFacilityAtBaseSofr(s, s.interest_mode, s.sofr_high_pct)
+            : null;
+        return { scenario: s, facility: base, low, high };
+      }),
     [scenarios],
   );
+
+  const hasAnyBand = useMemo(() => facilities.some((f) => f.low && f.high), [facilities]);
 
   const chartData = useMemo(() => {
     const dateSet = new Set<string>();
@@ -260,22 +274,35 @@ function ScenarioComparisonView({
     // This is what the borrower still owes on top of the drawn principal.
     // For pay-monthly it's the cash paid so far; for capitalise it's the
     // accrued interest folded into the balance.
-    const perScenario = new Map<string, Map<string, number>>();
-    for (const { scenario, facility } of facilities) {
+    const cumulate = (f: FacilityResult, draw: number): Map<string, number> => {
       const m = new Map<string, number>();
       let cashPaid = 0;
-      for (const r of facility.rows) {
+      for (const r of f.rows) {
         cashPaid += r.cash_paid;
-        m.set(r.date, r.balance_end + cashPaid - scenario.draw_amount);
+        m.set(r.date, r.balance_end + cashPaid - draw);
       }
-      perScenario.set(scenario.id, m);
+      return m;
+    };
+
+    const base = new Map<string, Map<string, number>>();
+    const lo = new Map<string, Map<string, number>>();
+    const hi = new Map<string, Map<string, number>>();
+    for (const { scenario, facility, low, high } of facilities) {
+      base.set(scenario.id, cumulate(facility, scenario.draw_amount));
+      if (low) lo.set(scenario.id, cumulate(low, scenario.draw_amount));
+      if (high) hi.set(scenario.id, cumulate(high, scenario.draw_amount));
     }
 
     return dates.map((date) => {
-      const row: Record<string, string | number> = { date };
+      const row: Record<string, string | number | [number, number]> = { date };
       for (const { scenario } of facilities) {
-        const v = perScenario.get(scenario.id)?.get(date);
+        const v = base.get(scenario.id)?.get(date);
         if (v !== undefined) row[`s_${scenario.id}`] = v;
+        const l = lo.get(scenario.id)?.get(date);
+        const h = hi.get(scenario.id)?.get(date);
+        if (l !== undefined && h !== undefined) {
+          row[`s_${scenario.id}_range`] = [Math.min(l, h), Math.max(l, h)];
+        }
       }
       return row;
     });
@@ -291,6 +318,9 @@ function ScenarioComparisonView({
           Cumulative repayment obligation over time — cash interest paid
           plus any interest folded into the balance. Each scenario uses
           its own configured mode.
+          {hasAnyBand
+            ? " Shaded bands span each scenario's SOFR low → high."
+            : ""}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -305,10 +335,32 @@ function ScenarioComparisonView({
                 contentStyle={TOOLTIP_CONTENT_STYLE}
                 labelStyle={TOOLTIP_LABEL_STYLE}
                 itemStyle={TOOLTIP_ITEM_STYLE}
-                formatter={(v: number) => formatMoney(v, USD, { fractionDigits: 2 })}
+                formatter={(v: number | number[]) =>
+                  Array.isArray(v)
+                    ? `${formatMoney(v[0], USD, { fractionDigits: 2 })} → ${formatMoney(v[1], USD, { fractionDigits: 2 })}`
+                    : formatMoney(v, USD, { fractionDigits: 2 })
+                }
                 labelFormatter={(l) => formatMmmYY(String(l))}
               />
               <Legend wrapperStyle={LEGEND_WRAPPER_STYLE} iconSize={8} />
+              {scenarios.map((s, i) => {
+                const color = COMPARE_COLORS[i % COMPARE_COLORS.length];
+                const hasBand = s.sofr_low_pct !== undefined && s.sofr_high_pct !== undefined;
+                return hasBand ? (
+                  <Area
+                    key={`${s.id}_band`}
+                    type="monotone"
+                    dataKey={`s_${s.id}_range`}
+                    name={`${s.name || "Untitled"} · SOFR band`}
+                    stroke="none"
+                    fill={color}
+                    fillOpacity={0.15}
+                    activeDot={false}
+                    legendType="none"
+                    isAnimationActive={false}
+                  />
+                ) : null;
+              })}
               {scenarios.map((s, i) => (
                 <Line
                   key={s.id}
