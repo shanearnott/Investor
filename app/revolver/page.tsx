@@ -560,8 +560,8 @@ function FacilityView({
                   itemStyle={TOOLTIP_ITEM_STYLE}
                   formatter={(v: number | number[]) =>
                     Array.isArray(v)
-                      ? `${formatMoneyCompact(v[0], USD)} → ${formatMoneyCompact(v[1], USD)}`
-                      : formatMoneyCompact(v, USD)
+                      ? `${formatMoney(v[0], USD, { fractionDigits: 2 })} → ${formatMoney(v[1], USD, { fractionDigits: 2 })}`
+                      : formatMoney(v, USD, { fractionDigits: 2 })
                   }
                   labelFormatter={(l) => formatMmmYY(String(l))}
                 />
@@ -619,8 +619,8 @@ function FacilityView({
                   itemStyle={TOOLTIP_ITEM_STYLE}
                   formatter={(v: number | number[]) =>
                     Array.isArray(v)
-                      ? `${formatMoneyCompact(v[0], USD)} → ${formatMoneyCompact(v[1], USD)}`
-                      : formatMoneyCompact(v, USD)
+                      ? `${formatMoney(v[0], USD, { fractionDigits: 2 })} → ${formatMoney(v[1], USD, { fractionDigits: 2 })}`
+                      : formatMoney(v, USD, { fractionDigits: 2 })
                   }
                   labelFormatter={(l) => formatMmmYY(String(l))}
                 />
