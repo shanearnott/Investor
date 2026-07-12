@@ -462,7 +462,16 @@ function StocksSection(props: {
                     >
                       {editing?.id === h.id ? "Close" : "Edit"}
                     </Button>
-                    <Button size="sm" variant="ghost" onClick={() => onDelete(h.id)}>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        const label = h.company_name || h.ticker || "this holding";
+                        if (window.confirm(`Delete stock holding "${label}"? This can't be undone.`)) {
+                          onDelete(h.id);
+                        }
+                      }}
+                    >
                       <Trash2 className="h-4 w-4" />
                     </Button>
                   </div>
@@ -893,7 +902,15 @@ function PropertiesSection(props: {
                       >
                         {editing?.id === p.id ? "Close" : "Edit"}
                       </Button>
-                      <Button size="sm" variant="ghost" onClick={() => onDelete(p.id)}>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                          if (window.confirm(`Delete property "${p.name || "Untitled"}"? This can't be undone.`)) {
+                            onDelete(p.id);
+                          }
+                        }}
+                      >
                         <Trash2 className="h-4 w-4" />
                       </Button>
                     </div>

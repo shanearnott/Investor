@@ -200,7 +200,15 @@ export default function ScenariosPage() {
                     >
                       <Copy className="h-4 w-4" />
                     </Button>
-                    <Button size="sm" variant="ghost" onClick={() => remove(s.id)}>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        if (window.confirm(`Delete scenario "${s.name || "Untitled"}"? This can't be undone.`)) {
+                          remove(s.id);
+                        }
+                      }}
+                    >
                       <Trash2 className="h-4 w-4" />
                     </Button>
                   </div>

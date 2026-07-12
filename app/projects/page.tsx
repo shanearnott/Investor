@@ -202,7 +202,15 @@ function ProjectCard({
           <Button size="sm" variant="ghost" onClick={onClone} title="Duplicate this project">
             <Copy className="h-4 w-4" />
           </Button>
-          <Button size="sm" variant="ghost" onClick={onDelete}>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              if (window.confirm(`Delete project "${project.name || "Untitled"}"? This can't be undone.`)) {
+                onDelete();
+              }
+            }}
+          >
             <Trash2 className="h-4 w-4" />
           </Button>
         </div>
