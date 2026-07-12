@@ -125,6 +125,7 @@ export default function RevolverPage() {
   };
 
   const removeActive = async () => {
+    if (!window.confirm(`Delete revolver scenario "${scenario.name || "Untitled"}"? This can't be undone.`)) return;
     const next = stored.filter((s) => s.id !== scenario.id);
     await persist(next);
     if (next.length > 0) {
