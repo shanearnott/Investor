@@ -27,6 +27,7 @@ import {
   computeFacility,
   computeFacilityAtBaseSofr,
   newRevolverScenario,
+  type DrawEvent,
   type FacilityResult,
 } from "@/lib/revolver";
 import { cn, formatMoney, formatMoneyCompact, formatNumber } from "@/lib/utils";
@@ -269,18 +270,13 @@ function ScenarioComparisonView({
     for (const { facility } of facilities) for (const r of facility.rows) dateSet.add(r.date);
     const dates = Array.from(dateSet).sort();
 
-    // Cumulative repayment obligation per scenario per date =
-    //   (balance at that date) + (cash paid to date) − (initial draw).
-    // This is what the borrower still owes on top of the drawn principal.
-    // For pay-monthly it's the cash paid so far; for capitalise it's the
-    // accrued interest folded into the balance.
-    const cumulate = (f: FacilityResult, draw: number): Map<string, number> => {
+    // Cumulative repayment obligation per scenario per date is just the
+    // interest accrued through that date — cash paid (pay-monthly) plus
+    // the compounding delta over drawn principal (capitalise). The engine
+    // already tracks it per row, so no schedule math needed here.
+    const cumulate = (f: FacilityResult): Map<string, number> => {
       const m = new Map<string, number>();
-      let cashPaid = 0;
-      for (const r of f.rows) {
-        cashPaid += r.cash_paid;
-        m.set(r.date, r.balance_end + cashPaid - draw);
-      }
+      for (const r of f.rows) m.set(r.date, r.cumulative_interest);
       return m;
     };
 
@@ -288,9 +284,9 @@ function ScenarioComparisonView({
     const lo = new Map<string, Map<string, number>>();
     const hi = new Map<string, Map<string, number>>();
     for (const { scenario, facility, low, high } of facilities) {
-      base.set(scenario.id, cumulate(facility, scenario.draw_amount));
-      if (low) lo.set(scenario.id, cumulate(low, scenario.draw_amount));
-      if (high) hi.set(scenario.id, cumulate(high, scenario.draw_amount));
+      base.set(scenario.id, cumulate(facility));
+      if (low) lo.set(scenario.id, cumulate(low));
+      if (high) hi.set(scenario.id, cumulate(high));
     }
 
     return dates.map((date) => {
@@ -383,7 +379,7 @@ function ScenarioComparisonView({
             <thead>
               <tr className="text-[10px] uppercase tracking-wide text-muted-foreground border-b">
                 <th className="text-left font-normal px-2 py-1.5">Scenario</th>
-                <th className="text-right font-normal px-2 py-1.5">Draw</th>
+                <th className="text-right font-normal px-2 py-1.5">Total drawn</th>
                 <th className="text-left font-normal px-2 py-1.5">Mode</th>
                 <th className="text-right font-normal px-2 py-1.5">Total interest</th>
                 <th className="text-right font-normal px-2 py-1.5">Ending balance</th>
@@ -393,6 +389,7 @@ function ScenarioComparisonView({
             <tbody>
               {facilities.map(({ scenario, facility }, i) => {
                 const totalRepayment = facility.ending_balance + facility.total_cash_interest;
+                const extraDraws = (scenario.draw_schedule ?? []).filter((d) => d.amount > 0).length;
                 return (
                   <tr key={scenario.id} className="border-b last:border-0">
                     <td className="px-2 py-1.5">
@@ -402,7 +399,14 @@ function ScenarioComparisonView({
                       />
                       {scenario.name || "Untitled"}
                     </td>
-                    <td className="px-2 py-1.5 text-right">{formatMoney(scenario.draw_amount, USD)}</td>
+                    <td className="px-2 py-1.5 text-right">
+                      {formatMoney(facility.total_drawn, USD)}
+                      {extraDraws > 0 ? (
+                        <span className="ml-1 text-[10px] text-muted-foreground">
+                          ({extraDraws} draw{extraDraws === 1 ? "" : "s"})
+                        </span>
+                      ) : null}
+                    </td>
                     <td className="px-2 py-1.5">{facility.mode === "monthly" ? "Pay monthly" : "Capitalise"}</td>
                     <td className="px-2 py-1.5 text-right">{formatMoney(facility.total_interest, USD)}</td>
                     <td className="px-2 py-1.5 text-right">{formatMoney(facility.ending_balance, USD)}</td>
@@ -497,7 +501,7 @@ function ScenarioForm({
           <Field label="Scenario name">
             <Input value={scenario.name} onChange={(e) => upd("name", e.target.value)} />
           </Field>
-          <Field label="Cash needed / draw">
+          <Field label="Initial draw" hint="Balance at start_date. Add later draws below.">
             <MoneyInput
               value={scenario.draw_amount}
               onChange={(n) => upd("draw_amount", Math.max(0, n))}
@@ -607,8 +611,78 @@ function ScenarioForm({
             />
           </Field>
         </div>
+
+        <DrawScheduleEditor
+          startDate={scenario.start_date}
+          schedule={scenario.draw_schedule}
+          onChange={(s) => upd("draw_schedule", s)}
+        />
       </CardContent>
     </Card>
+  );
+}
+
+function DrawScheduleEditor({
+  startDate,
+  schedule,
+  onChange,
+}: {
+  startDate: string;
+  schedule: DrawEvent[];
+  onChange: (s: DrawEvent[]) => void;
+}) {
+  const rows = [...schedule].sort((a, b) => a.date.localeCompare(b.date));
+  const total = rows.reduce((sum, r) => sum + r.amount, 0);
+  const addRow = () => {
+    const last = rows[rows.length - 1];
+    const seedDate = last?.date ?? startDate;
+    onChange([...schedule, { id: newId(), date: seedDate, amount: 0 }]);
+  };
+  const patch = (id: string, updates: Partial<DrawEvent>) => {
+    onChange(schedule.map((r) => (r.id === id ? { ...r, ...updates } : r)));
+  };
+  const remove = (id: string) => onChange(schedule.filter((r) => r.id !== id));
+
+  return (
+    <div className="rounded-md border p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <div>
+          <div className="text-sm font-medium">Additional draws over time</div>
+          <div className="text-[11px] text-muted-foreground">
+            Each row adds to the balance at the start of the month
+            containing its date.{" "}
+            {rows.length > 0 ? (
+              <span>Sum: <b>{formatMoney(total, USD)}</b></span>
+            ) : (
+              <span>None yet.</span>
+            )}
+          </div>
+        </div>
+        <Button size="sm" variant="outline" onClick={addRow}>
+          <Plus className="h-3.5 w-3.5" /> Add draw
+        </Button>
+      </div>
+      {rows.length > 0 ? (
+        <div className="space-y-2">
+          {rows.map((r) => (
+            <div key={r.id} className="grid grid-cols-[1fr_1fr_auto] items-center gap-2">
+              <Input
+                type="date"
+                value={r.date}
+                onChange={(e) => patch(r.id, { date: e.target.value })}
+              />
+              <MoneyInput
+                value={r.amount}
+                onChange={(n) => patch(r.id, { amount: Math.max(0, n) })}
+              />
+              <Button size="sm" variant="ghost" onClick={() => remove(r.id)} title="Remove this draw">
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -876,6 +950,7 @@ function FacilityView({
                   <tr className="text-[10px] uppercase tracking-wide text-muted-foreground border-b">
                     <th className="text-left font-normal px-2 py-1">Date</th>
                     <th className="text-right font-normal px-2 py-1">Rate</th>
+                    <th className="text-right font-normal px-2 py-1">New draw</th>
                     <th className="text-right font-normal px-2 py-1">Balance</th>
                     <th className="text-right font-normal px-2 py-1">Interest</th>
                     <th className="text-right font-normal px-2 py-1">Cash paid</th>
@@ -886,6 +961,9 @@ function FacilityView({
                     <tr key={r.month_index} className="border-b last:border-0">
                       <td className="px-2 py-1">{formatMmmYY(r.date)}</td>
                       <td className="px-2 py-1 text-right">{r.rate_pct.toFixed(2)}%</td>
+                      <td className="px-2 py-1 text-right">
+                        {r.draw_added > 0 ? formatMoneyCompact(r.draw_added, USD) : "—"}
+                      </td>
                       <td className="px-2 py-1 text-right">{formatMoneyCompact(r.balance_end, USD)}</td>
                       <td className="px-2 py-1 text-right">{formatMoneyCompact(r.interest, USD)}</td>
                       <td className="px-2 py-1 text-right">{formatMoneyCompact(r.cash_paid, USD)}</td>
@@ -906,8 +984,9 @@ function FacilityView({
                   <tr className="text-[10px] uppercase tracking-wide text-muted-foreground border-b">
                     <th className="text-left font-normal px-2 py-1">Date</th>
                     <th className="text-right font-normal px-2 py-1">Rate</th>
+                    <th className="text-right font-normal px-2 py-1">New draw</th>
                     <th className="text-right font-normal px-2 py-1">Interest added</th>
-                    <th className="text-right font-normal px-2 py-1">Δ vs start</th>
+                    <th className="text-right font-normal px-2 py-1">Interest to date</th>
                     <th className="text-right font-normal px-2 py-1">Total loan</th>
                   </tr>
                 </thead>
@@ -916,9 +995,12 @@ function FacilityView({
                     <tr key={r.month_index} className="border-b last:border-0">
                       <td className="px-2 py-1">{formatMmmYY(r.date)}</td>
                       <td className="px-2 py-1 text-right">{r.rate_pct.toFixed(2)}%</td>
+                      <td className="px-2 py-1 text-right">
+                        {r.draw_added > 0 ? formatMoneyCompact(r.draw_added, USD) : "—"}
+                      </td>
                       <td className="px-2 py-1 text-right">{formatMoneyCompact(r.interest, USD)}</td>
                       <td className="px-2 py-1 text-right">
-                        {formatMoneyCompact(r.balance_end - scenario.draw_amount, USD)}
+                        {formatMoneyCompact(r.cumulative_interest, USD)}
                       </td>
                       <td className="px-2 py-1 text-right">{formatMoneyCompact(r.balance_end, USD)}</td>
                     </tr>
