@@ -43,6 +43,15 @@ export const RevolverLotSchema = z.object({
 });
 export type RevolverLot = z.infer<typeof RevolverLotSchema>;
 
+/** Additional cash draws taken after the initial draw. Each entry adds to
+ *  the balance at the start of the month containing `date`. */
+export const DrawEventSchema = z.object({
+  id: z.string().default(() => newId()),
+  date: isoDate,
+  amount: z.number().nonnegative(),
+});
+export type DrawEvent = z.infer<typeof DrawEventSchema>;
+
 export const RevolverScenarioSchema = z.object({
   id: z.string(),
   name: z.string().default("Revolver scenario"),
@@ -61,6 +70,9 @@ export const RevolverScenarioSchema = z.object({
   // Shared inputs (used as the manual / fallback values when no
   // stock/scenario is linked)
   draw_amount: z.number().nonnegative().default(2_000_000),
+  /** Additional draws taken over the life of the facility. Applied at the
+   *  start of the month containing each `date`. */
+  draw_schedule: z.array(DrawEventSchema).default([]),
   max_draw: z.number().nonnegative().default(5_000_000),
   start_date: isoDate,
   end_date: isoDate,
@@ -312,6 +324,13 @@ export type FacilityRow = {
   interest: number;
   cash_paid: number;
   balance_end: number;
+  /** Extra principal drawn this month (from draw_schedule). */
+  draw_added: number;
+  /** Running total of principal drawn through end of this month. */
+  cumulative_drawn: number;
+  /** Running total of interest accrued (paid + capitalised) through end
+   *  of this month — the borrower's obligation on top of principal. */
+  cumulative_interest: number;
   rate_pct: number;
   share_price: number;
   required_collateral_value: number;
@@ -329,10 +348,12 @@ export type FacilityResult = {
   /** Cash interest actually paid (mode === "monthly"). */
   total_cash_interest: number;
   ending_balance: number;
+  /** Total principal drawn over the horizon (draw_amount + schedule). */
+  total_drawn: number;
   peak_required_shares: number;
   ending_ltv_pct: number;
   /** All-in effective annual rate, geometric, from total accrued
-   *  interest vs draw amount over horizon years. */
+   *  interest vs total drawn principal over horizon years. */
   effective_annual_rate_pct: number;
 };
 
@@ -381,27 +402,52 @@ export function computeFacility(
   const advance = Math.max(1e-9, scenario.advance_rate_pct / 100);
   const maint = scenario.maintenance_ltv_pct / 100;
 
+  // Sort scheduled draws once, and walk them in order alongside months.
+  // Draws land at the start of the month containing their date.
+  const schedule = [...(scenario.draw_schedule ?? [])]
+    .filter((d) => d.amount > 0)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  let drawIdx = 0;
+
   let balance = scenario.draw_amount;
+  let cumulativeDrawn = scenario.draw_amount;
   let totalInterest = 0;
   let totalCashInterest = 0;
+  let cumulativeInterest = 0;
   let peakRequiredShares = 0;
-  let lastRate = scenario.sofr_base_pct + scenario.spread_pct;
 
   for (let i = 0; i <= N; i++) {
     const monthStart = addMonths(start, i);
+    const nextMonthStart = addMonths(start, i + 1);
     const monthEnd = new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth() + 1, 0));
     const days = daysInMonth(monthStart);
     const rate = (sofrAt(scenario, monthEnd) + scenario.spread_pct) / 100;
-    lastRate = rate * 100;
 
-    // Actual / 360 — the SBLOC standard. (We used to expose a "monthly
-    // approx" toggle here; the difference is rounding noise and the
-    // option just cluttered the form.)
+    // Apply any scheduled draws landing this month (or earlier if the
+    // user dated one before start_date). The bump happens before interest
+    // so the new principal accrues for the current month.
+    let drawAdded = 0;
+    while (drawIdx < schedule.length) {
+      const d = schedule[drawIdx];
+      const dDate = parseIsoDate(d.date);
+      if (dDate < nextMonthStart) {
+        drawAdded += d.amount;
+        drawIdx++;
+      } else {
+        break;
+      }
+    }
+    balance += drawAdded;
+    cumulativeDrawn += drawAdded;
+
+    // Actual / 360 — the SBLOC standard.
     const interest = balance * rate * (days / 360);
 
     const cashPaid = mode === "monthly" ? interest : 0;
     const balanceStart = balance;
     const balanceEnd = mode === "monthly" ? balance : balance + interest;
+
+    cumulativeInterest += interest;
 
     const price = priceAt(scenario, monthStart);
     const requiredCollateralValue = balanceEnd / advance;
@@ -416,6 +462,9 @@ export function computeFacility(
       interest,
       cash_paid: cashPaid,
       balance_end: balanceEnd,
+      draw_added: drawAdded,
+      cumulative_drawn: cumulativeDrawn,
+      cumulative_interest: cumulativeInterest,
       rate_pct: rate * 100,
       share_price: price,
       required_collateral_value: requiredCollateralValue,
@@ -434,13 +483,21 @@ export function computeFacility(
     balance = balanceEnd;
   }
 
+  // Any schedule entries dated past the horizon are dropped from the run
+  // but still counted in total_drawn so the caller sees the promised
+  // principal (helps flag misconfiguration in the UI).
+  let totalDrawn = cumulativeDrawn;
+  for (; drawIdx < schedule.length; drawIdx++) {
+    totalDrawn += schedule[drawIdx].amount;
+  }
+
   const endingBalance = rows.length > 0 ? rows[rows.length - 1].balance_end : scenario.draw_amount;
   const endingLtv = rows.length > 0 ? rows[rows.length - 1].current_ltv_pct : 0;
   const years = Math.max(1e-9, N / 12);
-  const principal = Math.max(1e-9, scenario.draw_amount);
+  const principal = Math.max(1e-9, totalDrawn);
   const effectiveAnnualRate =
     mode === "capitalise"
-      ? Math.pow(endingBalance / principal, 1 / years) - 1
+      ? Math.pow((endingBalance) / principal, 1 / years) - 1
       : (totalInterest / principal) / years;
 
   return {
@@ -449,11 +506,11 @@ export function computeFacility(
     total_interest: totalInterest,
     total_cash_interest: totalCashInterest,
     ending_balance: endingBalance,
+    total_drawn: totalDrawn,
     peak_required_shares: peakRequiredShares,
     ending_ltv_pct: endingLtv,
     effective_annual_rate_pct: effectiveAnnualRate * 100,
-    // unused field anchor so the type infers `number`
-  } as FacilityResult & { effective_annual_rate_pct: number };
+  };
 }
 
 /** Run computeFacility with the base SOFR shifted to `baseSofr` (overrides
