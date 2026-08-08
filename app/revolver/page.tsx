@@ -171,6 +171,21 @@ export default function RevolverPage() {
   const isStored = stored.some((s) => s.id === scenario.id);
   const dirty = isStored ? JSON.stringify(stored.find((s) => s.id === scenario.id)) !== JSON.stringify(scenario) : true;
 
+  // Repay-in-full date is a calculator input, not scenario config — held
+  // as local UI state so it doesn't dirty the scenario. Defaults to the
+  // scenario's own IPO / end date and follows it when the user hasn't
+  // overridden yet.
+  const defaultRepayIso = scenario.ipo_date || scenario.end_date;
+  const [repayDate, setRepayDateState] = useState<string>(defaultRepayIso);
+  const [repayTouched, setRepayTouched] = useState(false);
+  useEffect(() => {
+    if (!repayTouched) setRepayDateState(scenario.ipo_date || scenario.end_date);
+  }, [scenario.ipo_date, scenario.end_date, repayTouched]);
+  const setRepayDate = (iso: string) => {
+    setRepayTouched(true);
+    setRepayDateState(iso || defaultRepayIso);
+  };
+
   return (
     <div className="mx-auto max-w-5xl space-y-4">
       <div className="flex items-center justify-between gap-2">
@@ -226,9 +241,11 @@ export default function RevolverPage() {
         scenario={scenario}
         monthly={facilityMonthly}
         capitalise={facilityCapitalise}
+        repayDate={repayDate}
+        onRepayDateChange={setRepayDate}
       />
 
-      <ReleaseComparisonCard scenario={scenario} facility={facility} />
+      <ReleaseComparisonCard scenario={scenario} facility={facility} repayDate={repayDate} />
 
       <ScenarioComparisonView active={scenario} stored={stored} />
     </div>
@@ -248,10 +265,6 @@ const COMPARE_COLORS = [
 
 // ----- Repay-in-full card -----
 
-function resolveRepaymentDate(scenario: RevolverScenario): string {
-  return scenario.repayment_date || scenario.ipo_date || scenario.end_date;
-}
-
 function parseIsoLocal(iso: string): Date {
   return new Date(`${iso}T00:00:00Z`);
 }
@@ -260,13 +273,16 @@ function RepayInFullCard({
   scenario,
   monthly,
   capitalise,
+  repayDate: repayIso,
+  onRepayDateChange,
 }: {
   scenario: RevolverScenario;
   monthly: FacilityResult;
   capitalise: FacilityResult;
+  repayDate: string;
+  onRepayDateChange: (iso: string) => void;
 }) {
   const [assumedPrice, setAssumedPrice] = useState<number>(0);
-  const repayIso = resolveRepaymentDate(scenario);
   const repayDate = parseIsoLocal(repayIso);
   const monthlyBalance = balanceAt(monthly.rows, repayDate);
   const capitaliseBalance = balanceAt(capitalise.rows, repayDate);
@@ -282,24 +298,40 @@ function RepayInFullCard({
         <CardDescription>
           What it takes to close the facility on your chosen repay date. Enter
           the price you assume shares would fetch on that date to see how many
-          need to be sold.
+          need to be sold. Not saved with the scenario — this is a calculator.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <div>
+            <Label>Repay date</Label>
+            <Input
+              type="date"
+              value={repayIso}
+              onChange={(e) => onRepayDateChange(e.target.value)}
+            />
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              Defaults to the scenario&apos;s IPO / end date; change here without touching the scenario.
+            </p>
+          </div>
+          <div>
+            <Label>Assumed price at repay</Label>
+            <MoneyInput
+              value={assumedPrice}
+              onChange={(n) => setAssumedPrice(Math.max(0, n))}
+            />
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              Per-share value assumed on the repay date, drives the share count below.
+            </p>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
           <Kpi label={`Balance · ${scenario.interest_mode === "monthly" ? "Pay monthly" : "Capitalise"}`}
                value={formatMoney(activeBalance, USD)} />
           <Kpi label="Balance · other mode"
                value={formatMoney(scenario.interest_mode === "monthly" ? capitaliseBalance : monthlyBalance, USD)} />
           <Kpi label="Cash interest paid to date" value={formatMoney(monthlyCashSpent, USD)}
                hint="Pay-monthly, cumulative to repay date" />
-          <div className="rounded-md border bg-card p-3">
-            <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Assumed price at repay</div>
-            <MoneyInput
-              value={assumedPrice}
-              onChange={(n) => setAssumedPrice(Math.max(0, n))}
-            />
-          </div>
         </div>
         {shares !== null ? (
           <div className="rounded-md border bg-secondary/40 p-3 text-sm">
@@ -372,11 +404,12 @@ function collectReleaseChoices(stocks: StockHolding[], scenarios: Scenario[]): R
 }
 
 function ReleaseComparisonCard({
-  scenario,
   facility,
+  repayDate: repayIso,
 }: {
   scenario: RevolverScenario;
   facility: FacilityResult;
+  repayDate: string;
 }) {
   const { data } = useData();
   const stocks = data.stocks;
@@ -390,7 +423,6 @@ function ReleaseComparisonCard({
 
   const chosen = choices.find((c) => c.key === releaseKey) ?? null;
 
-  const repayIso = resolveRepaymentDate(scenario);
   const repayDate = parseIsoLocal(repayIso);
   const balanceAtRepay = balanceAt(facility.rows, repayDate);
   const cashInterestToRepay = totalCashInterestAt(facility.rows, repayDate);
@@ -885,13 +917,6 @@ function ScenarioForm({
               type="date"
               value={scenario.ipo_date ?? ""}
               onChange={(e) => upd("ipo_date", e.target.value || undefined)}
-            />
-          </Field>
-          <Field label="Repay in full on" hint="Sell shares at this date to close the balance. Defaults to IPO / end.">
-            <Input
-              type="date"
-              value={scenario.repayment_date ?? ""}
-              onChange={(e) => upd("repayment_date", e.target.value || undefined)}
             />
           </Field>
         </div>
