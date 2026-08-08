@@ -8,12 +8,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Label, Select } from "@/components/ui/input";
 import {
-  type InvestmentProject,
-  type Property,
-  type Scenario,
+  type CollectionsMap,
   Settings,
   SettingsSchema,
-  type StockHolding,
   SUPPORTED_CURRENCIES,
   SUPPORTED_JURISDICTIONS,
 } from "@/lib/models";
@@ -309,17 +306,15 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
   );
 }
 
+// Deriving `collections` from CollectionsMap ties the bundle shape to the
+// single source of truth in lib/models.ts — adding a new collection there
+// becomes a compile error at every bundle builder / restore site below
+// until the new key is threaded through. Regression prevention for the
+// "sync silently dropped revolvers" bug.
 type DriveBundle = {
   version: 1;
   exported_at: string;
-  collections: {
-    stocks: StockHolding[];
-    properties: Property[];
-    scenarios: Scenario[];
-    projects: InvestmentProject[];
-    revolvers: unknown[];
-    settings: Settings;
-  };
+  collections: CollectionsMap;
 };
 
 const LAST_SYNC_KEY = "investor:driveLastSync";
