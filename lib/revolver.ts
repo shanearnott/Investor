@@ -573,7 +573,7 @@ function dateForRepayment(scenario: RevolverScenario): Date {
   return projectionEndDate(scenario);
 }
 
-function balanceAt(rows: FacilityRow[], asOf: Date): number {
+export function balanceAt(rows: FacilityRow[], asOf: Date): number {
   if (rows.length === 0) return 0;
   const target = toIso(asOf);
   let chosen = rows[0].balance_end;
@@ -584,7 +584,7 @@ function balanceAt(rows: FacilityRow[], asOf: Date): number {
   return chosen;
 }
 
-function totalCashInterestAt(rows: FacilityRow[], asOf: Date): number {
+export function totalCashInterestAt(rows: FacilityRow[], asOf: Date): number {
   const target = toIso(asOf);
   let total = 0;
   for (const r of rows) {
