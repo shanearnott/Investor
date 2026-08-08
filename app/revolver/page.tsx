@@ -268,6 +268,10 @@ function parseIsoLocal(iso: string): Date {
   return new Date(`${iso}T00:00:00Z`);
 }
 
+function toIsoDate(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
 function RepayInFullCard({
   scenario,
   monthly,
@@ -296,18 +300,21 @@ function RepayInFullCard({
   // picked). Non-null = user has typed a value and wants to lock it in.
   const [basisOverride, setBasisOverride] = useState<number | null>(null);
 
-  // Only offer releases from actual holdings + the scenarios the user has
-  // ticked, so the picker stays scoped to what's being compared.
+  // Dropdown offers actual holdings + releases from *any* scenario so the
+  // user isn't blocked from picking a scenario release just because that
+  // scenario isn't in the compare set. The per-scenario table below is
+  // still driven by the ticked scenarios.
   const compareScenarios = useMemo(
     () => scenarios.filter((s) => selectedScenarioIds.includes(s.id)),
     [scenarios, selectedScenarioIds],
   );
   const choices = useMemo(
-    () => collectReleaseChoices(stocks, compareScenarios),
-    [stocks, compareScenarios],
+    () => collectReleaseChoices(stocks, scenarios),
+    [stocks, scenarios],
   );
 
-  // Drop the selected release if the user un-ticks its parent scenario.
+  // Drop the selected release only when it disappears from the choice
+  // list entirely (e.g. the parent scenario or stock is deleted).
   useEffect(() => {
     if (releaseKey && !choices.some((c) => c.key === releaseKey)) {
       setReleaseKey("");
@@ -339,66 +346,87 @@ function RepayInFullCard({
     const today = new Date();
 
     return compareScenarios.map((sc) => {
+      const taxPct = Math.max(0, Math.min(100, sc.rsu_tax_rate_pct)) / 100;
+
+      // Projected repay-date price for the picked release's stock under
+      // this scenario. Used to close the revolver.
       let priceAtRepay: number | null = null;
-      let priceAtHorizon: number | null = null;
       if (holding) {
         priceAtRepay = stockPriceAtDate(sc, holding, repayDate, today);
-        const horizonDate = new Date(today);
-        horizonDate.setUTCFullYear(today.getUTCFullYear() + sc.horizon_years);
-        priceAtHorizon = stockPriceAtDate(sc, holding, horizonDate, today);
       }
 
-      // Shares needed to close the balance at repay, net of cap-gains tax
-      // on the gain over the effective basis. Basis follows the user's
-      // override if set, else the release's release_price. No release
-      // picked → basis 0 → worst-case fully-taxable proceeds.
-      const taxPct = Math.max(0, Math.min(100, sc.rsu_tax_rate_pct)) / 100;
+      // Scheduled sale for these shares under this scenario:
+      //  - If the scenario has a sell event pointing at the picked
+      //    release, use its sell_date and sale_price (fall back to the
+      //    projected price at that date if the sell didn't set one).
+      //    Its sale_tax_rate_pct wins over the scenario's flat RSU rate.
+      //  - Otherwise fall back to scenario horizon date + projected
+      //    price + scenario RSU rate.
+      let scheduledDateIso: string | null = null;
+      let scheduledPrice: number | null = null;
+      let scheduledTaxPct = taxPct;
+      let scheduledSource: "sell_event" | "horizon_fallback" = "horizon_fallback";
+      if (chosen && holding) {
+        const linkedSell = (sc.sells ?? []).find((sl) => sl.release_ref === chosen.releaseId);
+        if (linkedSell) {
+          scheduledDateIso = linkedSell.sell_date;
+          const dt = parseIsoLocal(linkedSell.sell_date);
+          scheduledPrice = linkedSell.sale_price ?? stockPriceAtDate(sc, holding, dt, today);
+          if (linkedSell.sale_tax_rate_pct > 0) {
+            scheduledTaxPct = Math.max(0, Math.min(100, linkedSell.sale_tax_rate_pct)) / 100;
+          }
+          scheduledSource = "sell_event";
+        } else {
+          const horizonDate = new Date(today);
+          horizonDate.setUTCFullYear(today.getUTCFullYear() + sc.horizon_years);
+          scheduledDateIso = toIsoDate(horizonDate);
+          scheduledPrice = stockPriceAtDate(sc, holding, horizonDate, today);
+        }
+      }
+
+      // Shares to close the revolver at the repay date, net of tax on
+      // the gain over the effective basis.
       let sharesToClose: number | null = null;
+      let netAtRepay: number | null = null;
       if (priceAtRepay !== null && priceAtRepay > 0) {
-        const gainPerShare = Math.max(0, priceAtRepay - effectiveBasis);
-        const netPerShare = priceAtRepay - gainPerShare * taxPct;
-        sharesToClose = netPerShare > 1e-9 ? activeBalance / netPerShare : Infinity;
+        const gain = Math.max(0, priceAtRepay - effectiveBasis);
+        netAtRepay = priceAtRepay - gain * taxPct;
+        sharesToClose = netAtRepay > 1e-9 ? activeBalance / netAtRepay : Infinity;
       }
 
-      // Cost-of-selling-early requires a picked release (need a sale
-      // price and kept-share count to size both paths).
-      let sellEarlyResidual: number | null = null;
-      let holdResidual: number | null = null;
+      // Same shares, if held to the scenario's scheduled sale — what
+      // would they net?
+      let netAtScheduled: number | null = null;
+      let valueIfHeld: number | null = null;
       let costOfSellingEarly: number | null = null;
-      let sharesSoldEarly: number | null = null;
       let shortfallShares = 0;
-      let remainingIfSellEarly = 0;
-      let remainingIfHold = 0;
-      if (chosen && sharesToClose !== null && priceAtHorizon !== null) {
-        // Sell-early nets salePrice − gain × tax per share.
-        const salePrice = chosen.basisPrice;
-        const gainEarly = Math.max(0, salePrice - effectiveBasis);
-        const netPerShareEarly = salePrice - gainEarly * taxPct;
-        sharesSoldEarly = netPerShareEarly > 1e-9 ? cashNeeded / netPerShareEarly : Infinity;
-        shortfallShares = Math.max(0, sharesSoldEarly - chosen.keptShares);
-        remainingIfSellEarly = Math.max(0, chosen.keptShares - sharesSoldEarly);
-        remainingIfHold = Math.max(0, chosen.keptShares - sharesToClose);
-        sellEarlyResidual = remainingIfSellEarly * priceAtHorizon;
-        holdResidual = remainingIfHold * priceAtHorizon;
-        costOfSellingEarly = holdResidual - cashInterestToRepay - sellEarlyResidual;
+      if (chosen && sharesToClose !== null && Number.isFinite(sharesToClose) && scheduledPrice !== null) {
+        const gain = Math.max(0, scheduledPrice - effectiveBasis);
+        netAtScheduled = scheduledPrice - gain * scheduledTaxPct;
+        valueIfHeld = sharesToClose * Math.max(0, netAtScheduled);
+        // Both sides use the SAME share count (sharesToClose). Selling
+        // early nets `activeBalance` (definition of "close the loan").
+        // Holding nets `valueIfHeld`. Delta = held − closed.
+        costOfSellingEarly = valueIfHeld - activeBalance;
+        shortfallShares = Math.max(0, sharesToClose - chosen.keptShares);
       }
 
       return {
         scenarioId: sc.id,
         scenarioName: sc.name || "Untitled",
         priceAtRepay,
-        priceAtHorizon,
+        scheduledDateIso,
+        scheduledPrice,
+        scheduledSource,
         sharesToClose,
-        sharesSoldEarly,
-        remainingIfSellEarly,
-        remainingIfHold,
-        sellEarlyResidual,
-        holdResidual,
+        netAtRepay,
+        netAtScheduled,
+        valueIfHeld,
         costOfSellingEarly,
         shortfallShares,
       };
     });
-  }, [chosen, compareScenarios, stocks, repayDate, activeBalance, cashInterestToRepay, cashNeeded, effectiveBasis]);
+  }, [chosen, compareScenarios, stocks, repayDate, activeBalance, cashNeeded, effectiveBasis]);
 
   const toggleScenario = (id: string) => {
     setSelectedScenarioIds((prev) =>
@@ -541,11 +569,11 @@ function RepayInFullCard({
           </p>
         ) : (
           <div className="overflow-x-auto">
-            {chosen && rows[0].shortfallShares > 0 ? (
+            {chosen && rows.some((r) => r.shortfallShares > 0) ? (
               <p className="mb-2 text-[11px] text-amber-700">
-                Heads up: raising {formatMoney(cashNeeded, USD)} at {formatMoney(chosen.basisPrice, USD)}/sh
-                needs {formatNumber(rows[0].sharesSoldEarly ?? 0)} shares, but this release only kept{" "}
-                {formatNumber(chosen.keptShares)}. Sell-early residual is capped at 0.
+                Heads up: some scenarios need more shares to close the balance than this release
+                actually kept ({formatNumber(chosen.keptShares)}). The comparison still runs but
+                you&apos;d have to source the extra shares from another release.
               </p>
             ) : null}
             <table className="w-full text-xs tabular-nums">
@@ -553,19 +581,21 @@ function RepayInFullCard({
                 <tr className="text-[10px] uppercase tracking-wide text-muted-foreground border-b">
                   <th className="text-left font-normal px-2 py-1.5">Scenario</th>
                   <th className="text-right font-normal px-2 py-1.5">Price @ repay</th>
-                  <th className="text-right font-normal px-2 py-1.5">Price @ horizon</th>
-                  <th className="text-right font-normal px-2 py-1.5">Shares to close revolver</th>
                   <th className="text-right font-normal px-2 py-1.5">
-                    Kept if sold early
-                    <div className="font-normal normal-case text-[9px]">× horizon price</div>
+                    Scheduled sale
+                    <div className="font-normal normal-case text-[9px]">scenario sell event / horizon fallback</div>
                   </th>
                   <th className="text-right font-normal px-2 py-1.5">
-                    Kept if held
-                    <div className="font-normal normal-case text-[9px]">× horizon price</div>
+                    Shares to close revolver
+                    <div className="font-normal normal-case text-[9px]">at repay, net of tax</div>
+                  </th>
+                  <th className="text-right font-normal px-2 py-1.5">
+                    Value if those shares are held
+                    <div className="font-normal normal-case text-[9px]">shares × scheduled net price</div>
                   </th>
                   <th className="text-right font-normal px-2 py-1.5">
                     Cost of selling early
-                    <div className="font-normal normal-case text-[9px]">held − interest − early</div>
+                    <div className="font-normal normal-case text-[9px]">held − closed balance</div>
                   </th>
                 </tr>
               </thead>
@@ -577,7 +607,15 @@ function RepayInFullCard({
                       {r.priceAtRepay !== null ? formatMoney(r.priceAtRepay, USD, { fractionDigits: 2 }) : "—"}
                     </td>
                     <td className="px-2 py-1.5 text-right">
-                      {r.priceAtHorizon !== null ? formatMoney(r.priceAtHorizon, USD, { fractionDigits: 2 }) : "—"}
+                      {r.scheduledPrice !== null && r.scheduledDateIso ? (
+                        <>
+                          {formatMoney(r.scheduledPrice, USD, { fractionDigits: 2 })}
+                          <div className="text-[10px] text-muted-foreground">
+                            {formatMmmYY(r.scheduledDateIso)}
+                            {r.scheduledSource === "sell_event" ? " · sell event" : " · horizon"}
+                          </div>
+                        </>
+                      ) : "—"}
                     </td>
                     <td className="px-2 py-1.5 text-right">
                       {r.sharesToClose !== null && Number.isFinite(r.sharesToClose)
@@ -585,24 +623,7 @@ function RepayInFullCard({
                         : "—"}
                     </td>
                     <td className="px-2 py-1.5 text-right">
-                      {r.sellEarlyResidual !== null ? (
-                        <>
-                          {formatMoney(r.sellEarlyResidual, USD)}
-                          <div className="text-[10px] text-muted-foreground">
-                            {formatNumber(r.remainingIfSellEarly)} sh
-                          </div>
-                        </>
-                      ) : "—"}
-                    </td>
-                    <td className="px-2 py-1.5 text-right">
-                      {r.holdResidual !== null ? (
-                        <>
-                          {formatMoney(r.holdResidual, USD)}
-                          <div className="text-[10px] text-muted-foreground">
-                            {formatNumber(r.remainingIfHold)} sh
-                          </div>
-                        </>
-                      ) : "—"}
+                      {r.valueIfHeld !== null ? formatMoney(r.valueIfHeld, USD) : "—"}
                     </td>
                     <td className={cn(
                       "px-2 py-1.5 text-right font-medium",
@@ -620,20 +641,18 @@ function RepayInFullCard({
             </table>
             {chosen ? (
               <div className="mt-2 text-[11px] text-muted-foreground">
-                Cash need: <b>{formatMoney(cashNeeded, USD)}</b>. Sell-early path liquidates{" "}
-                {formatNumber(rows[0].sharesSoldEarly ?? 0)} shares from this release at the
-                release price of {formatMoney(chosen.basisPrice, USD)} (net of tax on the gain
-                over the cost basis of {formatMoney(effectiveBasis, USD)}). Hold path draws the
-                same cash from the revolver, pays interest through {formatMmmYY(repayIso)}, then
-                sells shares at each scenario&apos;s projected repay-date price (net of cap-gains
-                tax on the gain over the same {formatMoney(effectiveBasis, USD)} basis, at that
-                scenario&apos;s RSU rate) to close the {formatMoney(activeBalance, USD)} balance.
-                Residuals valued at each scenario&apos;s own horizon. Red = selling early costs
-                you; green = it saves you (interest exceeded the appreciation).
+                At the repay date ({formatMmmYY(repayIso)}), close the{" "}
+                {formatMoney(activeBalance, USD)} balance by selling shares at each scenario&apos;s
+                projected price (net of tax on the gain over the{" "}
+                {formatMoney(effectiveBasis, USD)} basis at that scenario&apos;s RSU rate). If
+                those same shares were instead held until the scenario&apos;s own scheduled sale
+                (linked sell event, or scenario horizon if none), they&apos;d net the "Value if
+                held" column. Δ = held − closed. Red = selling early gave up value; green = the
+                scheduled sale would have fetched less (price fell or tax stack shifted).
               </div>
             ) : (
               <p className="mt-2 text-[11px] text-muted-foreground">
-                Pick a release to see the sell-early vs held residuals and the headline cost.
+                Pick a release to see the per-scenario cost of selling early.
               </p>
             )}
           </div>
@@ -649,6 +668,14 @@ type ReleaseChoice = {
   key: string;
   label: string;
   stockId: string;
+  /** The raw release id (from either the stock release or the scenario
+   *  release). Scenario sells reference this via `release_ref` so we can
+   *  find the linked scheduled sale event. */
+  releaseId: string;
+  /** For scenario-sourced releases, the parent scenario's id so the
+   *  compare can pull its sell events even if that scenario isn't in the
+   *  currently-ticked set. */
+  parentScenarioId: string | null;
   date: string;
   keptShares: number;
   basisPrice: number;
@@ -666,6 +693,8 @@ function collectReleaseChoices(stocks: StockHolding[], scenarios: Scenario[]): R
         key: `actual:${s.id}:${r.id}`,
         label: `Actual · ${label} · ${r.name || r.release_date} · ${formatNumber(kept)} sh @ ${formatMoney(r.release_price, s.currency)}`,
         stockId: s.id,
+        releaseId: r.id,
+        parentScenarioId: null,
         date: r.release_date,
         keptShares: kept,
         basisPrice: r.release_price,
@@ -684,6 +713,8 @@ function collectReleaseChoices(stocks: StockHolding[], scenarios: Scenario[]): R
         key: `scenario:${sc.id}:${r.id}`,
         label: `Scenario · ${sc.name || "Untitled"} · ${stockLabel} · ${r.name || r.release_date} · ${formatNumber(shares)} sh @ ${formatMoney(price, USD)}`,
         stockId: r.stock_id,
+        releaseId: r.id,
+        parentScenarioId: sc.id,
         date: r.release_date,
         keptShares: shares,
         basisPrice: price,
