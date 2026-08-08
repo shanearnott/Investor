@@ -404,6 +404,7 @@ function collectReleaseChoices(stocks: StockHolding[], scenarios: Scenario[]): R
 }
 
 function ReleaseComparisonCard({
+  scenario,
   facility,
   repayDate: repayIso,
 }: {
@@ -426,6 +427,7 @@ function ReleaseComparisonCard({
   const repayDate = parseIsoLocal(repayIso);
   const balanceAtRepay = balanceAt(facility.rows, repayDate);
   const cashInterestToRepay = totalCashInterestAt(facility.rows, repayDate);
+  const cashNeeded = scenario.draw_amount;
 
   const compareScenarios = useMemo(
     () => scenarios.filter((s) => selectedScenarioIds.includes(s.id)),
@@ -436,67 +438,74 @@ function ReleaseComparisonCard({
     if (!chosen) return [] as Array<{
       scenarioId: string;
       scenarioName: string;
-      priceAtRelease: number;
       priceAtRepay: number;
       priceAtHorizon: number;
-      cashRaisedAtRelease: number;
-      sharesToRepayLoan: number;
-      keptAfterBorrow: number;
-      keptAfterSell: number;
-      sellTerminal: number;
-      borrowTerminal: number;
-      delta: number;
+      sharesSoldEarly: number;
+      sharesSoldToRepay: number;
+      remainingIfSellEarly: number;
+      remainingIfHold: number;
+      sellNowResidualValue: number;
+      holdResidualValue: number;
+      interestPaid: number;
+      costOfSellingEarly: number;
+      shortfallShares: number;
     }>;
-    const releaseDate = parseIsoLocal(chosen.date);
     const holding = stocks.find((s) => s.id === chosen.stockId) ?? {
       id: chosen.stockId,
       current_share_price: chosen.basisPrice,
     } as Pick<StockHolding, "id" | "current_share_price">;
     const today = new Date();
 
+    // Shares sold "early" at release_price to raise the cash need.
+    // This is release_price × ??? = cashNeeded → shares = cashNeeded / release_price.
+    // If it exceeds keptShares from this release, we flag a shortfall.
+    const sharesSoldEarly = chosen.basisPrice > 0 ? cashNeeded / chosen.basisPrice : Infinity;
+    const shortfallShares = Math.max(0, sharesSoldEarly - chosen.keptShares);
+    const remainingIfSellEarly = Math.max(0, chosen.keptShares - sharesSoldEarly);
+
     return compareScenarios.map((sc) => {
-      const priceAtRelease = stockPriceAtDate(sc, holding, releaseDate, today);
       const priceAtRepay = stockPriceAtDate(sc, holding, repayDate, today);
       const horizonDate = new Date(today);
       horizonDate.setUTCFullYear(today.getUTCFullYear() + sc.horizon_years);
       const priceAtHorizon = stockPriceAtDate(sc, holding, horizonDate, today);
 
-      const cashRaised = chosen.keptShares * chosen.basisPrice;
+      // Value of any shares NOT sold early, held to scenario horizon.
+      const sellNowResidualValue = remainingIfSellEarly * priceAtHorizon;
 
-      // Sell path: sell enough at release_price to raise `cashRaised`.
-      // All available shares from that release, effectively. Remaining = 0
-      // for the picked release; kept-elsewhere stays outside this analysis.
-      const sharesSoldNow = chosen.keptShares;
-      const keptAfterSell = 0;
-      const sellTerminal = cashRaised + keptAfterSell * priceAtHorizon;
-
-      // Borrow path: draw cashRaised at release, pay interest through
-      // repay date, then sell shares at priceAtRepay to cover the
-      // outstanding balance (with a simple cap-gains tax on the gain vs
-      // release basis at scenario's flat RSU tax rate as a rough proxy).
+      // Hold path: revolver covers the cash need. At repay date, sell just
+      // enough shares (at scenario's projected repay-date price, net of a
+      // simple cap-gains tax) to close the outstanding balance. The rest
+      // ride out to scenario horizon.
       const taxPct = Math.max(0, Math.min(100, sc.rsu_tax_rate_pct)) / 100;
-      const gainPerShare = Math.max(0, priceAtRepay - chosen.basisPrice);
-      const netPerShare = priceAtRepay - gainPerShare * taxPct;
-      const sharesToRepayLoan = netPerShare > 1e-9 ? balanceAtRepay / netPerShare : Infinity;
-      const keptAfterBorrow = Math.max(0, chosen.keptShares - sharesToRepayLoan);
-      const borrowTerminal = cashRaised + keptAfterBorrow * priceAtHorizon - cashInterestToRepay;
+      const gainPerShareAtRepay = Math.max(0, priceAtRepay - chosen.basisPrice);
+      const netPerShareAtRepay = priceAtRepay - gainPerShareAtRepay * taxPct;
+      const sharesSoldToRepay = netPerShareAtRepay > 1e-9 ? balanceAtRepay / netPerShareAtRepay : Infinity;
+      const remainingIfHold = Math.max(0, chosen.keptShares - sharesSoldToRepay);
+      const holdResidualValue = remainingIfHold * priceAtHorizon;
+
+      // Both paths raise the same cash upfront (cashNeeded), so it cancels.
+      // Cost of selling early = holdResidualValue − cashInterest − sellNowResidualValue.
+      // Positive → holding wins by this much → selling early costs you this.
+      // Negative → selling early was better (interest ate the appreciation).
+      const costOfSellingEarly = holdResidualValue - cashInterestToRepay - sellNowResidualValue;
 
       return {
         scenarioId: sc.id,
         scenarioName: sc.name || "Untitled",
-        priceAtRelease,
         priceAtRepay,
         priceAtHorizon,
-        cashRaisedAtRelease: cashRaised,
-        sharesToRepayLoan,
-        keptAfterBorrow,
-        keptAfterSell,
-        sellTerminal,
-        borrowTerminal,
-        delta: borrowTerminal - sellTerminal,
+        sharesSoldEarly,
+        sharesSoldToRepay,
+        remainingIfSellEarly,
+        remainingIfHold,
+        sellNowResidualValue,
+        holdResidualValue,
+        interestPaid: cashInterestToRepay,
+        costOfSellingEarly,
+        shortfallShares,
       };
     });
-  }, [chosen, compareScenarios, stocks, repayDate, balanceAtRepay, cashInterestToRepay]);
+  }, [chosen, compareScenarios, stocks, repayDate, balanceAtRepay, cashInterestToRepay, cashNeeded]);
 
   const toggleScenario = (id: string) => {
     setSelectedScenarioIds((prev) =>
@@ -507,11 +516,12 @@ function ReleaseComparisonCard({
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-base">Release comparison · sell now vs borrow &amp; hold</CardTitle>
+        <CardTitle className="text-base">Cost of selling shares early · vs holding under a scenario</CardTitle>
         <CardDescription>
-          Pick a release event (actual or scenario) as the source of cash, then
-          pick the future scenarios to score both paths against. Terminal wealth
-          is at each scenario&apos;s own horizon.
+          For a specific release, how much do you give up by liquidating those
+          shares today to raise the {formatMoney(cashNeeded, USD)} cash need,
+          instead of borrowing that cash from the revolver and letting the
+          shares appreciate? Compared per scenario at its own horizon.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -561,16 +571,33 @@ function ReleaseComparisonCard({
 
         {chosen && rows.length > 0 ? (
           <div className="overflow-x-auto">
+            {rows[0].shortfallShares > 0 ? (
+              <p className="mb-2 text-[11px] text-amber-700">
+                Heads up: raising {formatMoney(cashNeeded, USD)} at {formatMoney(chosen.basisPrice, USD)}/sh
+                needs {formatNumber(rows[0].sharesSoldEarly)} shares, but this release only kept{" "}
+                {formatNumber(chosen.keptShares)}. The sell-early residual is capped at 0 shares —
+                you&apos;d need another release or actual cash reserves to make up the difference.
+              </p>
+            ) : null}
             <table className="w-full text-xs tabular-nums">
               <thead>
                 <tr className="text-[10px] uppercase tracking-wide text-muted-foreground border-b">
                   <th className="text-left font-normal px-2 py-1.5">Scenario</th>
                   <th className="text-right font-normal px-2 py-1.5">Price at repay</th>
                   <th className="text-right font-normal px-2 py-1.5">Price at horizon</th>
-                  <th className="text-right font-normal px-2 py-1.5">Sell terminal</th>
-                  <th className="text-right font-normal px-2 py-1.5">Borrow terminal</th>
-                  <th className="text-right font-normal px-2 py-1.5">Δ (borrow − sell)</th>
-                  <th className="text-right font-normal px-2 py-1.5">Shares kept (borrow)</th>
+                  <th className="text-right font-normal px-2 py-1.5">
+                    Kept if sold early
+                    <div className="font-normal normal-case text-[9px]">× horizon price</div>
+                  </th>
+                  <th className="text-right font-normal px-2 py-1.5">
+                    Kept if held
+                    <div className="font-normal normal-case text-[9px]">× horizon price</div>
+                  </th>
+                  <th className="text-right font-normal px-2 py-1.5">Interest paid</th>
+                  <th className="text-right font-normal px-2 py-1.5">
+                    Cost of selling early
+                    <div className="font-normal normal-case text-[9px]">held − interest − early</div>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -579,26 +606,35 @@ function ReleaseComparisonCard({
                     <td className="px-2 py-1.5">{r.scenarioName}</td>
                     <td className="px-2 py-1.5 text-right">{formatMoney(r.priceAtRepay, USD, { fractionDigits: 2 })}</td>
                     <td className="px-2 py-1.5 text-right">{formatMoney(r.priceAtHorizon, USD, { fractionDigits: 2 })}</td>
-                    <td className="px-2 py-1.5 text-right">{formatMoney(r.sellTerminal, USD)}</td>
-                    <td className="px-2 py-1.5 text-right">{formatMoney(r.borrowTerminal, USD)}</td>
+                    <td className="px-2 py-1.5 text-right">
+                      {formatMoney(r.sellNowResidualValue, USD)}
+                      <div className="text-[10px] text-muted-foreground">{formatNumber(r.remainingIfSellEarly)} sh</div>
+                    </td>
+                    <td className="px-2 py-1.5 text-right">
+                      {formatMoney(r.holdResidualValue, USD)}
+                      <div className="text-[10px] text-muted-foreground">{formatNumber(r.remainingIfHold)} sh</div>
+                    </td>
+                    <td className="px-2 py-1.5 text-right">{formatMoney(r.interestPaid, USD)}</td>
                     <td className={cn(
                       "px-2 py-1.5 text-right font-medium",
-                      r.delta >= 0 ? "text-emerald-700" : "text-rose-700",
+                      r.costOfSellingEarly >= 0 ? "text-rose-700" : "text-emerald-700",
                     )}>
-                      {r.delta >= 0 ? "+" : ""}{formatMoney(r.delta, USD)}
+                      {r.costOfSellingEarly >= 0 ? "" : "+"}
+                      {formatMoney(r.costOfSellingEarly, USD)}
                     </td>
-                    <td className="px-2 py-1.5 text-right">{formatNumber(r.keptAfterBorrow)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
             <div className="mt-2 text-[11px] text-muted-foreground">
-              Both paths raise the same cash ({formatMoney(chosen.keptShares * chosen.basisPrice, USD)})
-              at the release date. Sell path liquidates all {formatNumber(chosen.keptShares)} shares from
-              this release; borrow path draws the same cash from the revolver, pays interest through
-              {" "}{formatMmmYY(repayIso)}, then sells enough shares at that scenario&apos;s projected price
-              to close the balance (net of a simple cap-gains tax at each scenario&apos;s RSU rate).
-              Terminal wealth = cash raised + remaining shares × scenario&apos;s horizon price − cash interest paid.
+              Cash need: <b>{formatMoney(cashNeeded, USD)}</b>. Sell-early path: liquidate{" "}
+              {formatNumber(rows[0].sharesSoldEarly)} shares from this release at{" "}
+              {formatMoney(chosen.basisPrice, USD)}, keep {formatNumber(rows[0].remainingIfSellEarly)}.
+              Hold path: draw the same cash from the revolver, pay interest through{" "}
+              {formatMmmYY(repayIso)}, then sell shares at each scenario&apos;s projected repay-date
+              price (net of a simple cap-gains tax at that scenario&apos;s RSU rate) to close the{" "}
+              {formatMoney(balanceAtRepay, USD)} balance. Residuals valued at each scenario&apos;s own
+              horizon. Red = selling early costs you; green = it saves you (interest exceeded the appreciation).
             </div>
           </div>
         ) : (
