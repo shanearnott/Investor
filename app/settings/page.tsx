@@ -317,6 +317,7 @@ type DriveBundle = {
     properties: Property[];
     scenarios: Scenario[];
     projects: InvestmentProject[];
+    revolvers: unknown[];
     settings: Settings;
   };
 };
@@ -336,6 +337,7 @@ function DriveSyncSection({
     setProperties,
     setScenarios,
     setProjects,
+    setRevolvers,
     setSettings,
     driveToken: token,
     driveEmail: email,
@@ -423,6 +425,7 @@ function DriveSyncSection({
           properties: data.properties,
           scenarios: data.scenarios,
           projects: data.projects,
+          revolvers: data.revolvers,
           settings: data.settings,
         },
       };
@@ -443,7 +446,7 @@ function DriveSyncSection({
     setErr(null); setNote(null);
     if (!token) { setErr("Connect to Drive first."); return; }
     const ok = typeof window === "undefined" ? true : window.confirm(
-      `Restore from Drive? This will REPLACE all local stocks, properties, scenarios, projects, and settings with whatever is in ${DRIVE_FILE_NAME}. The current local data cannot be recovered after this unless you've downloaded a file backup.`,
+      `Restore from Drive? This will REPLACE all local stocks, properties, scenarios, projects, revolver scenarios, and settings with whatever is in ${DRIVE_FILE_NAME}. The current local data cannot be recovered after this unless you've downloaded a file backup.`,
     );
     if (!ok) return;
     setBusy("down");
@@ -464,6 +467,7 @@ function DriveSyncSection({
         setProperties(parsed.collections.properties ?? []),
         setScenarios(parsed.collections.scenarios ?? []),
         setProjects(parsed.collections.projects ?? []),
+        setRevolvers(parsed.collections.revolvers ?? []),
         setSettings(parsed.collections.settings ?? data.settings),
       ]);
       setNote("Restored from Drive.");
@@ -577,6 +581,7 @@ function FileBackupSection() {
     setProperties,
     setScenarios,
     setProjects,
+    setRevolvers,
     setSettings,
   } = useData();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -596,6 +601,7 @@ function FileBackupSection() {
           properties: data.properties,
           scenarios: data.scenarios,
           projects: data.projects,
+          revolvers: data.revolvers,
           settings: data.settings,
         },
       };
@@ -626,7 +632,7 @@ function FileBackupSection() {
     e.target.value = "";
     if (!file) return;
     const ok = window.confirm(
-      `Restore from "${file.name}"? This will replace all current stocks, properties, scenarios, projects, and settings.`,
+      `Restore from "${file.name}"? This will replace all current stocks, properties, scenarios, projects, revolver scenarios, and settings.`,
     );
     if (!ok) return;
     setBusy("restore");
@@ -643,6 +649,7 @@ function FileBackupSection() {
         setProperties(parsed.collections.properties ?? []),
         setScenarios(parsed.collections.scenarios ?? []),
         setProjects(parsed.collections.projects ?? []),
+        setRevolvers(parsed.collections.revolvers ?? []),
         setSettings(parsed.collections.settings ?? data.settings),
       ]);
       setNote(`Restored from ${file.name}.`);
