@@ -291,6 +291,10 @@ function RepayInFullCard({
     scenarios.slice(0, 2).map((s) => s.id),
   );
   const [releaseKey, setReleaseKey] = useState<string>("");
+  // Cost basis per share, overriding the release event's release_price.
+  // Null = follow the release's own price (unchanged when a new release is
+  // picked). Non-null = user has typed a value and wants to lock it in.
+  const [basisOverride, setBasisOverride] = useState<number | null>(null);
 
   // Only offer releases from actual holdings + the scenarios the user has
   // ticked, so the picker stays scoped to what's being compared.
@@ -305,10 +309,17 @@ function RepayInFullCard({
 
   // Drop the selected release if the user un-ticks its parent scenario.
   useEffect(() => {
-    if (releaseKey && !choices.some((c) => c.key === releaseKey)) setReleaseKey("");
+    if (releaseKey && !choices.some((c) => c.key === releaseKey)) {
+      setReleaseKey("");
+      setBasisOverride(null);
+    }
   }, [choices, releaseKey]);
 
   const chosen = choices.find((c) => c.key === releaseKey) ?? null;
+  // Effective cost basis: user override wins if set, else the release's
+  // release_price (RSU FMV at vesting, options strike, etc — populated
+  // when the release event was recorded).
+  const effectiveBasis = basisOverride !== null ? basisOverride : (chosen?.basisPrice ?? 0);
 
   const repayDate = parseIsoLocal(repayIso);
   const monthlyBalance = balanceAt(monthly.rows, repayDate);
@@ -337,20 +348,20 @@ function RepayInFullCard({
         priceAtHorizon = stockPriceAtDate(sc, holding, horizonDate, today);
       }
 
-      // Shares needed to close the balance at repay. Uses release's basis
-      // for cap-gains tax if a release is picked, otherwise treats
-      // proceeds as fully taxable at the scenario's RSU rate (worst case).
+      // Shares needed to close the balance at repay, net of cap-gains tax
+      // on the gain over the effective basis. Basis follows the user's
+      // override if set, else the release's release_price. No release
+      // picked → basis 0 → worst-case fully-taxable proceeds.
       const taxPct = Math.max(0, Math.min(100, sc.rsu_tax_rate_pct)) / 100;
-      const basis = chosen?.basisPrice ?? 0;
       let sharesToClose: number | null = null;
       if (priceAtRepay !== null && priceAtRepay > 0) {
-        const gainPerShare = Math.max(0, priceAtRepay - basis);
+        const gainPerShare = Math.max(0, priceAtRepay - effectiveBasis);
         const netPerShare = priceAtRepay - gainPerShare * taxPct;
         sharesToClose = netPerShare > 1e-9 ? activeBalance / netPerShare : Infinity;
       }
 
-      // Cost-of-selling-early requires a picked release (need basis price
-      // and kept-share count to size both paths).
+      // Cost-of-selling-early requires a picked release (need a sale
+      // price and kept-share count to size both paths).
       let sellEarlyResidual: number | null = null;
       let holdResidual: number | null = null;
       let costOfSellingEarly: number | null = null;
@@ -359,7 +370,11 @@ function RepayInFullCard({
       let remainingIfSellEarly = 0;
       let remainingIfHold = 0;
       if (chosen && sharesToClose !== null && priceAtHorizon !== null) {
-        sharesSoldEarly = chosen.basisPrice > 0 ? cashNeeded / chosen.basisPrice : Infinity;
+        // Sell-early nets salePrice − gain × tax per share.
+        const salePrice = chosen.basisPrice;
+        const gainEarly = Math.max(0, salePrice - effectiveBasis);
+        const netPerShareEarly = salePrice - gainEarly * taxPct;
+        sharesSoldEarly = netPerShareEarly > 1e-9 ? cashNeeded / netPerShareEarly : Infinity;
         shortfallShares = Math.max(0, sharesSoldEarly - chosen.keptShares);
         remainingIfSellEarly = Math.max(0, chosen.keptShares - sharesSoldEarly);
         remainingIfHold = Math.max(0, chosen.keptShares - sharesToClose);
@@ -383,7 +398,7 @@ function RepayInFullCard({
         shortfallShares,
       };
     });
-  }, [chosen, compareScenarios, stocks, repayDate, activeBalance, cashInterestToRepay, cashNeeded]);
+  }, [chosen, compareScenarios, stocks, repayDate, activeBalance, cashInterestToRepay, cashNeeded, effectiveBasis]);
 
   const toggleScenario = (id: string) => {
     setSelectedScenarioIds((prev) =>
@@ -444,25 +459,61 @@ function RepayInFullCard({
           </div>
         </div>
 
-        <div>
-          <Label>Release event (actual + selected scenarios)</Label>
-          <Select value={releaseKey} onChange={(e) => setReleaseKey(e.target.value)}>
-            <option value="">— pick a release —</option>
-            {choices.map((c) => (
-              <option key={c.key} value={c.key}>{c.label}</option>
-            ))}
-          </Select>
-          {choices.length === 0 ? (
-            <p className="mt-1 text-[11px] text-muted-foreground">
-              No release events available. Add releases in Investments or tick
-              scenarios that have their own release events.
-            </p>
-          ) : (
-            <p className="mt-1 text-[11px] text-muted-foreground">
-              Sets the cost basis + share pool used to size both the sell-early
-              and hold-and-repay paths.
-            </p>
-          )}
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-[3fr_2fr]">
+          <div>
+            <Label>Release event (actual + selected scenarios)</Label>
+            <Select
+              value={releaseKey}
+              onChange={(e) => {
+                setReleaseKey(e.target.value);
+                setBasisOverride(null);
+              }}
+            >
+              <option value="">— pick a release —</option>
+              {choices.map((c) => (
+                <option key={c.key} value={c.key}>{c.label}</option>
+              ))}
+            </Select>
+            {choices.length === 0 ? (
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                No release events available. Add releases in Investments or tick
+                scenarios that have their own release events.
+              </p>
+            ) : (
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Sets the share pool and defaults the cost basis to the release&apos;s own price.
+              </p>
+            )}
+          </div>
+          <div>
+            <Label>Cost basis per share</Label>
+            <MoneyInput
+              value={chosen ? effectiveBasis : 0}
+              onChange={(n) => setBasisOverride(Math.max(0, n))}
+            />
+            {chosen ? (
+              <p className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                <span>
+                  Release price: <b>{formatMoney(chosen.basisPrice, USD, { fractionDigits: 2 })}</b>
+                </span>
+                {basisOverride !== null && Math.abs(basisOverride - chosen.basisPrice) > 1e-9 ? (
+                  <button
+                    type="button"
+                    className="rounded-md border bg-background px-1.5 py-0.5 font-medium text-foreground hover:bg-accent"
+                    onClick={() => setBasisOverride(null)}
+                  >
+                    Reset
+                  </button>
+                ) : (
+                  <span className="text-emerald-700">· using release price</span>
+                )}
+              </p>
+            ) : (
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Pick a release to seed this from its release price; edit here to override.
+              </p>
+            )}
+          </div>
         </div>
 
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
@@ -570,13 +621,15 @@ function RepayInFullCard({
             {chosen ? (
               <div className="mt-2 text-[11px] text-muted-foreground">
                 Cash need: <b>{formatMoney(cashNeeded, USD)}</b>. Sell-early path liquidates{" "}
-                {formatNumber(rows[0].sharesSoldEarly ?? 0)} shares from this release at{" "}
-                {formatMoney(chosen.basisPrice, USD)}. Hold path draws the same cash from the
-                revolver, pays interest through {formatMmmYY(repayIso)}, then sells shares at
-                each scenario&apos;s projected repay-date price (net of a simple cap-gains tax
-                at that scenario&apos;s RSU rate) to close the {formatMoney(activeBalance, USD)}{" "}
-                balance. Residuals valued at each scenario&apos;s own horizon. Red = selling
-                early costs you; green = it saves you (interest exceeded the appreciation).
+                {formatNumber(rows[0].sharesSoldEarly ?? 0)} shares from this release at the
+                release price of {formatMoney(chosen.basisPrice, USD)} (net of tax on the gain
+                over the cost basis of {formatMoney(effectiveBasis, USD)}). Hold path draws the
+                same cash from the revolver, pays interest through {formatMmmYY(repayIso)}, then
+                sells shares at each scenario&apos;s projected repay-date price (net of cap-gains
+                tax on the gain over the same {formatMoney(effectiveBasis, USD)} basis, at that
+                scenario&apos;s RSU rate) to close the {formatMoney(activeBalance, USD)} balance.
+                Residuals valued at each scenario&apos;s own horizon. Red = selling early costs
+                you; green = it saves you (interest exceeded the appreciation).
               </div>
             ) : (
               <p className="mt-2 text-[11px] text-muted-foreground">
