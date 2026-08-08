@@ -100,7 +100,7 @@ export function startingPriceForScenario(
   return holding.current_share_price;
 }
 
-function stockGrowthForScenario(
+export function stockGrowthForScenario(
   s: Scenario,
   holding: Pick<StockHolding, "id" | "current_share_price">,
 ): number {
@@ -113,6 +113,22 @@ function stockGrowthForScenario(
     return (Math.pow(ov.target_share_price / startPrice, 1 / s.horizon_years) - 1) * 100;
   }
   return ov?.annual_price_growth_pct ?? s.default_stock_growth_pct;
+}
+
+/** Projected share price for a stock under a scenario at an arbitrary date.
+ *  Compounds the scenario's growth rate against its effective starting price
+ *  from `today` to `asOf`. Handles dates in the past by inverting exponent
+ *  (rarely useful but safe). */
+export function stockPriceAtDate(
+  scenario: Scenario,
+  holding: Pick<StockHolding, "id" | "current_share_price">,
+  asOf: Date,
+  today: Date = new Date(),
+): number {
+  const start = startingPriceForScenario(scenario, holding);
+  const rate = stockGrowthForScenario(scenario, holding) / 100;
+  const years = (asOf.getTime() - today.getTime()) / (365.25 * 24 * 3600 * 1000);
+  return start * Math.pow(1 + rate, years);
 }
 
 function propertyGrowthForScenario(

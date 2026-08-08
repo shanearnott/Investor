@@ -19,14 +19,22 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Label, Select } from "@/components/ui/input";
 import { MoneyInput } from "@/components/ui/money-input";
-import { newId } from "@/lib/models";
+import {
+  newId,
+  releaseKeptShares,
+  type Scenario,
+  type StockHolding,
+} from "@/lib/models";
+import { stockPriceAtDate } from "@/lib/projections";
 import { fetchLatestSofr, type SofrSnapshot } from "@/lib/sofr-feed";
 import {
   RevolverScenario,
   RevolverScenarioSchema,
+  balanceAt,
   computeFacility,
   computeFacilityAtBaseSofr,
   newRevolverScenario,
+  totalCashInterestAt,
   type DrawEvent,
   type FacilityResult,
 } from "@/lib/revolver";
@@ -214,6 +222,14 @@ export default function RevolverPage() {
         capitaliseHigh={facilityCapitaliseHigh}
       />
 
+      <RepayInFullCard
+        scenario={scenario}
+        monthly={facilityMonthly}
+        capitalise={facilityCapitalise}
+      />
+
+      <ReleaseComparisonCard scenario={scenario} facility={facility} />
+
       <ScenarioComparisonView active={scenario} stored={stored} />
     </div>
   );
@@ -229,6 +245,339 @@ const COMPARE_COLORS = [
   "#06b6d4", // cyan
   "#84cc16", // lime
 ];
+
+// ----- Repay-in-full card -----
+
+function resolveRepaymentDate(scenario: RevolverScenario): string {
+  return scenario.repayment_date || scenario.ipo_date || scenario.end_date;
+}
+
+function parseIsoLocal(iso: string): Date {
+  return new Date(`${iso}T00:00:00Z`);
+}
+
+function RepayInFullCard({
+  scenario,
+  monthly,
+  capitalise,
+}: {
+  scenario: RevolverScenario;
+  monthly: FacilityResult;
+  capitalise: FacilityResult;
+}) {
+  const [assumedPrice, setAssumedPrice] = useState<number>(0);
+  const repayIso = resolveRepaymentDate(scenario);
+  const repayDate = parseIsoLocal(repayIso);
+  const monthlyBalance = balanceAt(monthly.rows, repayDate);
+  const capitaliseBalance = balanceAt(capitalise.rows, repayDate);
+  const monthlyCashSpent = totalCashInterestAt(monthly.rows, repayDate);
+  const activeBalance = scenario.interest_mode === "monthly" ? monthlyBalance : capitaliseBalance;
+
+  const shares = assumedPrice > 0 ? activeBalance / assumedPrice : null;
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base">Repay in full · {formatMmmYY(repayIso)}</CardTitle>
+        <CardDescription>
+          What it takes to close the facility on your chosen repay date. Enter
+          the price you assume shares would fetch on that date to see how many
+          need to be sold.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <Kpi label={`Balance · ${scenario.interest_mode === "monthly" ? "Pay monthly" : "Capitalise"}`}
+               value={formatMoney(activeBalance, USD)} />
+          <Kpi label="Balance · other mode"
+               value={formatMoney(scenario.interest_mode === "monthly" ? capitaliseBalance : monthlyBalance, USD)} />
+          <Kpi label="Cash interest paid to date" value={formatMoney(monthlyCashSpent, USD)}
+               hint="Pay-monthly, cumulative to repay date" />
+          <div className="rounded-md border bg-card p-3">
+            <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Assumed price at repay</div>
+            <MoneyInput
+              value={assumedPrice}
+              onChange={(n) => setAssumedPrice(Math.max(0, n))}
+            />
+          </div>
+        </div>
+        {shares !== null ? (
+          <div className="rounded-md border bg-secondary/40 p-3 text-sm">
+            Sell <b>{formatNumber(shares)}</b> shares at {formatMoney(assumedPrice, USD)}
+            {" "}to raise the {formatMoney(activeBalance, USD)} needed to close the loan.
+            <div className="mt-1 text-[11px] text-muted-foreground">
+              Gross — assumes proceeds cover the balance dollar-for-dollar. Cap-gains
+              tax on the gain reduces net cash; the release comparison below models it.
+            </div>
+          </div>
+        ) : (
+          <div className="text-[11px] text-muted-foreground">
+            Enter a price to see the share count required.
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ----- Release comparison card -----
+
+type ReleaseChoice = {
+  key: string;
+  label: string;
+  stockId: string;
+  date: string;
+  keptShares: number;
+  basisPrice: number;
+  source: "actual" | "scenario";
+};
+
+function collectReleaseChoices(stocks: StockHolding[], scenarios: Scenario[]): ReleaseChoice[] {
+  const out: ReleaseChoice[] = [];
+  for (const s of stocks) {
+    const label = s.company_name || s.ticker || "Stock";
+    for (const r of s.releases ?? []) {
+      const kept = releaseKeptShares(r);
+      if (kept <= 0 || !r.release_price) continue;
+      out.push({
+        key: `actual:${s.id}:${r.id}`,
+        label: `Actual · ${label} · ${r.name || r.release_date} · ${formatNumber(kept)} sh @ ${formatMoney(r.release_price, s.currency)}`,
+        stockId: s.id,
+        date: r.release_date,
+        keptShares: kept,
+        basisPrice: r.release_price,
+        source: "actual",
+      });
+    }
+  }
+  for (const sc of scenarios) {
+    for (const r of sc.releases ?? []) {
+      const shares = r.shares ?? 0;
+      const price = r.release_price ?? 0;
+      if (shares <= 0 || price <= 0) continue;
+      const stock = stocks.find((s) => s.id === r.stock_id);
+      const stockLabel = stock ? stock.company_name || stock.ticker || "Stock" : r.stock_id;
+      out.push({
+        key: `scenario:${sc.id}:${r.id}`,
+        label: `Scenario · ${sc.name || "Untitled"} · ${stockLabel} · ${r.name || r.release_date} · ${formatNumber(shares)} sh @ ${formatMoney(price, USD)}`,
+        stockId: r.stock_id,
+        date: r.release_date,
+        keptShares: shares,
+        basisPrice: price,
+        source: "scenario",
+      });
+    }
+  }
+  return out;
+}
+
+function ReleaseComparisonCard({
+  scenario,
+  facility,
+}: {
+  scenario: RevolverScenario;
+  facility: FacilityResult;
+}) {
+  const { data } = useData();
+  const stocks = data.stocks;
+  const scenarios = data.scenarios;
+
+  const choices = useMemo(() => collectReleaseChoices(stocks, scenarios), [stocks, scenarios]);
+  const [releaseKey, setReleaseKey] = useState<string>("");
+  const [selectedScenarioIds, setSelectedScenarioIds] = useState<string[]>(() =>
+    scenarios.slice(0, 2).map((s) => s.id),
+  );
+
+  const chosen = choices.find((c) => c.key === releaseKey) ?? null;
+
+  const repayIso = resolveRepaymentDate(scenario);
+  const repayDate = parseIsoLocal(repayIso);
+  const balanceAtRepay = balanceAt(facility.rows, repayDate);
+  const cashInterestToRepay = totalCashInterestAt(facility.rows, repayDate);
+
+  const compareScenarios = useMemo(
+    () => scenarios.filter((s) => selectedScenarioIds.includes(s.id)),
+    [scenarios, selectedScenarioIds],
+  );
+
+  const rows = useMemo(() => {
+    if (!chosen) return [] as Array<{
+      scenarioId: string;
+      scenarioName: string;
+      priceAtRelease: number;
+      priceAtRepay: number;
+      priceAtHorizon: number;
+      cashRaisedAtRelease: number;
+      sharesToRepayLoan: number;
+      keptAfterBorrow: number;
+      keptAfterSell: number;
+      sellTerminal: number;
+      borrowTerminal: number;
+      delta: number;
+    }>;
+    const releaseDate = parseIsoLocal(chosen.date);
+    const holding = stocks.find((s) => s.id === chosen.stockId) ?? {
+      id: chosen.stockId,
+      current_share_price: chosen.basisPrice,
+    } as Pick<StockHolding, "id" | "current_share_price">;
+    const today = new Date();
+
+    return compareScenarios.map((sc) => {
+      const priceAtRelease = stockPriceAtDate(sc, holding, releaseDate, today);
+      const priceAtRepay = stockPriceAtDate(sc, holding, repayDate, today);
+      const horizonDate = new Date(today);
+      horizonDate.setUTCFullYear(today.getUTCFullYear() + sc.horizon_years);
+      const priceAtHorizon = stockPriceAtDate(sc, holding, horizonDate, today);
+
+      const cashRaised = chosen.keptShares * chosen.basisPrice;
+
+      // Sell path: sell enough at release_price to raise `cashRaised`.
+      // All available shares from that release, effectively. Remaining = 0
+      // for the picked release; kept-elsewhere stays outside this analysis.
+      const sharesSoldNow = chosen.keptShares;
+      const keptAfterSell = 0;
+      const sellTerminal = cashRaised + keptAfterSell * priceAtHorizon;
+
+      // Borrow path: draw cashRaised at release, pay interest through
+      // repay date, then sell shares at priceAtRepay to cover the
+      // outstanding balance (with a simple cap-gains tax on the gain vs
+      // release basis at scenario's flat RSU tax rate as a rough proxy).
+      const taxPct = Math.max(0, Math.min(100, sc.rsu_tax_rate_pct)) / 100;
+      const gainPerShare = Math.max(0, priceAtRepay - chosen.basisPrice);
+      const netPerShare = priceAtRepay - gainPerShare * taxPct;
+      const sharesToRepayLoan = netPerShare > 1e-9 ? balanceAtRepay / netPerShare : Infinity;
+      const keptAfterBorrow = Math.max(0, chosen.keptShares - sharesToRepayLoan);
+      const borrowTerminal = cashRaised + keptAfterBorrow * priceAtHorizon - cashInterestToRepay;
+
+      return {
+        scenarioId: sc.id,
+        scenarioName: sc.name || "Untitled",
+        priceAtRelease,
+        priceAtRepay,
+        priceAtHorizon,
+        cashRaisedAtRelease: cashRaised,
+        sharesToRepayLoan,
+        keptAfterBorrow,
+        keptAfterSell,
+        sellTerminal,
+        borrowTerminal,
+        delta: borrowTerminal - sellTerminal,
+      };
+    });
+  }, [chosen, compareScenarios, stocks, repayDate, balanceAtRepay, cashInterestToRepay]);
+
+  const toggleScenario = (id: string) => {
+    setSelectedScenarioIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
+  };
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base">Release comparison · sell now vs borrow &amp; hold</CardTitle>
+        <CardDescription>
+          Pick a release event (actual or scenario) as the source of cash, then
+          pick the future scenarios to score both paths against. Terminal wealth
+          is at each scenario&apos;s own horizon.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-[2fr_3fr]">
+          <div>
+            <Label>Release event</Label>
+            <Select value={releaseKey} onChange={(e) => setReleaseKey(e.target.value)}>
+              <option value="">— pick a release —</option>
+              {choices.map((c) => (
+                <option key={c.key} value={c.key}>{c.label}</option>
+              ))}
+            </Select>
+            {choices.length === 0 ? (
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                No release events found in Investments or Scenarios. Add one first.
+              </p>
+            ) : null}
+          </div>
+          <div>
+            <Label>Scenarios to compare</Label>
+            {scenarios.length === 0 ? (
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                No scenarios saved. Add one in the Scenarios tab.
+              </p>
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                {scenarios.map((s) => {
+                  const on = selectedScenarioIds.includes(s.id);
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => toggleScenario(s.id)}
+                      className={cn(
+                        "rounded-md border px-2 py-1 text-xs font-medium",
+                        on ? "bg-secondary text-foreground" : "text-muted-foreground hover:bg-accent",
+                      )}
+                    >
+                      {s.name || "Untitled"}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {chosen && rows.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs tabular-nums">
+              <thead>
+                <tr className="text-[10px] uppercase tracking-wide text-muted-foreground border-b">
+                  <th className="text-left font-normal px-2 py-1.5">Scenario</th>
+                  <th className="text-right font-normal px-2 py-1.5">Price at repay</th>
+                  <th className="text-right font-normal px-2 py-1.5">Price at horizon</th>
+                  <th className="text-right font-normal px-2 py-1.5">Sell terminal</th>
+                  <th className="text-right font-normal px-2 py-1.5">Borrow terminal</th>
+                  <th className="text-right font-normal px-2 py-1.5">Δ (borrow − sell)</th>
+                  <th className="text-right font-normal px-2 py-1.5">Shares kept (borrow)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.scenarioId} className="border-b last:border-0">
+                    <td className="px-2 py-1.5">{r.scenarioName}</td>
+                    <td className="px-2 py-1.5 text-right">{formatMoney(r.priceAtRepay, USD, { fractionDigits: 2 })}</td>
+                    <td className="px-2 py-1.5 text-right">{formatMoney(r.priceAtHorizon, USD, { fractionDigits: 2 })}</td>
+                    <td className="px-2 py-1.5 text-right">{formatMoney(r.sellTerminal, USD)}</td>
+                    <td className="px-2 py-1.5 text-right">{formatMoney(r.borrowTerminal, USD)}</td>
+                    <td className={cn(
+                      "px-2 py-1.5 text-right font-medium",
+                      r.delta >= 0 ? "text-emerald-700" : "text-rose-700",
+                    )}>
+                      {r.delta >= 0 ? "+" : ""}{formatMoney(r.delta, USD)}
+                    </td>
+                    <td className="px-2 py-1.5 text-right">{formatNumber(r.keptAfterBorrow)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="mt-2 text-[11px] text-muted-foreground">
+              Both paths raise the same cash ({formatMoney(chosen.keptShares * chosen.basisPrice, USD)})
+              at the release date. Sell path liquidates all {formatNumber(chosen.keptShares)} shares from
+              this release; borrow path draws the same cash from the revolver, pays interest through
+              {" "}{formatMmmYY(repayIso)}, then sells enough shares at that scenario&apos;s projected price
+              to close the balance (net of a simple cap-gains tax at each scenario&apos;s RSU rate).
+              Terminal wealth = cash raised + remaining shares × scenario&apos;s horizon price − cash interest paid.
+            </div>
+          </div>
+        ) : (
+          <p className="text-[11px] text-muted-foreground">
+            {chosen ? "Pick at least one scenario above." : "Pick a release event to see the comparison."}
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 function ScenarioComparisonView({
   active,
@@ -536,6 +885,13 @@ function ScenarioForm({
               type="date"
               value={scenario.ipo_date ?? ""}
               onChange={(e) => upd("ipo_date", e.target.value || undefined)}
+            />
+          </Field>
+          <Field label="Repay in full on" hint="Sell shares at this date to close the balance. Defaults to IPO / end.">
+            <Input
+              type="date"
+              value={scenario.repayment_date ?? ""}
+              onChange={(e) => upd("repayment_date", e.target.value || undefined)}
             />
           </Field>
         </div>
