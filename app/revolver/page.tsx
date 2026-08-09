@@ -22,6 +22,7 @@ import { MoneyInput } from "@/components/ui/money-input";
 import {
   newId,
   releaseKeptShares,
+  vestedSharesAt,
   type Scenario,
   type StockHolding,
 } from "@/lib/models";
@@ -704,20 +705,40 @@ function collectReleaseChoices(stocks: StockHolding[], scenarios: Scenario[]): R
   }
   for (const sc of scenarios) {
     for (const r of sc.releases ?? []) {
-      const shares = r.shares ?? 0;
-      const price = r.release_price ?? 0;
-      if (shares <= 0 || price <= 0) continue;
       const stock = stocks.find((s) => s.id === r.stock_id);
+      const releaseDt = parseIsoLocal(r.release_date);
+
+      // Effective shares: prefer explicit `shares`, else resolve
+      // `shares_pct` against the stock's projected vested at that date.
+      // Falls to 0 if neither is set — we skip that release.
+      let effectiveShares = r.shares ?? 0;
+      if (effectiveShares <= 0 && (r.shares_pct ?? 0) > 0 && stock) {
+        const vested = vestedSharesAt(stock, releaseDt);
+        effectiveShares = vested * ((r.shares_pct ?? 0) / 100);
+      }
+      if (effectiveShares <= 0) continue;
+
+      // Effective price: explicit `release_price`, else the scenario's
+      // projected price at release_date. Needs a stock to project against.
+      let effectivePrice = r.release_price ?? 0;
+      let priceSource: "explicit" | "projected" = "explicit";
+      if (effectivePrice <= 0 && stock) {
+        effectivePrice = stockPriceAtDate(sc, stock, releaseDt);
+        priceSource = "projected";
+      }
+      if (effectivePrice <= 0) continue;
+
       const stockLabel = stock ? stock.company_name || stock.ticker || "Stock" : r.stock_id;
+      const priceBadge = priceSource === "projected" ? " (projected)" : "";
       out.push({
         key: `scenario:${sc.id}:${r.id}`,
-        label: `Scenario · ${sc.name || "Untitled"} · ${stockLabel} · ${r.name || r.release_date} · ${formatNumber(shares)} sh @ ${formatMoney(price, USD)}`,
+        label: `Scenario · ${sc.name || "Untitled"} · ${stockLabel} · ${r.name || r.release_date} · ${formatNumber(effectiveShares)} sh @ ${formatMoney(effectivePrice, USD)}${priceBadge}`,
         stockId: r.stock_id,
         releaseId: r.id,
         parentScenarioId: sc.id,
         date: r.release_date,
-        keptShares: shares,
-        basisPrice: price,
+        keptShares: effectiveShares,
+        basisPrice: effectivePrice,
         source: "scenario",
       });
     }
