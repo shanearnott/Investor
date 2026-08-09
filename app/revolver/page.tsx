@@ -172,20 +172,16 @@ export default function RevolverPage() {
   const isStored = stored.some((s) => s.id === scenario.id);
   const dirty = isStored ? JSON.stringify(stored.find((s) => s.id === scenario.id)) !== JSON.stringify(scenario) : true;
 
-  // Repay-in-full date is a calculator input, not scenario config — held
-  // as local UI state so it doesn't dirty the scenario. Defaults to the
-  // scenario's own IPO / end date and follows it when the user hasn't
-  // overridden yet.
-  const defaultRepayIso = scenario.ipo_date || scenario.end_date;
-  const [repayDate, setRepayDateState] = useState<string>(defaultRepayIso);
-  const [repayTouched, setRepayTouched] = useState(false);
-  useEffect(() => {
-    if (!repayTouched) setRepayDateState(scenario.ipo_date || scenario.end_date);
-  }, [scenario.ipo_date, scenario.end_date, repayTouched]);
-  const setRepayDate = (iso: string) => {
-    setRepayTouched(true);
-    setRepayDateState(iso || defaultRepayIso);
-  };
+  // The calculator can operate against any saved revolver scenario, plus
+  // the current in-memory one (which may be unsaved). Merge them so a
+  // user in the middle of tweaking a scenario can still calculate.
+  const calcScenarios = useMemo(() => {
+    const list = [...stored];
+    const i = list.findIndex((s) => s.id === scenario.id);
+    if (i >= 0) list[i] = scenario;
+    else list.push(scenario);
+    return list;
+  }, [stored, scenario]);
 
   return (
     <div className="mx-auto max-w-5xl space-y-4">
@@ -239,12 +235,8 @@ export default function RevolverPage() {
       />
 
       <RepayInFullCard
-        scenario={scenario}
-        monthly={facilityMonthly}
-        capitalise={facilityCapitalise}
-        facility={facility}
-        repayDate={repayDate}
-        onRepayDateChange={setRepayDate}
+        revolverScenarios={calcScenarios}
+        activeScenarioId={scenario.id}
       />
 
       <ScenarioComparisonView active={scenario} stored={stored} />
@@ -273,33 +265,101 @@ function toIsoDate(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
+const REPAY_CALC_KEY = "investor:revolverCalc.v1";
+
+type RepayCalcState = {
+  revolverScenarioId?: string;
+  repayDate?: string;
+  compareScenarioIds?: string[];
+  releaseKey?: string;
+  basisOverride?: number | null;
+};
+
+function loadRepayCalcState(): RepayCalcState {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(REPAY_CALC_KEY);
+    return raw ? (JSON.parse(raw) as RepayCalcState) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveRepayCalcState(state: RepayCalcState): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(REPAY_CALC_KEY, JSON.stringify(state));
+  } catch {
+    // storage full / disabled — non-fatal for a calculator.
+  }
+}
+
 function RepayInFullCard({
-  scenario,
-  monthly,
-  capitalise,
-  facility,
-  repayDate: repayIso,
-  onRepayDateChange,
+  revolverScenarios,
+  activeScenarioId,
 }: {
-  scenario: RevolverScenario;
-  monthly: FacilityResult;
-  capitalise: FacilityResult;
-  facility: FacilityResult;
-  repayDate: string;
-  onRepayDateChange: (iso: string) => void;
+  revolverScenarios: RevolverScenario[];
+  activeScenarioId: string;
 }) {
   const { data } = useData();
   const stocks = data.stocks;
   const scenarios = data.scenarios;
 
-  const [selectedScenarioIds, setSelectedScenarioIds] = useState<string[]>(() =>
-    scenarios.slice(0, 2).map((s) => s.id),
+  // One-shot load of persisted calculator state on mount.
+  const initial = useMemo(() => loadRepayCalcState(), []);
+
+  const [revolverScenarioId, setRevolverScenarioId] = useState<string>(() => {
+    const saved = initial.revolverScenarioId;
+    if (saved && revolverScenarios.some((s) => s.id === saved)) return saved;
+    return activeScenarioId || revolverScenarios[0]?.id || "";
+  });
+  const revolverScenario =
+    revolverScenarios.find((s) => s.id === revolverScenarioId) ??
+    revolverScenarios[0] ??
+    null;
+
+  const [selectedScenarioIds, setSelectedScenarioIds] = useState<string[]>(() => {
+    const saved = initial.compareScenarioIds;
+    if (saved && saved.length > 0) return saved.filter((id) => scenarios.some((s) => s.id === id));
+    return scenarios.slice(0, 2).map((s) => s.id);
+  });
+  const [releaseKey, setReleaseKey] = useState<string>(() => initial.releaseKey ?? "");
+  const [basisOverride, setBasisOverride] = useState<number | null>(() =>
+    initial.basisOverride ?? null,
   );
-  const [releaseKey, setReleaseKey] = useState<string>("");
-  // Cost basis per share, overriding the release event's release_price.
-  // Null = follow the release's own price (unchanged when a new release is
-  // picked). Non-null = user has typed a value and wants to lock it in.
-  const [basisOverride, setBasisOverride] = useState<number | null>(null);
+
+  // Repay date defaults to the picked revolver scenario's IPO / end date,
+  // but the user's override sticks across scenario switches once set.
+  const defaultRepayIso = revolverScenario
+    ? (revolverScenario.ipo_date || revolverScenario.end_date)
+    : (initial.repayDate ?? "");
+  const [repayIso, setRepayIso] = useState<string>(() => initial.repayDate ?? defaultRepayIso);
+  const [repayTouched, setRepayTouched] = useState<boolean>(!!initial.repayDate);
+  useEffect(() => {
+    if (!repayTouched && revolverScenario) {
+      setRepayIso(revolverScenario.ipo_date || revolverScenario.end_date);
+    }
+  }, [revolverScenario, repayTouched]);
+
+  // Persist any calculator change.
+  useEffect(() => {
+    saveRepayCalcState({
+      revolverScenarioId,
+      repayDate: repayTouched ? repayIso : undefined,
+      compareScenarioIds: selectedScenarioIds,
+      releaseKey,
+      basisOverride,
+    });
+  }, [revolverScenarioId, repayIso, repayTouched, selectedScenarioIds, releaseKey, basisOverride]);
+
+  const monthly = useMemo(
+    () => (revolverScenario ? computeFacility(revolverScenario, "monthly") : null),
+    [revolverScenario],
+  );
+  const capitalise = useMemo(
+    () => (revolverScenario ? computeFacility(revolverScenario, "capitalise") : null),
+    [revolverScenario],
+  );
 
   // Dropdown offers actual holdings + releases from *any* scenario so the
   // user isn't blocked from picking a scenario release just because that
@@ -329,12 +389,12 @@ function RepayInFullCard({
   // when the release event was recorded).
   const effectiveBasis = basisOverride !== null ? basisOverride : (chosen?.basisPrice ?? 0);
 
-  const repayDate = parseIsoLocal(repayIso);
-  const monthlyBalance = balanceAt(monthly.rows, repayDate);
-  const capitaliseBalance = balanceAt(capitalise.rows, repayDate);
-  const activeBalance = scenario.interest_mode === "monthly" ? monthlyBalance : capitaliseBalance;
-  const cashInterestToRepay = totalCashInterestAt(facility.rows, repayDate);
-  const cashNeeded = scenario.draw_amount;
+  const repayDate = parseIsoLocal(repayIso || "1970-01-01");
+  const facility = revolverScenario && monthly && capitalise
+    ? (revolverScenario.interest_mode === "monthly" ? monthly : capitalise)
+    : null;
+  const activeBalance = facility ? balanceAt(facility.rows, repayDate) : 0;
+  const cashNeeded = revolverScenario?.draw_amount ?? 0;
 
   const rows = useMemo(() => {
     if (compareScenarios.length === 0) return [];
@@ -440,52 +500,91 @@ function RepayInFullCard({
       <CardHeader className="pb-2">
         <CardTitle className="text-base">Repay in full · {formatMmmYY(repayIso)}</CardTitle>
         <CardDescription>
-          On the chosen repay date, how many shares would you need to sell to
-          close the loan — and what does selling them early to raise the
-          cash need in the first place cost you vs holding under each scenario?
-          Calculator only, not saved with the scenario.
+          Pick a revolver scenario, a repay date, and a release. See per-scenario
+          how many shares it takes to close the loan and what selling early
+          instead of holding to the scenario&apos;s scheduled sale would cost.
+          State is saved locally so your picks stick between visits.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
+            <Label>Revolver scenario</Label>
+            <Select
+              value={revolverScenarioId}
+              onChange={(e) => setRevolverScenarioId(e.target.value)}
+            >
+              {revolverScenarios.length === 0 ? (
+                <option value="">— none —</option>
+              ) : (
+                revolverScenarios.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name || "Untitled"} · {s.interest_mode === "monthly" ? "Pay monthly" : "Capitalise"}
+                  </option>
+                ))
+              )}
+            </Select>
+            {revolverScenario ? (
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Draw {formatMoney(revolverScenario.draw_amount, USD)} · SOFR base{" "}
+                {revolverScenario.sofr_base_pct.toFixed(2)}% + spread {revolverScenario.spread_pct.toFixed(2)}%
+              </p>
+            ) : null}
+          </div>
+          <div>
             <Label>Repay date</Label>
             <Input
               type="date"
               value={repayIso}
-              onChange={(e) => onRepayDateChange(e.target.value)}
+              onChange={(e) => {
+                setRepayTouched(true);
+                setRepayIso(e.target.value || defaultRepayIso);
+              }}
             />
-            <p className="mt-1 text-[11px] text-muted-foreground">
-              Defaults to the scenario&apos;s IPO / end date; change here without touching the scenario.
+            <p className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+              <span>Defaults to the picked scenario&apos;s IPO / end date.</span>
+              {repayTouched ? (
+                <button
+                  type="button"
+                  className="rounded-md border bg-background px-1.5 py-0.5 font-medium text-foreground hover:bg-accent"
+                  onClick={() => {
+                    setRepayTouched(false);
+                    setRepayIso(defaultRepayIso);
+                  }}
+                >
+                  Reset
+                </button>
+              ) : null}
             </p>
           </div>
-          <div>
-            <Label>Scenarios to compare</Label>
-            {scenarios.length === 0 ? (
-              <p className="mt-1 text-[11px] text-muted-foreground">
-                No scenarios saved. Add one in the Scenarios tab.
-              </p>
-            ) : (
-              <div className="flex flex-wrap gap-1.5">
-                {scenarios.map((s) => {
-                  const on = selectedScenarioIds.includes(s.id);
-                  return (
-                    <button
-                      key={s.id}
-                      type="button"
-                      onClick={() => toggleScenario(s.id)}
-                      className={cn(
-                        "rounded-md border px-2 py-1 text-xs font-medium",
-                        on ? "bg-secondary text-foreground" : "text-muted-foreground hover:bg-accent",
-                      )}
-                    >
-                      {s.name || "Untitled"}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+        </div>
+
+        <div>
+          <Label>Scenarios to compare</Label>
+          {scenarios.length === 0 ? (
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              No scenarios saved. Add one in the Scenarios tab.
+            </p>
+          ) : (
+            <div className="flex flex-wrap gap-1.5">
+              {scenarios.map((s) => {
+                const on = selectedScenarioIds.includes(s.id);
+                return (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => toggleScenario(s.id)}
+                    className={cn(
+                      "rounded-md border px-2 py-1 text-xs font-medium",
+                      on ? "bg-secondary text-foreground" : "text-muted-foreground hover:bg-accent",
+                    )}
+                  >
+                    {s.name || "Untitled"}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-[3fr_2fr]">
@@ -545,21 +644,41 @@ function RepayInFullCard({
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-          <Kpi
-            label={`Balance · ${scenario.interest_mode === "monthly" ? "Pay monthly" : "Capitalise"}`}
-            value={formatMoney(activeBalance, USD)}
-          />
-          <Kpi
-            label="Balance · other mode"
-            value={formatMoney(scenario.interest_mode === "monthly" ? capitaliseBalance : monthlyBalance, USD)}
-          />
-          <Kpi
-            label="Cash interest paid to date"
-            value={formatMoney(cashInterestToRepay, USD)}
-            hint="Cumulative to repay date under current mode"
-          />
-        </div>
+        {(() => {
+          const finiteShares = rows
+            .map((r) => r.sharesToClose)
+            .filter((v): v is number => v !== null && Number.isFinite(v));
+          const minShares = finiteShares.length > 0 ? Math.min(...finiteShares) : null;
+          const maxShares = finiteShares.length > 0 ? Math.max(...finiteShares) : null;
+          const sharesHint =
+            minShares === null
+              ? "Pick a release + scenarios to size"
+              : minShares === maxShares
+                ? `at ${revolverScenario ? revolverScenario.interest_mode : "current"} mode`
+                : `range across selected scenarios`;
+          return (
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <Kpi
+                label="Balance to repay"
+                value={revolverScenario ? formatMoney(activeBalance, USD) : "—"}
+                hint={revolverScenario
+                  ? `at ${formatMmmYY(repayIso)} · ${revolverScenario.interest_mode === "monthly" ? "Pay monthly" : "Capitalise"}`
+                  : undefined}
+              />
+              <Kpi
+                label="Shares to close"
+                value={
+                  minShares === null
+                    ? "—"
+                    : minShares === maxShares
+                      ? formatNumber(minShares)
+                      : `${formatNumber(minShares)} – ${formatNumber(maxShares!)}`
+                }
+                hint={sharesHint}
+              />
+            </div>
+          );
+        })()}
 
         {compareScenarios.length === 0 ? (
           <p className="text-[11px] text-muted-foreground">Pick at least one scenario above.</p>
