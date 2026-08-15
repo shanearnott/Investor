@@ -387,18 +387,13 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
   };
 
   const addScenarioSell = () => {
-    // Pick the first release that isn't already linked from another
-    // sell — that's how we keep each release single-sell so there's
-    // no double counting against the same named release.
+    // Default the new sell to the first available release (any) — the
+    // engine now allows multiple sells per release with cumulative
+    // earmarking, so we don't need to hunt for an unlinked one.
     setD((p) => {
-      const taken = new Set(
-        (p.sells ?? []).filter((x) => x.release_ref).map((x) => x.release_ref!),
-      );
       const investmentReleases = data.stocks.flatMap((h) => h.releases ?? []);
       investmentReleases.sort((a, b) => a.release_date.localeCompare(b.release_date));
-      const firstFreeInv = investmentReleases.find((r) => !taken.has(r.id));
-      const firstFreeScn = (p.releases ?? []).find((r) => !taken.has(r.id));
-      const defaultRef = firstFreeInv?.id ?? firstFreeScn?.id ?? "";
+      const defaultRef = investmentReleases[0]?.id ?? (p.releases ?? [])[0]?.id ?? "";
       if (!defaultRef) return p;
       return {
         ...p,
@@ -1010,14 +1005,10 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
               variant="outline"
               onClick={addScenarioSell}
               disabled={(() => {
-                const allReleaseIds = [
-                  ...data.stocks.flatMap((h) => (h.releases ?? []).map((r) => r.id)),
-                  ...(d.releases ?? []).map((r) => r.id),
-                ];
-                const taken = new Set(
-                  (d.sells ?? []).filter((s) => s.release_ref).map((s) => s.release_ref!),
-                );
-                return allReleaseIds.every((id) => taken.has(id));
+                const anyReleases =
+                  data.stocks.some((h) => (h.releases ?? []).length > 0) ||
+                  (d.releases ?? []).length > 0;
+                return !anyReleases;
               })()}
             >
               <Plus className="h-3.5 w-3.5" /> Add sell
@@ -1026,10 +1017,10 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
           <p className="text-[11px] text-muted-foreground">
             Each sell is tied to a single named release event (from your
             investments or from a scenario release above). Cap-gains is
-            computed against that release&apos;s price. A single release
-            event can only be linked once across investments + scenarios
-            so there&apos;s no double counting; the math panel on
-            Projections shows the full allocation.
+            computed against that release&apos;s price. Multiple sells can
+            reference the same release (e.g. staged sales); the engine
+            earmarks cumulatively so a release can&apos;t be oversold, and
+            the math panel on Projections shows the full allocation.
           </p>
           {(d.sells ?? []).length === 0 ? (
             <p className="text-[11px] text-muted-foreground">
@@ -1041,18 +1032,22 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
           ) : (
             <div className="space-y-2">
               {(d.sells ?? []).map((s) => {
-                // Build the linked-release options: investments releases
-                // first (by date), then scenario releases. Deduped by id,
-                // and a release already linked from a different sell in
-                // this scenario is excluded so each release can only be
-                // sold once (no double counting). The current sell's own
-                // release_ref is always shown so the user can see / keep
-                // their existing selection.
-                const takenByOtherSells = new Set(
-                  (d.sells ?? [])
-                    .filter((x) => x.id !== s.id && x.release_ref)
-                    .map((x) => x.release_ref!),
-                );
+                // Every release event is offered in every sell's dropdown
+                // so the user can stage multiple sales against the same
+                // release. The engine earmarks cumulatively so a release
+                // can't be oversold across sells. We surface the running
+                // total already committed by OTHER sells against each
+                // release next to its label so it's clear what's left.
+                const committedByOtherSells = new Map<string, number>();
+                for (const other of d.sells ?? []) {
+                  if (other.id === s.id) continue;
+                  if (!other.release_ref) continue;
+                  const prev = committedByOtherSells.get(other.release_ref) ?? 0;
+                  // Best-effort committed count — explicit shares if set,
+                  // otherwise leave undefined (percent-based / "all kept").
+                  const count = other.shares && other.shares > 0 ? other.shares : 0;
+                  committedByOtherSells.set(other.release_ref, prev + count);
+                }
                 const seenReleaseIds = new Set<string>();
                 const releaseOptions: Array<{ id: string; label: string }> = [];
                 const investmentReleases = data.stocks.flatMap((h) =>
@@ -1063,19 +1058,21 @@ function ScenarioForm({ draft, onCancel, onSave }: { draft: Scenario; onCancel: 
                 );
                 for (const { stock, release } of investmentReleases) {
                   if (seenReleaseIds.has(release.id)) continue;
-                  if (takenByOtherSells.has(release.id)) continue;
                   seenReleaseIds.add(release.id);
                   const ticker = stock.ticker || stock.company_name || stock.id;
-                  const label = `Investments / ${ticker} · ${release.name || release.release_date}`;
+                  const committed = committedByOtherSells.get(release.id) ?? 0;
+                  const suffix = committed > 0 ? ` · ${committed.toLocaleString()} sh already committed` : "";
+                  const label = `Investments / ${ticker} · ${release.name || release.release_date}${suffix}`;
                   releaseOptions.push({ id: release.id, label });
                 }
                 for (const r of d.releases ?? []) {
                   if (seenReleaseIds.has(r.id)) continue;
-                  if (takenByOtherSells.has(r.id)) continue;
                   seenReleaseIds.add(r.id);
                   const stock = data.stocks.find((h) => h.id === r.stock_id);
                   const ticker = stock ? (stock.ticker || stock.company_name || stock.id) : r.stock_id;
-                  const label = `Scenario / ${ticker} · ${r.name || r.release_date}`;
+                  const committed = committedByOtherSells.get(r.id) ?? 0;
+                  const suffix = committed > 0 ? ` · ${committed.toLocaleString()} sh already committed` : "";
+                  const label = `Scenario / ${ticker} · ${r.name || r.release_date}${suffix}`;
                   releaseOptions.push({ id: r.id, label });
                 }
                 return (
