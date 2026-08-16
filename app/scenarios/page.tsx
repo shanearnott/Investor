@@ -1269,6 +1269,22 @@ function ScenariosSummary({ onEdit }: { onEdit: (s: Scenario) => void }) {
   const { data } = useData();
   const ccy = data.settings.primary_currency;
   const rows = useMemo(() => {
+    const juriShort = (j: string) => j.slice(0, 3);
+    const summarise = (values: number[]): string => {
+      const clean = values.filter((v) => Number.isFinite(v) && v > 0);
+      if (clean.length === 0) return "—";
+      const min = Math.min(...clean);
+      const max = Math.max(...clean);
+      return min === max
+        ? formatMoneyCompact(min, ccy)
+        : `${formatMoneyCompact(min, ccy)}–${formatMoneyCompact(max, ccy)}`;
+    };
+    const uniqueJurisdictions = (values: (string | undefined)[]): string => {
+      const set = new Set(values.filter((v): v is string => !!v).map(juriShort));
+      if (set.size === 0) return "—";
+      return Array.from(set).join(" / ");
+    };
+
     return data.scenarios.map((s) => {
       // Snap to month-start so step boundaries line up with the projection
       // engine's monthStart logic — keeps the terminal row deterministic.
@@ -1285,6 +1301,18 @@ function ScenariosSummary({ onEdit }: { onEdit: (s: Scenario) => void }) {
       const customisations =
         Object.keys(s.stock_overrides ?? {}).length
         + Object.keys(s.property_overrides ?? {}).length;
+
+      const releases = s.releases ?? [];
+      const sells = s.sells ?? [];
+      // Release prices: explicit release_price only. Undefined = projected;
+      // don't fold that in since it's not a scenario choice.
+      const releasePrices = releases
+        .map((r) => r.release_price)
+        .filter((v): v is number => v !== undefined);
+      const sellPrices = sells
+        .map((sl) => sl.sale_price)
+        .filter((v): v is number => v !== undefined);
+
       return {
         scenario: s,
         terminal: last?.total ?? 0,
@@ -1293,11 +1321,15 @@ function ScenariosSummary({ onEdit }: { onEdit: (s: Scenario) => void }) {
         property: last?.property_equity_total ?? 0,
         cash: (last?.cash_total ?? 0) + (last?.pending_sale_total ?? 0),
         customisations,
-        releases: (s.releases ?? []).length,
-        sells: (s.sells ?? []).length,
+        releasesCount: releases.length,
+        sellsCount: sells.length,
+        releasePriceSummary: summarise(releasePrices),
+        sellPriceSummary: summarise(sellPrices),
+        releaseJurisdictions: uniqueJurisdictions(releases.map((r) => r.release_jurisdiction)),
+        sellJurisdictions: uniqueJurisdictions(sells.map((sl) => sl.sale_jurisdiction)),
       };
     });
-  }, [data.scenarios, data.stocks, data.properties, data.settings]);
+  }, [data.scenarios, data.stocks, data.properties, data.settings, ccy]);
   if (rows.length === 0) return null;
   return (
     <Card>
@@ -1314,14 +1346,15 @@ function ScenariosSummary({ onEdit }: { onEdit: (s: Scenario) => void }) {
           <thead>
             <tr className="text-[10px] uppercase tracking-wide text-muted-foreground border-b">
               <th className="text-left font-normal px-2 py-1.5">Scenario</th>
-              <th className="text-right font-normal px-2 py-1.5">Horizon</th>
-              <th className="text-right font-normal px-2 py-1.5">Stock %</th>
               <th className="text-right font-normal px-2 py-1.5">Prop %</th>
-              <th className="text-right font-normal px-2 py-1.5">Infl</th>
               <th className="text-right font-normal px-2 py-1.5">RSU tax</th>
               <th className="text-right font-normal px-2 py-1.5">Cust.</th>
-              <th className="text-right font-normal px-2 py-1.5">Rel.</th>
-              <th className="text-right font-normal px-2 py-1.5">Sells</th>
+              <th className="text-right font-normal px-2 py-1.5">Rel. #</th>
+              <th className="text-right font-normal px-2 py-1.5">Rel. $</th>
+              <th className="text-right font-normal px-2 py-1.5">Rel. jur</th>
+              <th className="text-right font-normal px-2 py-1.5">Sells #</th>
+              <th className="text-right font-normal px-2 py-1.5">Sells $</th>
+              <th className="text-right font-normal px-2 py-1.5">Sells jur</th>
               <th className="text-right font-normal px-2 py-1.5">Net @ horizon</th>
             </tr>
           </thead>
@@ -1333,10 +1366,7 @@ function ScenariosSummary({ onEdit }: { onEdit: (s: Scenario) => void }) {
                 onClick={() => onEdit(r.scenario)}
               >
                 <td className="px-2 py-1.5 font-medium">{r.scenario.name || "Untitled"}</td>
-                <td className="px-2 py-1.5 text-right">{r.scenario.horizon_years}y</td>
-                <td className="px-2 py-1.5 text-right">{r.scenario.default_stock_growth_pct.toFixed(1)}</td>
                 <td className="px-2 py-1.5 text-right">{r.scenario.default_property_growth_pct.toFixed(1)}</td>
-                <td className="px-2 py-1.5 text-right">{r.scenario.inflation_pct.toFixed(1)}</td>
                 <td className="px-2 py-1.5 text-right">
                   {r.scenario.rsu_tax_jurisdiction.slice(0, 3)} {r.scenario.rsu_tax_rate_pct}%
                 </td>
@@ -1344,10 +1374,22 @@ function ScenariosSummary({ onEdit }: { onEdit: (s: Scenario) => void }) {
                   {r.customisations || "—"}
                 </td>
                 <td className="px-2 py-1.5 text-right text-muted-foreground">
-                  {r.releases || "—"}
+                  {r.releasesCount || "—"}
                 </td>
                 <td className="px-2 py-1.5 text-right text-muted-foreground">
-                  {r.sells || "—"}
+                  {r.releasePriceSummary}
+                </td>
+                <td className="px-2 py-1.5 text-right text-muted-foreground">
+                  {r.releaseJurisdictions}
+                </td>
+                <td className="px-2 py-1.5 text-right text-muted-foreground">
+                  {r.sellsCount || "—"}
+                </td>
+                <td className="px-2 py-1.5 text-right text-muted-foreground">
+                  {r.sellPriceSummary}
+                </td>
+                <td className="px-2 py-1.5 text-right text-muted-foreground">
+                  {r.sellJurisdictions}
                 </td>
                 <td className="px-2 py-1.5 text-right font-semibold">
                   {formatMoneyCompact(r.terminal, ccy)}
