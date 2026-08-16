@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { Copy, Plus, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronUp, Copy, Plus, Trash2 } from "lucide-react";
 
 import { useData } from "@/components/data-provider";
 import { Button } from "@/components/ui/button";
@@ -110,6 +110,15 @@ export default function ScenariosPage() {
     await setScenarios(data.scenarios.filter((x) => x.id !== id));
   };
 
+  const moveScenario = async (id: string, direction: -1 | 1) => {
+    const list = [...data.scenarios];
+    const i = list.findIndex((s) => s.id === id);
+    const j = i + direction;
+    if (i < 0 || j < 0 || j >= list.length) return;
+    [list[i], list[j]] = [list[j], list[i]];
+    await setScenarios(list);
+  };
+
   return (
     <div className="mx-auto max-w-5xl space-y-4">
       <div className="flex items-center justify-between gap-2">
@@ -171,7 +180,7 @@ export default function ScenariosPage() {
             </CardContent>
           </Card>
         ) : (
-          data.scenarios.map((s) => (
+          data.scenarios.map((s, idx) => (
             <Fragment key={s.id}>
               <Card>
                 <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
@@ -185,6 +194,24 @@ export default function ScenariosPage() {
                     </CardDescription>
                   </div>
                   <div className="flex gap-1">
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => moveScenario(s.id, -1)}
+                      disabled={idx === 0}
+                      title="Move up"
+                    >
+                      <ChevronUp className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => moveScenario(s.id, 1)}
+                      disabled={idx === data.scenarios.length - 1}
+                      title="Move down"
+                    >
+                      <ChevronDown className="h-4 w-4" />
+                    </Button>
                     <Button
                       size="sm"
                       variant={editing?.id === s.id ? "default" : "outline"}

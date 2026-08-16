@@ -6,6 +6,7 @@ import {
   CartesianGrid,
   Cell,
   ComposedChart,
+  LabelList,
   Legend,
   Line,
   Pie,
@@ -34,7 +35,7 @@ import {
   resolvedByHolding,
   startingPriceForScenario,
 } from "@/lib/projections";
-import { cn, formatMoney, formatNumber } from "@/lib/utils";
+import { cn, formatMoney, formatMoneyCompact, formatNumber } from "@/lib/utils";
 
 const HORIZON_OPTIONS = [2, 3, 5, 10, 15, 20] as const;
 type HorizonYears = (typeof HORIZON_OPTIONS)[number];
@@ -448,12 +449,20 @@ export default function ProjectionsPage() {
       property: number;
       cash: number;
       total: number;
+      baseTotal: number;
+      pctDiff: number;
     }>;
     const baseRow = (seriesByScenario[compareBase.id] ?? []).find((x) => x.date === compareHighlightDate);
     if (!baseRow) return [];
     const baseStock = baseRow.liquid_equity_total + baseRow.unvested_equity_total;
     const baseProperty = baseRow.property_equity_total;
     const baseCash = baseRow.cash_total + baseRow.pending_sale_total;
+    // Baseline total for the categories currently shown — pct diff is
+    // apples-to-apples against the same filter set.
+    const baseTotal =
+      (lineShowStocks ? baseStock : 0) +
+      (lineShowProperty ? baseProperty : 0) +
+      (lineShowCash ? baseCash : 0);
     return compareOthers.map((s) => {
       const idx = chosen.findIndex((c) => c.id === s.id);
       const other = (seriesByScenario[s.id] ?? []).find((x) => x.date === compareHighlightDate);
@@ -463,13 +472,17 @@ export default function ProjectionsPage() {
       const stock = lineShowStocks ? Math.round(otherStock - baseStock) : 0;
       const property = lineShowProperty ? Math.round(otherProperty - baseProperty) : 0;
       const cash = lineShowCash ? Math.round(otherCash - baseCash) : 0;
+      const total = stock + property + cash;
+      const pctDiff = baseTotal !== 0 ? (total / baseTotal) * 100 : 0;
       return {
         name: s.name,
         colour: PIE_COLORS[idx % PIE_COLORS.length],
         stock,
         property,
         cash,
-        total: stock + property + cash,
+        total,
+        baseTotal,
+        pctDiff,
       };
     });
   }, [compareBase, compareOthers, chosen, compareHighlightDate, seriesByScenario, lineShowStocks, lineShowProperty, lineShowCash]);
@@ -869,6 +882,56 @@ export default function ProjectionsPage() {
                       {lineShowCash ? (
                         <Bar dataKey="cash" name="Cash" stackId="delta" fill="#d97706" isAnimationActive={false} />
                       ) : null}
+                      {/* Transparent overlay bar spanning 0→total (or total→0 for negatives)
+                          so LabelList sits exactly at the row's Δ end. Renders per-row
+                          "±$X (±Y%)" text; hidden from legend and tooltip. */}
+                      <Bar
+                        dataKey="total"
+                        fill="transparent"
+                        stackId="labelAnchor"
+                        legendType="none"
+                        tooltipType="none"
+                        isAnimationActive={false}
+                      >
+                        <LabelList
+                          dataKey="total"
+                          content={(props: {
+                            x?: number | string;
+                            y?: number | string;
+                            width?: number | string;
+                            height?: number | string;
+                            value?: number | string | Array<number | string>;
+                            index?: number;
+                          }) => {
+                            const { x, y, width, height, index } = props;
+                            if (index === undefined) return null;
+                            const row = compareData[index];
+                            if (!row || row.total === 0) return null;
+                            const xNum = typeof x === "number" ? x : Number(x ?? 0);
+                            const yNum = typeof y === "number" ? y : Number(y ?? 0);
+                            const wNum = typeof width === "number" ? width : Number(width ?? 0);
+                            const hNum = typeof height === "number" ? height : Number(height ?? 0);
+                            const positive = row.total > 0;
+                            const cy = yNum + hNum / 2 + 3;
+                            const cx = positive ? (xNum + wNum + 6) : (xNum - 6);
+                            const money =
+                              (positive ? "+" : "−") + formatMoneyCompact(Math.abs(row.total), ccy);
+                            const pct = `${positive ? "+" : "−"}${Math.abs(row.pctDiff).toFixed(1)}%`;
+                            return (
+                              <text
+                                x={cx}
+                                y={cy}
+                                fill="#111827"
+                                fontSize={10}
+                                fontWeight={500}
+                                textAnchor={positive ? "start" : "end"}
+                              >
+                                {money} ({pct})
+                              </text>
+                            );
+                          }}
+                        />
+                      </Bar>
                     </ComposedChart>
                   </ResponsiveContainer>
                 </div>
@@ -888,6 +951,9 @@ export default function ProjectionsPage() {
                         </span>
                         <span className={r.total >= 0 ? "text-emerald-700 font-medium" : "text-rose-700 font-medium"}>
                           {r.total >= 0 ? "+" : "−"}{formatMoney(Math.abs(r.total), ccy)}
+                          <span className="ml-1 text-[10px] font-normal opacity-75">
+                            ({r.total >= 0 ? "+" : "−"}{Math.abs(r.pctDiff).toFixed(1)}%)
+                          </span>
                         </span>
                       </div>
                     ))}
