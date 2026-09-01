@@ -23,9 +23,10 @@ import {
   type StockHolding,
 } from "@/lib/models";
 
-/** RSU income-tax rates applied to the home-page "post-tax" net-worth
- *  tiles. Mirrors the scenarios page defaults — gives a quick at-a-glance
- *  read of net worth if you were taxed in each jurisdiction at vest. */
+/** RSU income-tax rates applied to the home-page "if sold today" tile.
+ *  Mirrors the scenarios page defaults — gives a quick at-a-glance read
+ *  of net worth if all unreleased RSUs got vested and taxed today, and
+ *  all released-and-held shares were sold at the cap-gains rate. */
 const POST_TAX_RATES: ReadonlyArray<{ label: string; rate: number }> = [
   { label: "California", rate: 50 },
 ];
@@ -92,6 +93,31 @@ export default function HomePage() {
       const valueNative = preTaxShares * h.current_share_price;
       return sum + convert(valueNative, h.currency, displayCurrency, data.settings);
     }, 0);
+  // Companion to preTaxRsuValue: value of RSU shares that HAVE been
+  // released (income tax already paid via withholding). Used to expose
+  // the tax-paid vs tax-owed split on the shares tile — the aggregate
+  // sharesGross sums both, which is why the "pre-tax" label was
+  // misleading on its own.
+  const taxPaidRsuValue = data.stocks
+    .filter((h) => h.equity_type === "RSU")
+    .reduce((sum, h) => {
+      let releaseKeptPast = 0;
+      for (const r of h.releases ?? []) {
+        const release = parseISO(r.release_date);
+        if (release && release <= todayDate) releaseKeptPast += releaseKeptShares(r);
+      }
+      let soldPast = 0;
+      for (const s of h.sells ?? []) {
+        const sd = parseISO(s.sell_date);
+        if (!sd || sd > todayDate) continue;
+        const rel = (h.releases ?? []).find((r) => r.id === s.release_id) ?? null;
+        soldPast += sellSharesFor(s, rel);
+      }
+      const heldTaxPaid = Math.max(0, releaseKeptPast - soldPast);
+      const valueNative = heldTaxPaid * h.current_share_price;
+      return sum + convert(valueNative, h.currency, displayCurrency, data.settings);
+    }, 0);
+
   // Cap-gains haircut on kept (released, not sold) RSU shares: the
   // shares have already paid income tax via withholding, but the gain
   // since release (current_share_price − release_price) is taxable on
@@ -221,9 +247,13 @@ export default function HomePage() {
         >
           <Card className="cursor-pointer hover:bg-accent">
             <CardHeader>
-              <CardTitle>Gross (pre-tax) worth today</CardTitle>
+              <CardTitle>Worth today</CardTitle>
               <CardDescription>
-                Vested equity + property equity, before any tax on a sale or vest. Tap for projections.
+                Vested equity + property equity at today&apos;s prices. RSU
+                shares released via a logged event have income tax already
+                deducted (via withholding); vested RSUs without a release
+                are still pre-income-tax. Cap-gains on any sale sits on
+                top — see the after-tax tile. Tap for projections.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -282,7 +312,7 @@ export default function HomePage() {
                     <>
                       <div className="rounded-md border p-2">
                         <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                          📊 Shares (pre-tax)
+                          📊 Vested shares
                         </div>
                         <div className="text-lg font-semibold tabular-nums">
                           {formatMoney(sharesGross, displayCurrency)}
@@ -292,10 +322,24 @@ export default function HomePage() {
                             ≈ {formatMoney(sharesAlt, secondary)}
                           </div>
                         ) : null}
+                        {taxPaidRsuValue > 0 || preTaxRsuValue > 0 ? (
+                          <div className="mt-1 text-[10px] text-muted-foreground leading-tight">
+                            {taxPaidRsuValue > 0 ? (
+                              <div>
+                                Released (tax-paid): {formatMoney(taxPaidRsuValue, displayCurrency)}
+                              </div>
+                            ) : null}
+                            {preTaxRsuValue > 0 ? (
+                              <div>
+                                RSU unreleased (tax owed): {formatMoney(preTaxRsuValue, displayCurrency)}
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : null}
                       </div>
                       <div className="rounded-md border p-2">
                         <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                          🌱 To vest (pre-tax)
+                          🌱 To vest · pre-income-tax
                         </div>
                         <div className="text-lg font-semibold tabular-nums">
                           {formatMoney(toVestGross, displayCurrency)}
@@ -308,7 +352,7 @@ export default function HomePage() {
                       </div>
                       <div className="rounded-md border p-2">
                         <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                          🏠 Property (pre-tax)
+                          🏠 Property equity
                         </div>
                         <div className="text-lg font-semibold tabular-nums">
                           {formatMoney(propertyGross, displayCurrency)}
@@ -328,7 +372,7 @@ export default function HomePage() {
                             return (
                               <div key={label} className="rounded-md border p-2">
                                 <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                                  💸 Worth (post-tax)
+                                  💸 If sold today (after all tax)
                                 </div>
                                 <div className="text-lg font-semibold tabular-nums">
                                   {formatMoney(value, displayCurrency)}
@@ -338,6 +382,10 @@ export default function HomePage() {
                                     ≈ {formatMoney(alt, secondary)}
                                   </div>
                                 ) : null}
+                                <div className="mt-1 text-[10px] text-muted-foreground leading-tight">
+                                  {label} · {rate}% income tax on unreleased RSUs
+                                  · cap-gains on released shares
+                                </div>
                               </div>
                             );
                           })
