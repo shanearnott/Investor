@@ -310,10 +310,13 @@ export default function ProjectionsPage() {
   const unvestedToday = todayRow?.unvested_equity_total ?? 0;
   const propertyToday = todayRow?.property_equity_total ?? 0;
 
-  // Vested-equity (pre-tax) snapshot today — vested shares × current price,
-  // no RSU income-tax haircut. Used by the KPI tile.
+  // Vested-equity snapshot today — vested shares × current price, no RSU
+  // income-tax haircut applied here. Note: for released RSUs this is
+  // effectively post-withholding (income tax already paid); for unreleased
+  // vested RSUs it's pre-income-tax. The split below feeds the tile hint
+  // so the mix is transparent.
   const todayDate = new Date();
-  // The pre-tax tile follows the first selected scenario so it tracks
+  // The tile follows the first selected scenario so it tracks
   // assumed-price overrides as the user toggles bear/base/bull. Falls
   // back to a stub scenario (no overrides → uses the holding's actual
   // price) when nothing is selected.
@@ -327,6 +330,48 @@ export default function ProjectionsPage() {
     const native = vested * perShare;
     return sum + convert(native, h.currency, ccy, settings);
   }, 0);
+
+  // RSU split for the vested-equity tile hint: value of shares whose income
+  // tax is ALREADY paid via release-withholding, vs value of vested RSUs
+  // NOT yet covered by a release (income tax still owed at vest).
+  const taxPaidRsuToday = data.stocks
+    .filter((h) => h.equity_type === "RSU")
+    .reduce((sum, h) => {
+      const startPrice = startingPriceForScenario(pretaxScenario, h);
+      let releaseKeptPast = 0;
+      for (const r of h.releases ?? []) {
+        const release = parseISO(r.release_date);
+        if (release && release <= todayDate) releaseKeptPast += releaseKeptShares(r);
+      }
+      let soldPast = 0;
+      for (const s of h.sells ?? []) {
+        const sd = parseISO(s.sell_date);
+        if (!sd || sd > todayDate) continue;
+        const rel = (h.releases ?? []).find((r) => r.id === s.release_id) ?? null;
+        soldPast += sellSharesFor(s, rel);
+      }
+      const heldTaxPaid = Math.max(0, releaseKeptPast - soldPast);
+      return sum + convert(heldTaxPaid * startPrice, h.currency, ccy, settings);
+    }, 0);
+  const taxOwedRsuToday = data.stocks
+    .filter((h) => h.equity_type === "RSU")
+    .reduce((sum, h) => {
+      const startPrice = startingPriceForScenario(pretaxScenario, h);
+      let pastTrancheGross = 0;
+      for (const t of h.tranches) {
+        for (const ev of t.vest_events) {
+          const d = parseISO(ev.vest_date);
+          if (d && d <= todayDate) pastTrancheGross += ev.shares;
+        }
+      }
+      let releaseGrossPast = 0;
+      for (const r of h.releases ?? []) {
+        const release = parseISO(r.release_date);
+        if (release && release <= todayDate) releaseGrossPast += r.shares;
+      }
+      const untaxedShares = Math.max(0, pastTrancheGross - releaseGrossPast);
+      return sum + convert(untaxedShares * startPrice, h.currency, ccy, settings);
+    }, 0);
 
   // For each scenario the chart shows two lines: total (smooth, vested + unvested
   // + property — only changes with price) and "{name} vested" (vested + property
@@ -594,10 +639,27 @@ export default function ProjectionsPage() {
       {!noData ? (
         <>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <Kpi label="Vested equity (pre-tax)" valueNum={stocksPretaxToday} ccy={ccy} settings={settings} />
-            <Kpi label="Property equity (pre-tax)" valueNum={propertyToday} ccy={ccy} settings={settings} />
-            <Kpi label="Vested equity (post-tax)" valueNum={liquidToday} ccy={ccy} settings={settings} />
-            <Kpi label="Unvested equity (post-tax)" valueNum={unvestedToday} ccy={ccy} settings={settings} />
+            <Kpi
+              label="Vested equity"
+              valueNum={stocksPretaxToday}
+              ccy={ccy}
+              settings={settings}
+              hint={
+                taxPaidRsuToday > 0 || taxOwedRsuToday > 0 ? (
+                  <>
+                    {taxPaidRsuToday > 0 ? (
+                      <div>Released (tax-paid): {formatMoney(taxPaidRsuToday, ccy)}</div>
+                    ) : null}
+                    {taxOwedRsuToday > 0 ? (
+                      <div>RSU unreleased (tax owed): {formatMoney(taxOwedRsuToday, ccy)}</div>
+                    ) : null}
+                  </>
+                ) : undefined
+              }
+            />
+            <Kpi label="Property equity" valueNum={propertyToday} ccy={ccy} settings={settings} hint="Unrealised · no income tax; cap-gains only on sale" />
+            <Kpi label="Vested · RSU income-tax applied" valueNum={liquidToday} ccy={ccy} settings={settings} hint="Income tax on unreleased RSUs at scenario rate; released shares net of withholding; cap-gains not yet applied" />
+            <Kpi label="Unvested · RSU income-tax applied" valueNum={unvestedToday} ccy={ccy} settings={settings} hint="Future vests × price × (1 − scenario RSU rate)" />
           </div>
 
           <ScenarioSaleMath
@@ -608,9 +670,9 @@ export default function ProjectionsPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle>Net (post-tax) worth over time ({ccy})</CardTitle>
+              <CardTitle>Net worth over time ({ccy}) · RSU income tax applied</CardTitle>
               <CardDescription>
-                Solid line = shares + property + cash combined (vested + unvested + realised/pending cash). Dashed line = vested + property + cash only. Bars mark planned sales (post-tax proceeds), coloured to match each scenario&apos;s line. RSU income tax (per scenario) is already applied. {chosen.map((s) => s.name).join(" · ") || "—"}
+                Solid line = shares + property + cash combined (vested + unvested + realised/pending cash). Dashed line = vested + property + cash only. Bars mark planned sales (after cap-gains, coloured to match each scenario&apos;s line). RSU income tax (per scenario) is already applied to unreleased RSUs; released shares are held at kept × price (income tax already paid via withholding). {chosen.map((s) => s.name).join(" · ") || "—"}
               </CardDescription>
               <div className="mt-2 flex flex-wrap items-center gap-1">
                 <span className="text-[11px] text-muted-foreground mr-1">Show</span>
@@ -975,11 +1037,13 @@ function Kpi({
   valueNum,
   ccy,
   settings,
+  hint,
 }: {
   label: string;
   valueNum: number;
   ccy: string;
   settings: ReturnType<typeof useData>["data"]["settings"];
+  hint?: React.ReactNode;
 }) {
   // Mirror the home-page logic: secondary = settings' configured secondary,
   // unless the user is already viewing in that currency (then swap to primary).
@@ -998,9 +1062,12 @@ function Kpi({
           {formatMoney(valueNum, ccy)}
         </CardTitle>
       </CardHeader>
-      {inSecondary !== null ? (
-        <CardContent className="pt-0 text-[11px] text-foreground/70 tabular-nums">
-          ≈ {formatMoney(inSecondary, secondary)}
+      {inSecondary !== null || hint !== undefined ? (
+        <CardContent className="pt-0 text-[11px] text-foreground/70 tabular-nums leading-tight">
+          {inSecondary !== null ? (
+            <div>≈ {formatMoney(inSecondary, secondary)}</div>
+          ) : null}
+          {hint !== undefined ? <div className="mt-0.5">{hint}</div> : null}
         </CardContent>
       ) : null}
     </Card>
