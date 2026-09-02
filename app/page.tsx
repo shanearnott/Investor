@@ -407,11 +407,7 @@ export default function HomePage() {
                                   </div>
                                 ) : null}
                                 <div className="mt-1 text-[10px] text-muted-foreground leading-tight">
-                                  Vested equity, minus {label} {rate}% income tax on
-                                  unreleased RSUs and cap-gains on released RSUs
-                                  (at each holding&apos;s jurisdiction rate). Property
-                                  is at gross equity — sale CGT not applied. Non-RSU
-                                  stock (options / common) also passes through gross.
+                                  {rate}% RSU tax + cap-gains on released. Property &amp; options at gross.
                                 </div>
                               </div>
                             );
