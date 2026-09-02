@@ -163,6 +163,23 @@ export default function HomePage() {
     return sum + convert(native, h.currency, displayCurrency, data.settings);
   }, 0);
 
+  // After-tax counterpart of toVestGross: for each RSU stock, apply the
+  // California income-tax rate to the RSU portion of unvested value; for
+  // non-RSU (Options / Common) shares pass the gross through since this
+  // engine doesn't model their vest-time tax. Small-print projection on
+  // the "To vest" tile so the user sees what actually lands in-pocket.
+  const toVestAfterRsuTax = data.stocks.reduce((sum, h) => {
+    const unvested = unvestedSharesAt(h, todayDate);
+    const perShare = h.equity_type === "Stock Options"
+      ? Math.max(0, h.current_share_price - (h.strike_price ?? 0))
+      : h.current_share_price;
+    const nativeGross = unvested * perShare;
+    const factor = h.equity_type === "RSU"
+      ? Math.max(0, 1 - POST_TAX_RATES[0].rate / 100)
+      : 1;
+    return sum + convert(nativeGross * factor, h.currency, displayCurrency, data.settings);
+  }, 0);
+
   // Look-ahead window: equity tranches that will vest, plus expected property
   // growth between now and N months from now (user-selectable).
   const lookahead = computeLookahead({
@@ -349,6 +366,13 @@ export default function HomePage() {
                             ≈ {formatMoney(toVestAlt, secondary)}
                           </div>
                         ) : null}
+                        {toVestGross > 0 ? (
+                          <div className="mt-1 text-[10px] text-muted-foreground leading-tight tabular-nums">
+                            After RSU income tax
+                            {" "}({POST_TAX_RATES[0].label} {POST_TAX_RATES[0].rate}%):
+                            {" "}<b>{formatMoney(toVestAfterRsuTax, displayCurrency)}</b>
+                          </div>
+                        ) : null}
                       </div>
                       <div className="rounded-md border p-2">
                         <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
@@ -372,7 +396,7 @@ export default function HomePage() {
                             return (
                               <div key={label} className="rounded-md border p-2">
                                 <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                                  💸 If sold today (after all tax)
+                                  💸 Vested worth · RSU tax applied
                                 </div>
                                 <div className="text-lg font-semibold tabular-nums">
                                   {formatMoney(value, displayCurrency)}
@@ -383,8 +407,11 @@ export default function HomePage() {
                                   </div>
                                 ) : null}
                                 <div className="mt-1 text-[10px] text-muted-foreground leading-tight">
-                                  {label} · {rate}% income tax on unreleased RSUs
-                                  · cap-gains on released shares
+                                  Vested equity, minus {label} {rate}% income tax on
+                                  unreleased RSUs and cap-gains on released RSUs
+                                  (at each holding&apos;s jurisdiction rate). Property
+                                  is at gross equity — sale CGT not applied. Non-RSU
+                                  stock (options / common) also passes through gross.
                                 </div>
                               </div>
                             );
