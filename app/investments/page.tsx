@@ -2,6 +2,16 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Plus, Trash2, X } from "lucide-react";
+import {
+  CartesianGrid,
+  ComposedChart,
+  Legend,
+  Line,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 
 import { useData } from "@/components/data-provider";
 import { Button } from "@/components/ui/button";
@@ -36,6 +46,32 @@ import {
   vestedSharesAt,
 } from "@/lib/models";
 import { lookupGrowthRate } from "@/lib/growth";
+
+const RSU_CHART_COLORS = [
+  "#0ea5e9",
+  "#f97316",
+  "#8b5cf6",
+  "#22c55e",
+  "#e11d48",
+  "#eab308",
+  "#06b6d4",
+  "#84cc16",
+];
+
+const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function formatMmmYY(iso: string): string {
+  const m = /^(\d{4})-(\d{2})-\d{2}$/.exec(iso);
+  if (!m) return iso;
+  const monthIdx = Number(m[2]) - 1;
+  const yy = m[1].slice(2);
+  if (monthIdx < 0 || monthIdx > 11) return iso;
+  return `${MONTH_SHORT[monthIdx]}-${yy}`;
+}
+
+const compactFormatter = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
+function compactNumber(v: number): string {
+  return compactFormatter.format(v);
+}
 
 type StockDraft = StockHolding;
 type PropertyDraft = Property;
@@ -104,13 +140,19 @@ function blankProperty(defaultJurisdiction: string): PropertyDraft {
 }
 
 export default function InvestmentsPage() {
-  const { data, setStocks, setProperties } = useData();
+  const { data, setStocks, setProperties, displayCurrency } = useData();
   const [editingStock, setEditingStock] = useState<StockDraft | null>(null);
   const [editingProp, setEditingProp] = useState<PropertyDraft | null>(null);
 
   return (
     <div className="mx-auto max-w-5xl space-y-8">
       <h1 className="text-xl font-semibold">Investments</h1>
+
+      <RsuVestingSummary
+        stocks={data.stocks}
+        settings={data.settings}
+        displayCurrency={displayCurrency}
+      />
 
       <section className="space-y-4">
         <div className="flex items-end justify-between gap-2 border-b pb-2">
@@ -1297,6 +1339,186 @@ function SellEditor({
 
 // Legacy combined editor kept for type-checking until callers are
 // removed. Renders nothing.
+
+/** Top-of-page rollup of every RSU holding's vesting schedule. One line
+ *  per holding + a dashed total, each stepping up at every vest event.
+ *  Values are cumulative gross RSU value (shares × current_share_price)
+ *  converted to displayCurrency so different-ticker vests roll into one
+ *  scale. Skipped entirely when there are no RSU holdings. */
+function RsuVestingSummary({
+  stocks,
+  settings,
+  displayCurrency,
+}: {
+  stocks: StockHolding[];
+  settings: Settings;
+  displayCurrency: string;
+}) {
+  const rsus = useMemo(() => stocks.filter((s) => s.equity_type === "RSU"), [stocks]);
+
+  const chart = useMemo(() => {
+    if (rsus.length === 0) return { data: [] as Array<Record<string, string | number>>, tickers: [] as string[] };
+    const dateSet = new Set<string>();
+    for (const h of rsus) {
+      for (const t of h.tranches) {
+        for (const ev of t.vest_events) if (ev.vest_date) dateSet.add(ev.vest_date);
+      }
+    }
+    const sorted = Array.from(dateSet).sort();
+    const tickers = rsus.map((h) => h.ticker || h.company_name || h.id);
+    const data = sorted.map((date) => {
+      const row: Record<string, string | number> = { date };
+      let total = 0;
+      rsus.forEach((h, i) => {
+        let cum = 0;
+        for (const t of h.tranches) {
+          for (const ev of t.vest_events) {
+            if (ev.vest_date && ev.vest_date <= date) cum += ev.shares;
+          }
+        }
+        const native = cum * h.current_share_price;
+        const val = convert(native, h.currency, displayCurrency, settings);
+        row[tickers[i]] = Math.round(val);
+        total += val;
+      });
+      row.__total = Math.round(total);
+      return row;
+    });
+    return { data, tickers };
+  }, [rsus, displayCurrency, settings]);
+
+  if (rsus.length === 0 || chart.data.length === 0) return null;
+
+  const totalValue = chart.data[chart.data.length - 1]?.__total ?? 0;
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base">RSU vesting over time</CardTitle>
+        <CardDescription>
+          Cumulative gross value of RSU vests across every holding, valued
+          at each holding&apos;s current share price and converted to{" "}
+          {displayCurrency}. Steps up at each vest event; pre-income-tax.
+          Terminal: <b>{formatMoney(Number(totalValue), displayCurrency)}</b>.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="h-[240px] w-full">
+          <ResponsiveContainer>
+            <ComposedChart data={chart.data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+              <XAxis
+                dataKey="date"
+                tick={{ fontSize: 11 }}
+                tickFormatter={formatMmmYY}
+                minTickGap={20}
+              />
+              <YAxis tick={{ fontSize: 11 }} tickFormatter={compactNumber} />
+              <Tooltip
+                contentStyle={{
+                  fontSize: 11,
+                  padding: "4px 6px",
+                  borderRadius: 6,
+                  border: "1px solid #e5e7eb",
+                  background: "rgba(255,255,255,0.96)",
+                  lineHeight: "1.3",
+                }}
+                labelStyle={{ fontSize: 11, fontWeight: 500 }}
+                formatter={(v: number) => formatMoney(v, displayCurrency)}
+                labelFormatter={(l) => formatMmmYY(String(l))}
+              />
+              <Legend wrapperStyle={{ fontSize: 11, paddingTop: 4 }} iconSize={8} />
+              {chart.tickers.map((t, i) => (
+                <Line
+                  key={t}
+                  type="stepAfter"
+                  dataKey={t}
+                  name={t}
+                  stroke={RSU_CHART_COLORS[i % RSU_CHART_COLORS.length]}
+                  strokeWidth={1.5}
+                  dot={false}
+                  isAnimationActive={false}
+                />
+              ))}
+              <Line
+                type="stepAfter"
+                dataKey="__total"
+                name="Total"
+                stroke="#111827"
+                strokeWidth={2}
+                strokeDasharray="4 3"
+                dot={false}
+                isAnimationActive={false}
+              />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Per-tranche step chart of cumulative vested shares over the schedule.
+ *  Renders inside the expanded TrancheEditor. Nothing when there are no
+ *  vest events yet. */
+function TrancheVestingChart({ tranche }: { tranche: Tranche }) {
+  const data = useMemo(() => {
+    if (tranche.vest_events.length === 0) return [] as Array<{ date: string; shares: number }>;
+    const sorted = [...tranche.vest_events]
+      .filter((e) => e.vest_date)
+      .sort((a, b) => a.vest_date.localeCompare(b.vest_date));
+    let cum = 0;
+    return sorted.map((ev) => {
+      cum += ev.shares;
+      return { date: ev.vest_date, shares: cum };
+    });
+  }, [tranche.vest_events]);
+
+  if (data.length === 0) return null;
+
+  return (
+    <div className="rounded-md border bg-background p-2">
+      <div className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+        Cumulative shares over the schedule
+      </div>
+      <div className="h-[140px] w-full">
+        <ResponsiveContainer>
+          <ComposedChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+            <XAxis
+              dataKey="date"
+              tick={{ fontSize: 10 }}
+              tickFormatter={formatMmmYY}
+              minTickGap={20}
+            />
+            <YAxis tick={{ fontSize: 10 }} tickFormatter={compactNumber} />
+            <Tooltip
+              contentStyle={{
+                fontSize: 10,
+                padding: "4px 6px",
+                borderRadius: 6,
+                border: "1px solid #e5e7eb",
+                background: "rgba(255,255,255,0.96)",
+                lineHeight: "1.2",
+              }}
+              formatter={(v: number) => `${formatNumber(v)} sh`}
+              labelFormatter={(l) => formatMmmYY(String(l))}
+            />
+            <Line
+              type="stepAfter"
+              dataKey="shares"
+              stroke="#0ea5e9"
+              strokeWidth={2}
+              dot={{ r: 2 }}
+              isAnimationActive={false}
+            />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
 /**
  * Editor for one tranche: name, grant date, schedule generator, vest events.
  *
@@ -1416,6 +1638,8 @@ function TrancheEditor({
           setCollapsed(true);
         }}
       />
+
+      <TrancheVestingChart tranche={tranche} />
 
       {tranche.vest_events.length > 0 ? (
         <div className="space-y-1">
