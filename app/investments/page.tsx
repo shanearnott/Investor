@@ -1336,7 +1336,7 @@ function SellEditor({
  *  stock card so the shape of the vesting schedule is visible without
  *  clicking Edit. */
 function StockRsuVestingChart({ holding }: { holding: StockHolding }) {
-  const { data, vestedByToday } = useMemo(() => {
+  const { data, vestedByToday, totalShares } = useMemo(() => {
     const events: VestEvent[] = [];
     for (const t of holding.tranches) {
       for (const ev of t.vest_events) {
@@ -1352,10 +1352,12 @@ function StockRsuVestingChart({ holding }: { holding: StockHolding }) {
       if (ev.vest_date <= todayIso) vested = cum;
       return { date: ev.vest_date, shares: cum };
     });
-    return { data: rows, vestedByToday: vested };
+    return { data: rows, vestedByToday: vested, totalShares: cum };
   }, [holding]);
 
   if (data.length === 0) return null;
+
+  const pctOfTotal = (v: number) => (totalShares > 0 ? (v / totalShares) * 100 : 0);
 
   return (
     <div className="rounded-md border bg-background/60 p-2">
@@ -1382,7 +1384,9 @@ function StockRsuVestingChart({ holding }: { holding: StockHolding }) {
                 background: "rgba(255,255,255,0.96)",
                 lineHeight: "1.2",
               }}
-              formatter={(v: number) => `${formatNumber(v)} sh`}
+              formatter={(v: number) =>
+                `${formatNumber(v)} sh (${pctOfTotal(v).toFixed(1)}% of ${formatNumber(totalShares)})`
+              }
               labelFormatter={(l) => formatMmmYY(String(l))}
             />
             {vestedByToday > 0 ? (
@@ -1393,7 +1397,7 @@ function StockRsuVestingChart({ holding }: { holding: StockHolding }) {
                 strokeWidth={1.5}
                 ifOverflow="extendDomain"
                 label={{
-                  value: `Vested today: ${formatNumber(vestedByToday)} sh`,
+                  value: `Vested today: ${formatNumber(vestedByToday)} sh (${pctOfTotal(vestedByToday).toFixed(0)}%)`,
                   position: "insideTopLeft",
                   fill: "#059669",
                   fontSize: 10,
@@ -1420,19 +1424,24 @@ function StockRsuVestingChart({ holding }: { holding: StockHolding }) {
  *  Renders inside the expanded TrancheEditor. Nothing when there are no
  *  vest events yet. */
 function TrancheVestingChart({ tranche }: { tranche: Tranche }) {
-  const data = useMemo(() => {
-    if (tranche.vest_events.length === 0) return [] as Array<{ date: string; shares: number }>;
+  const { data, totalShares } = useMemo(() => {
+    if (tranche.vest_events.length === 0) {
+      return { data: [] as Array<{ date: string; shares: number }>, totalShares: 0 };
+    }
     const sorted = [...tranche.vest_events]
       .filter((e) => e.vest_date)
       .sort((a, b) => a.vest_date.localeCompare(b.vest_date));
     let cum = 0;
-    return sorted.map((ev) => {
+    const rows = sorted.map((ev) => {
       cum += ev.shares;
       return { date: ev.vest_date, shares: cum };
     });
+    return { data: rows, totalShares: cum };
   }, [tranche.vest_events]);
 
   if (data.length === 0) return null;
+
+  const pctOfTotal = (v: number) => (totalShares > 0 ? (v / totalShares) * 100 : 0);
 
   return (
     <div className="rounded-md border bg-background p-2">
@@ -1459,7 +1468,9 @@ function TrancheVestingChart({ tranche }: { tranche: Tranche }) {
                 background: "rgba(255,255,255,0.96)",
                 lineHeight: "1.2",
               }}
-              formatter={(v: number) => `${formatNumber(v)} sh`}
+              formatter={(v: number) =>
+                `${formatNumber(v)} sh (${pctOfTotal(v).toFixed(1)}% of ${formatNumber(totalShares)})`
+              }
               labelFormatter={(l) => formatMmmYY(String(l))}
             />
             <Line
