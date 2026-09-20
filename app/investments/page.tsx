@@ -6,6 +6,7 @@ import {
   CartesianGrid,
   ComposedChart,
   Line,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -1329,8 +1330,10 @@ function SellEditor({
  *  inside the collapsed stock card so the shape of the vesting schedule
  *  is visible without clicking Edit. */
 function StockRsuVestingChart({ holding }: { holding: StockHolding }) {
-  const data = useMemo(() => {
-    if (holding.equity_type !== "RSU") return [] as Array<{ date: string; shares: number }>;
+  const { data, vestedByToday } = useMemo(() => {
+    if (holding.equity_type !== "RSU") {
+      return { data: [] as Array<{ date: string; shares: number }>, vestedByToday: 0 };
+    }
     const events: VestEvent[] = [];
     for (const t of holding.tranches) {
       for (const ev of t.vest_events) {
@@ -1338,11 +1341,15 @@ function StockRsuVestingChart({ holding }: { holding: StockHolding }) {
       }
     }
     events.sort((a, b) => a.vest_date.localeCompare(b.vest_date));
+    const todayIso = new Date().toISOString().slice(0, 10);
     let cum = 0;
-    return events.map((ev) => {
+    let vested = 0;
+    const rows = events.map((ev) => {
       cum += ev.shares;
+      if (ev.vest_date <= todayIso) vested = cum;
       return { date: ev.vest_date, shares: cum };
     });
+    return { data: rows, vestedByToday: vested };
   }, [holding]);
 
   if (data.length === 0) return null;
@@ -1375,6 +1382,22 @@ function StockRsuVestingChart({ holding }: { holding: StockHolding }) {
               formatter={(v: number) => `${formatNumber(v)} sh`}
               labelFormatter={(l) => formatMmmYY(String(l))}
             />
+            {vestedByToday > 0 ? (
+              <ReferenceLine
+                y={vestedByToday}
+                stroke="#059669"
+                strokeDasharray="4 3"
+                strokeWidth={1.5}
+                ifOverflow="extendDomain"
+                label={{
+                  value: `Vested today: ${formatNumber(vestedByToday)} sh`,
+                  position: "insideTopLeft",
+                  fill: "#059669",
+                  fontSize: 10,
+                  fontWeight: 500,
+                }}
+              />
+            ) : null}
             <Line
               type="stepAfter"
               dataKey="shares"
