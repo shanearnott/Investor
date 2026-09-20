@@ -1329,11 +1329,14 @@ function SellEditor({
  *  renders for RSU holdings with at least one vest event. Small — sits
  *  inside the collapsed stock card so the shape of the vesting schedule
  *  is visible without clicking Edit. */
+/** Per-stock vesting chart. Cumulative shares (not $) vs date,
+ *  step-after across every tranche in the holding. Renders for any
+ *  equity type that has at least one vest event — RSU, Options,
+ *  Common Stock, ESPP alike. Small — sits inside the collapsed
+ *  stock card so the shape of the vesting schedule is visible without
+ *  clicking Edit. */
 function StockRsuVestingChart({ holding }: { holding: StockHolding }) {
   const { data, vestedByToday } = useMemo(() => {
-    if (holding.equity_type !== "RSU") {
-      return { data: [] as Array<{ date: string; shares: number }>, vestedByToday: 0 };
-    }
     const events: VestEvent[] = [];
     for (const t of holding.tranches) {
       for (const ev of t.vest_events) {
@@ -1357,10 +1360,10 @@ function StockRsuVestingChart({ holding }: { holding: StockHolding }) {
   return (
     <div className="rounded-md border bg-background/60 p-2">
       <div className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground">
-        RSU vesting over time · cumulative shares
+        Vesting over time · cumulative shares
       </div>
-      <div className="h-[140px] w-full">
-        <ResponsiveContainer width="99%" height="100%">
+      <div style={{ width: "100%", height: 140 }}>
+        <ResponsiveContainer width="99%" height="100%" debounce={50} minHeight={140}>
           <ComposedChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
             <XAxis
@@ -1436,8 +1439,8 @@ function TrancheVestingChart({ tranche }: { tranche: Tranche }) {
       <div className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground">
         Cumulative shares over the schedule
       </div>
-      <div className="h-[140px] w-full">
-        <ResponsiveContainer width="99%" height="100%">
+      <div style={{ width: "100%", height: 140 }}>
+        <ResponsiveContainer width="99%" height="100%" debounce={50} minHeight={140}>
           <ComposedChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
             <XAxis
