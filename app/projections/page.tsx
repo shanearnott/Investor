@@ -531,7 +531,10 @@ export default function ProjectionsPage() {
       };
     });
   }, [compareBase, compareOthers, chosen, compareHighlightDate, seriesByScenario, lineShowStocks, lineShowProperty, lineShowCash]);
-  // Symmetric domain so both wings render at a comparable scale.
+  // Symmetric domain so both wings render at a comparable scale. Padded
+  // ~22% so the "±$X (±Y%)" label at the end of the longest bar has
+  // headroom inside the plot area — the previous unpadded domain let
+  // the label spill past the axis on whichever wing held the max.
   const compareDomainAbs = useMemo(() => {
     let m = 0;
     for (const r of compareData) {
@@ -539,7 +542,7 @@ export default function ProjectionsPage() {
       const negSum = Math.min(0, r.stock) + Math.min(0, r.property) + Math.min(0, r.cash);
       m = Math.max(m, Math.abs(posSum), Math.abs(negSum));
     }
-    return m || 1;
+    return (m || 1) * 1.22;
   }, [compareData]);
 
   const pieScenario = chosen[0];
@@ -904,7 +907,7 @@ export default function ProjectionsPage() {
                       key={compareHighlightDate}
                       data={compareData}
                       layout="vertical"
-                      margin={{ top: 8, right: 24, left: 0, bottom: 0 }}
+                      margin={{ top: 8, right: 96, left: 0, bottom: 0 }}
                       stackOffset="sign"
                     >
                       <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" horizontal={false} />
