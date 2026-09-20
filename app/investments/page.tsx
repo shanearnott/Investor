@@ -1353,7 +1353,7 @@ function StockRsuVestingChart({ holding }: { holding: StockHolding }) {
         RSU vesting over time · cumulative shares
       </div>
       <div className="h-[140px] w-full">
-        <ResponsiveContainer>
+        <ResponsiveContainer width="99%" height="100%">
           <ComposedChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
             <XAxis
@@ -1414,7 +1414,7 @@ function TrancheVestingChart({ tranche }: { tranche: Tranche }) {
         Cumulative shares over the schedule
       </div>
       <div className="h-[140px] w-full">
-        <ResponsiveContainer>
+        <ResponsiveContainer width="99%" height="100%">
           <ComposedChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
             <XAxis
