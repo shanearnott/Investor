@@ -1398,7 +1398,7 @@ function StockRsuVestingChart({ holding }: { holding: StockHolding }) {
                 ifOverflow="extendDomain"
                 label={{
                   value: `Vested today: ${formatNumber(vestedByToday)} sh (${pctOfTotal(vestedByToday).toFixed(0)}%)`,
-                  position: "insideTopLeft",
+                  position: "insideTopRight",
                   fill: "#059669",
                   fontSize: 10,
                   fontWeight: 500,
