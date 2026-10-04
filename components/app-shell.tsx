@@ -28,7 +28,7 @@ const navItems = [
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const { data, error, driveEmail, isDemo } = useData();
+  const { data, error, driveEmail, isDemo, syncStatus } = useData();
   // "Demo mode" should only appear when there's literally no user data —
   // having local data without Drive is "local only", not a demo. The Drive
   // green badge always wins when connected.
@@ -50,16 +50,45 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <span>Investor</span>
         </Link>
         <div className="flex items-center gap-2">
-          {!isDemo ? (
-            <Link
-              href="/settings"
-              className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-800 hover:bg-emerald-200 max-w-[50vw] sm:max-w-none"
-              title={driveEmail ? `Synced to Google Drive · ${driveEmail}` : "Connected to Google Drive"}
-            >
-              <Cloud className="h-3 w-3 shrink-0" />
-              <span className="truncate">{driveEmail ?? "Drive connected"}</span>
-            </Link>
-          ) : showDemoBadge ? (
+          {!isDemo ? (() => {
+            // Colour + label follow the sync status: green when in sync,
+            // amber when local has unsaved changes, sky when Drive is
+            // ahead, rose when both diverged.
+            const palette = (() => {
+              switch (syncStatus.kind) {
+                case "in_sync":
+                  return { bg: "bg-emerald-100 hover:bg-emerald-200", fg: "text-emerald-800", label: "In sync" };
+                case "local_newer":
+                  return { bg: "bg-amber-100 hover:bg-amber-200", fg: "text-amber-800", label: "Local newer" };
+                case "drive_newer":
+                  return { bg: "bg-sky-100 hover:bg-sky-200", fg: "text-sky-800", label: "Drive newer" };
+                case "diverged":
+                  return { bg: "bg-rose-100 hover:bg-rose-200", fg: "text-rose-800", label: "Diverged" };
+                case "drive_empty":
+                  return { bg: "bg-amber-100 hover:bg-amber-200", fg: "text-amber-800", label: "Drive empty" };
+                case "error":
+                  return { bg: "bg-destructive/10 hover:bg-destructive/20", fg: "text-destructive", label: "Sync error" };
+                case "checking":
+                  return { bg: "bg-muted hover:bg-accent", fg: "text-muted-foreground", label: "Checking…" };
+                case "not_connected":
+                default:
+                  return { bg: "bg-emerald-100 hover:bg-emerald-200", fg: "text-emerald-800", label: driveEmail ?? "Drive connected" };
+              }
+            })();
+            const title = driveEmail
+              ? `${palette.label} · ${driveEmail}`
+              : palette.label;
+            return (
+              <Link
+                href="/settings"
+                className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${palette.bg} ${palette.fg} max-w-[50vw] sm:max-w-none`}
+                title={title}
+              >
+                <Cloud className="h-3 w-3 shrink-0" />
+                <span className="truncate">{palette.label}</span>
+              </Link>
+            );
+          })() : showDemoBadge ? (
             <Link
               href="/settings"
               className="inline-flex items-center rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800 hover:bg-amber-200"

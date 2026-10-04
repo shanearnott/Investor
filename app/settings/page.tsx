@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Cloud, CloudOff, Download, FileDown, FileUp, Plus, Trash2, Upload } from "lucide-react";
 
-import { useData, type AutoSyncStatus } from "@/components/data-provider";
+import { useData, type DriveSyncStatus } from "@/components/data-provider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Label, Select } from "@/components/ui/input";
@@ -17,10 +17,8 @@ import {
 import {
   DRIVE_FILE_NAME,
   getAuthorisedEmail,
-  readFromDrive,
   requestAccessToken,
   revokeAccessToken,
-  writeToDrive,
 } from "@/lib/drive-client";
 import { DEFAULTS as TAX_DEFAULTS, getRules } from "@/lib/tax";
 
@@ -338,7 +336,10 @@ function DriveSyncSection({
     driveEmail: email,
     setDriveAuth,
     clearDriveAuth,
-    autoSync,
+    syncStatus,
+    recheckSyncStatus,
+    pushToDrive,
+    pullFromDrive,
   } = useData();
 
   const [busy, setBusy] = useState<string | null>(null);
@@ -404,31 +405,23 @@ function DriveSyncSection({
   const handleSyncToDrive = async () => {
     setErr(null); setNote(null);
     if (!token) { setErr("Connect to Drive first."); return; }
+    const divergedWarning = syncStatus.kind === "diverged"
+      ? "⚠ Drive has newer content than your last sync AND you have local changes. "
+        + "Uploading will overwrite the Drive copy. Consider downloading first instead.\n\n"
+      : "";
     const lastSyncDesc = lastSync ? ` (replacing the copy from ${new Date(lastSync).toLocaleString()})` : "";
     const ok = typeof window === "undefined" ? true : window.confirm(
-      `Upload current local data to Drive${lastSyncDesc}? The existing ${DRIVE_FILE_NAME} in your Drive will be overwritten.`,
+      `${divergedWarning}Upload current local data to Drive${lastSyncDesc}? The existing ${DRIVE_FILE_NAME} in your Drive will be overwritten.`,
     );
     if (!ok) return;
     setBusy("up");
     try {
-      const exported_at = new Date().toISOString();
-      const bundle: DriveBundle = {
-        version: 1,
-        exported_at,
-        collections: {
-          stocks: data.stocks,
-          properties: data.properties,
-          scenarios: data.scenarios,
-          projects: data.projects,
-          revolvers: data.revolvers,
-          settings: data.settings,
-        },
-      };
-      await writeToDrive(token, bundle);
+      await pushToDrive();
+      const nowIso = new Date().toISOString();
       if (typeof window !== "undefined") {
-        localStorage.setItem(LAST_SYNC_KEY, exported_at);
+        localStorage.setItem(LAST_SYNC_KEY, nowIso);
       }
-      setLastSync(exported_at);
+      setLastSync(nowIso);
       setNote(`Saved to Drive · ${DRIVE_FILE_NAME}`);
     } catch (e) {
       if (!handleAuthError(e)) setErr((e as Error).message);
@@ -440,31 +433,25 @@ function DriveSyncSection({
   const handleRestoreFromDrive = async () => {
     setErr(null); setNote(null);
     if (!token) { setErr("Connect to Drive first."); return; }
+    const divergedWarning = syncStatus.kind === "diverged"
+      ? "⚠ You have local changes AND Drive has newer content. "
+        + "Downloading will discard your local changes.\n\n"
+      : syncStatus.kind === "local_newer"
+        ? "⚠ You have local changes that haven't been uploaded. "
+          + "Downloading will discard them.\n\n"
+        : "";
     const ok = typeof window === "undefined" ? true : window.confirm(
-      `Restore from Drive? This will REPLACE all local stocks, properties, scenarios, projects, revolver scenarios, and settings with whatever is in ${DRIVE_FILE_NAME}. The current local data cannot be recovered after this unless you've downloaded a file backup.`,
+      `${divergedWarning}Restore from Drive? This will REPLACE all local stocks, properties, scenarios, projects, revolver scenarios, and settings with whatever is in ${DRIVE_FILE_NAME}. The current local data cannot be recovered after this unless you've downloaded a file backup.`,
     );
     if (!ok) return;
     setBusy("down");
     try {
-      const raw = await readFromDrive(token);
-      if (!raw) {
-        setErr(`No ${DRIVE_FILE_NAME} found in your Drive yet. Run "Sync to Drive" first.`);
-        return;
+      await pullFromDrive();
+      const nowIso = new Date().toISOString();
+      if (typeof window !== "undefined") {
+        localStorage.setItem(LAST_SYNC_KEY, nowIso);
       }
-      const parsed = parseDriveBundle(raw);
-      if (!parsed) {
-        setErr("File found but it doesn't look like an Investor backup.");
-        return;
-      }
-      // Apply collections; persistence happens inside each setter.
-      await Promise.all([
-        setStocks(parsed.collections.stocks ?? []),
-        setProperties(parsed.collections.properties ?? []),
-        setScenarios(parsed.collections.scenarios ?? []),
-        setProjects(parsed.collections.projects ?? []),
-        setRevolvers(parsed.collections.revolvers ?? []),
-        setSettings(parsed.collections.settings ?? data.settings),
-      ]);
+      setLastSync(nowIso);
       setNote("Restored from Drive.");
     } catch (e) {
       if (!handleAuthError(e)) setErr((e as Error).message);
@@ -511,15 +498,24 @@ function DriveSyncSection({
         <Button size="sm" variant="outline" onClick={handleRestoreFromDrive} disabled={!token || !!busy}>
           <Download className="h-3 w-3" /> {busy === "down" ? "Restoring…" : "Restore from Drive"}
         </Button>
+        {token ? (
+          <Button size="sm" variant="ghost" onClick={() => void recheckSyncStatus()} disabled={!!busy}>
+            Recheck
+          </Button>
+        ) : null}
       </div>
 
       {note ? <p className="text-xs text-emerald-700">{note}</p> : null}
       {err ? <p className="text-xs text-destructive">{err}</p> : null}
       {token ? (
-        <p className="text-[11px] text-muted-foreground">
-          Auto-sync: {autoSyncLabel(autoSync)}
-          {lastSync ? ` · Last synced ${new Date(lastSync).toLocaleString()}` : null}
-        </p>
+        <div className="flex flex-wrap items-center gap-2 text-[11px]">
+          <SyncFlag status={syncStatus} />
+          {lastSync ? (
+            <span className="text-muted-foreground">
+              Last synced {new Date(lastSync).toLocaleString()}
+            </span>
+          ) : null}
+        </div>
       ) : lastSync ? (
         <p className="text-[11px] text-muted-foreground">
           Last synced: {new Date(lastSync).toLocaleString()}
@@ -545,14 +541,56 @@ function DriveSyncSection({
   );
 }
 
-function autoSyncLabel(s: AutoSyncStatus): string {
-  switch (s.kind) {
-    case "idle": return "on (idle)";
-    case "pending": return "saving in a moment…";
-    case "pushing": return "uploading…";
-    case "pulling": return "checking Drive…";
-    case "ok": return s.direction === "push" ? "uploaded just now" : "pulled latest from Drive";
-    case "error": return `error — ${s.msg}`;
+function SyncFlag({ status }: { status: DriveSyncStatus }) {
+  switch (status.kind) {
+    case "not_connected":
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 font-medium text-muted-foreground">
+          Not connected
+        </span>
+      );
+    case "checking":
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 font-medium text-muted-foreground">
+          Checking Drive…
+        </span>
+      );
+    case "in_sync":
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 font-medium text-emerald-800">
+          ● In sync
+        </span>
+      );
+    case "local_newer":
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 font-medium text-amber-800">
+          ▲ Local newer — not uploaded
+        </span>
+      );
+    case "drive_newer":
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-2 py-0.5 font-medium text-sky-800">
+          ▼ Drive newer — not downloaded
+        </span>
+      );
+    case "diverged":
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 font-medium text-rose-800">
+          ⇵ Diverged — local AND Drive both changed
+        </span>
+      );
+    case "drive_empty":
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 font-medium text-amber-800">
+          ○ Drive empty — upload to initialise
+        </span>
+      );
+    case "error":
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full bg-destructive/10 px-2 py-0.5 font-medium text-destructive">
+          ! {status.msg}
+        </span>
+      );
   }
 }
 
