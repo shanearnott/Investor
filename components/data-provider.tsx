@@ -58,24 +58,43 @@ type DataContextValue = {
   driveEmail: string | null;
   setDriveAuth: (token: string, email: string | null) => void;
   clearDriveAuth: () => void;
-  /** Live auto-sync status (debounced push + pull-on-focus). */
-  autoSync: AutoSyncStatus;
+  /** Current sync state between local data and the Drive copy. Updated
+   *  by recheckSyncStatus (no data applied), by pushToDrive and
+   *  pullFromDrive, and marked local_newer when the user edits anything
+   *  while connected. */
+  syncStatus: DriveSyncStatus;
+  /** Re-fetch Drive bundle metadata and update syncStatus. Does NOT
+   *  apply any data — a drive-newer bundle sits waiting for the user
+   *  to explicitly pullFromDrive. */
+  recheckSyncStatus: () => Promise<void>;
+  /** Push the current local data to Drive. Clears local-dirty on
+   *  success and sets syncStatus to in_sync. */
+  pushToDrive: () => Promise<void>;
+  /** Pull Drive's copy, apply it to local, clear local-dirty, set
+   *  syncStatus to in_sync. Overwrites any local edits since lastSync. */
+  pullFromDrive: () => Promise<void>;
 };
 
-export type AutoSyncStatus =
-  | { kind: "idle" }
-  | { kind: "pending" }
-  | { kind: "pushing" }
-  | { kind: "pulling" }
-  | { kind: "ok"; at: string; direction: "push" | "pull" }
+export type DriveSyncStatus =
+  | { kind: "not_connected" }
+  | { kind: "checking" }
+  | { kind: "in_sync"; at: string }
+  | { kind: "local_newer" }
+  | { kind: "drive_newer"; driveExportedAt: string }
+  | { kind: "diverged"; driveExportedAt: string }
+  | { kind: "drive_empty" }
   | { kind: "error"; msg: string };
+
+/** @deprecated kept for callers that still reference the old name;
+ *  identical to DriveSyncStatus. */
+export type AutoSyncStatus = DriveSyncStatus;
 
 const DISPLAY_CCY_KEY = "investor:displayCurrency";
 const DRIVE_TOKEN_KEY = "investor:driveToken";
 const DRIVE_EMAIL_KEY = "investor:driveEmail";
 const DRIVE_REMEMBER_KEY = "investor:driveRememberEmail";
 const DRIVE_LAST_SYNC_KEY = "investor:driveLastSync";
-const PUSH_DEBOUNCE_MS = 3000;
+const DRIVE_LOCAL_DIRTY_KEY = "investor:driveLocalDirty";
 
 const Ctx = createContext<DataContextValue | null>(null);
 
@@ -337,11 +356,9 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   // Debounced push triggered by user edits, pull on tab focus + on connect.
   // Tokens expire after ~1h; on 401 we silently disconnect so the user knows
   // to re-auth before further sync attempts.
-  const [autoSync, setAutoSync] = useState<AutoSyncStatus>({ kind: "idle" });
+  const [autoSync, setAutoSync] = useState<DriveSyncStatus>({ kind: "not_connected" });
   const driveTokenRef = useRef<string | null>(null);
   const dataRef = useRef<CollectionsMap>(data);
-  const pushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pushInFlightRef = useRef<boolean>(false);
   useEffect(() => { driveTokenRef.current = driveToken; }, [driveToken]);
   useEffect(() => { dataRef.current = data; }, [data]);
 
@@ -355,12 +372,61 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     return false;
   }, [clearDriveAuth]);
 
-  const flushPush = useCallback(async () => {
+  const readLocalDirty = (): boolean => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(DRIVE_LOCAL_DIRTY_KEY) === "1";
+  };
+  const writeLocalDirty = (v: boolean): void => {
+    if (typeof window === "undefined") return;
+    if (v) window.localStorage.setItem(DRIVE_LOCAL_DIRTY_KEY, "1");
+    else window.localStorage.removeItem(DRIVE_LOCAL_DIRTY_KEY);
+  };
+
+  // Fetch Drive bundle metadata and compute status against local
+  // dirty flag + last-sync timestamp. Never applies the fetched data.
+  const recheckSyncStatus = useCallback(async () => {
     const tok = driveTokenRef.current;
-    if (!tok) return;
-    if (pushInFlightRef.current) return;
-    pushInFlightRef.current = true;
-    setAutoSync({ kind: "pushing" });
+    if (!tok) {
+      setAutoSync({ kind: "not_connected" });
+      return;
+    }
+    setAutoSync({ kind: "checking" });
+    try {
+      const raw = await readFromDrive(tok);
+      const localDirty = readLocalDirty();
+      if (!raw || typeof raw !== "object") {
+        setAutoSync({ kind: "drive_empty" });
+        return;
+      }
+      const r = raw as { version?: number; exported_at?: string };
+      if (r.version !== 1 || !r.exported_at) {
+        setAutoSync({ kind: "drive_empty" });
+        return;
+      }
+      const lastSync = typeof window !== "undefined"
+        ? (window.localStorage.getItem(DRIVE_LAST_SYNC_KEY) ?? "")
+        : "";
+      const driveNewer = r.exported_at > lastSync;
+      if (localDirty && driveNewer) {
+        setAutoSync({ kind: "diverged", driveExportedAt: r.exported_at });
+      } else if (localDirty) {
+        setAutoSync({ kind: "local_newer" });
+      } else if (driveNewer) {
+        setAutoSync({ kind: "drive_newer", driveExportedAt: r.exported_at });
+      } else {
+        setAutoSync({ kind: "in_sync", at: r.exported_at });
+      }
+    } catch (e) {
+      if (!handleAuthError(e)) {
+        setAutoSync({ kind: "error", msg: (e as Error).message });
+      }
+    }
+  }, [handleAuthError]);
+
+  const pushToDrive = useCallback(async () => {
+    const tok = driveTokenRef.current;
+    if (!tok) throw new Error("Not connected to Drive.");
+    setAutoSync({ kind: "checking" });
     try {
       const exported_at = new Date().toISOString();
       const bundle = {
@@ -372,115 +438,108 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       if (typeof window !== "undefined") {
         window.localStorage.setItem(DRIVE_LAST_SYNC_KEY, exported_at);
       }
-      setAutoSync({ kind: "ok", at: exported_at, direction: "push" });
+      writeLocalDirty(false);
+      setAutoSync({ kind: "in_sync", at: exported_at });
     } catch (e) {
-      if (!handleAuthError(e)) setAutoSync({ kind: "error", msg: (e as Error).message });
-    } finally {
-      pushInFlightRef.current = false;
+      if (!handleAuthError(e)) {
+        setAutoSync({ kind: "error", msg: (e as Error).message });
+      }
+      throw e;
     }
   }, [handleAuthError]);
 
-  const schedulePush = useCallback(() => {
-    if (typeof window === "undefined") return;
-    if (!driveTokenRef.current) return;
-    if (pushTimerRef.current) clearTimeout(pushTimerRef.current);
-    setAutoSync({ kind: "pending" });
-    pushTimerRef.current = setTimeout(() => {
-      pushTimerRef.current = null;
-      void flushPush();
-    }, PUSH_DEBOUNCE_MS);
-  }, [flushPush]);
+  const pullFromDrive = useCallback(async () => {
+    const tok = driveTokenRef.current;
+    if (!tok) throw new Error("Not connected to Drive.");
+    setAutoSync({ kind: "checking" });
+    try {
+      const raw = await readFromDrive(tok);
+      if (!raw || typeof raw !== "object") {
+        setAutoSync({ kind: "drive_empty" });
+        return;
+      }
+      const r = raw as {
+        version?: number;
+        exported_at?: string;
+        collections?: Partial<CollectionsMap>;
+      };
+      if (r.version !== 1 || !r.collections) {
+        setAutoSync({ kind: "drive_empty" });
+        return;
+      }
+      const c = r.collections;
+      const next: CollectionsMap = {
+        stocks: c.stocks ?? [],
+        properties: c.properties ?? [],
+        scenarios: c.scenarios ?? [],
+        projects: c.projects ?? [],
+        revolvers: (c as CollectionsMap).revolvers ?? [],
+        settings: c.settings ?? DEFAULT_SETTINGS,
+      };
+      await Promise.all([
+        saveCollection("stocks", next.stocks),
+        saveCollection("properties", next.properties),
+        saveCollection("scenarios", next.scenarios),
+        saveCollection("projects", next.projects),
+        saveCollection("revolvers", next.revolvers),
+        saveCollection("settings", next.settings),
+      ]);
+      setData(next);
+      const at = r.exported_at ?? new Date().toISOString();
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(DRIVE_LAST_SYNC_KEY, at);
+      }
+      writeLocalDirty(false);
+      setAutoSync({ kind: "in_sync", at });
+    } catch (e) {
+      if (!handleAuthError(e)) {
+        setAutoSync({ kind: "error", msg: (e as Error).message });
+      }
+      throw e;
+    }
+  }, [handleAuthError]);
 
-  // Pull on connect + tab focus. Skips if a push is pending/in-flight (local
-  // changes are newer). Bundle's exported_at vs DRIVE_LAST_SYNC_KEY decides
-  // whether remote actually has anything newer than what we last synced.
+  // On connect (driveToken appears) and on tab-visible focus: just check
+  // sync status. Never auto-pull or auto-push — the user picks.
   useEffect(() => {
     if (typeof window === "undefined") return;
-    if (!driveToken) return;
-
-    const pull = async () => {
-      if (pushTimerRef.current || pushInFlightRef.current) return;
-      const tok = driveTokenRef.current;
-      if (!tok) return;
-      try {
-        setAutoSync({ kind: "pulling" });
-        const raw = await readFromDrive(tok);
-        if (!raw || typeof raw !== "object") {
-          setAutoSync({ kind: "idle" });
-          return;
-        }
-        const r = raw as { version?: number; exported_at?: string; collections?: Partial<CollectionsMap> };
-        if (r.version !== 1 || !r.collections) {
-          setAutoSync({ kind: "idle" });
-          return;
-        }
-        const lastSync = window.localStorage.getItem(DRIVE_LAST_SYNC_KEY) ?? "";
-        if (r.exported_at && r.exported_at <= lastSync) {
-          setAutoSync({ kind: "idle" });
-          return;
-        }
-        const c = r.collections;
-        const next: CollectionsMap = {
-          stocks: c.stocks ?? [],
-          properties: c.properties ?? [],
-          scenarios: c.scenarios ?? [],
-          projects: c.projects ?? [],
-          revolvers: (c as CollectionsMap).revolvers ?? [],
-          settings: c.settings ?? DEFAULT_SETTINGS,
-        };
-        await Promise.all([
-          saveCollection("stocks", next.stocks),
-          saveCollection("properties", next.properties),
-          saveCollection("scenarios", next.scenarios),
-          saveCollection("projects", next.projects),
-          saveCollection("revolvers", next.revolvers),
-          saveCollection("settings", next.settings),
-        ]);
-        setData(next);
-        if (r.exported_at) window.localStorage.setItem(DRIVE_LAST_SYNC_KEY, r.exported_at);
-        setAutoSync({ kind: "ok", at: r.exported_at ?? new Date().toISOString(), direction: "pull" });
-      } catch (e) {
-        if (!handleAuthError(e)) setAutoSync({ kind: "error", msg: (e as Error).message });
-      }
-    };
-
-    void pull();
+    if (!driveToken) {
+      setAutoSync({ kind: "not_connected" });
+      return;
+    }
+    void recheckSyncStatus();
     const onVisibility = () => {
-      if (document.visibilityState === "visible") void pull();
+      if (document.visibilityState === "visible") void recheckSyncStatus();
     };
     document.addEventListener("visibilitychange", onVisibility);
     return () => document.removeEventListener("visibilitychange", onVisibility);
-  }, [driveToken, handleAuthError]);
+  }, [driveToken, recheckSyncStatus]);
 
-  // Push any pending changes on tab hide/unload — best-effort, browsers may
-  // cancel in-flight fetches but the timer would otherwise drop them entirely.
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const onHide = () => {
-      if (pushTimerRef.current) {
-        clearTimeout(pushTimerRef.current);
-        pushTimerRef.current = null;
-        void flushPush();
+  // Mark the local copy as having unsaved changes relative to Drive.
+  // Flips syncStatus to local_newer / diverged so the sync badge in
+  // the AppShell + Settings page updates immediately after any edit.
+  const markLocalDirty = useCallback(() => {
+    writeLocalDirty(true);
+    if (!driveTokenRef.current) return;
+    setAutoSync((prev) => {
+      if (prev.kind === "drive_newer" || prev.kind === "diverged") {
+        return { kind: "diverged", driveExportedAt: prev.kind === "diverged" ? prev.driveExportedAt : prev.driveExportedAt };
       }
-    };
-    window.addEventListener("pagehide", onHide);
-    document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "hidden") onHide();
+      return { kind: "local_newer" };
     });
-    return () => window.removeEventListener("pagehide", onHide);
-  }, [flushPush]);
+  }, []);
 
   const persist = useCallback(
     async <K extends keyof CollectionsMap>(key: K, next: CollectionsMap[K]) => {
       setData((prev) => ({ ...prev, [key]: next }));
       try {
         await saveCollection(key, next);
-        schedulePush();
+        markLocalDirty();
       } catch (e) {
         setError(`Save ${COLLECTION_FILES[key]} failed: ${(e as Error).message}`);
       }
     },
-    [schedulePush],
+    [markLocalDirty],
   );
 
   const setStocks = useCallback((n: StockHolding[]) => persist("stocks", n), [persist]);
@@ -529,9 +588,12 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       driveEmail,
       setDriveAuth,
       clearDriveAuth,
-      autoSync,
+      syncStatus: autoSync,
+      recheckSyncStatus,
+      pushToDrive,
+      pullFromDrive,
     }),
-    [loading, error, data, setStocks, setProperties, setScenarios, setProjects, setRevolvers, setSettings, loadDemo, resetLocal, reload, displayCurrency, setDisplayCurrency, driveToken, driveEmail, setDriveAuth, clearDriveAuth, autoSync],
+    [loading, error, data, setStocks, setProperties, setScenarios, setProjects, setRevolvers, setSettings, loadDemo, resetLocal, reload, displayCurrency, setDisplayCurrency, driveToken, driveEmail, setDriveAuth, clearDriveAuth, autoSync, recheckSyncStatus, pushToDrive, pullFromDrive],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
