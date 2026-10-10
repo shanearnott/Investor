@@ -13,7 +13,6 @@ import { lookupGrowthRate } from "@/lib/growth";
 import { formatMoney, formatNumber } from "@/lib/utils";
 import { currentAllocationBreakdown } from "@/lib/projections";
 import {
-  defaultSaleTaxRate,
   releaseKeptShares,
   sellSharesFor,
   parseISO,
@@ -23,13 +22,8 @@ import {
   type StockHolding,
 } from "@/lib/models";
 
-/** RSU income-tax rates applied to the home-page "if sold today" tile.
- *  Mirrors the scenarios page defaults — gives a quick at-a-glance read
- *  of net worth if all unreleased RSUs got vested and taxed today, and
- *  all released-and-held shares were sold at the cap-gains rate. */
-const POST_TAX_RATES: ReadonlyArray<{ label: string; rate: number }> = [
-  { label: "California", rate: 50 },
-];
+/** Shares-to-vest look-ahead window options (months). The user can also
+ *  override with a specific date via the home-page look-ahead card. */
 
 const LOOKAHEAD_OPTIONS = [3, 6, 9, 12, 18, 24, 36, 48] as const;
 type LookaheadMonths = (typeof LOOKAHEAD_OPTIONS)[number];
@@ -121,39 +115,6 @@ export default function HomePage() {
       return sum + convert(valueNative, h.currency, displayCurrency, data.settings);
     }, 0);
 
-  // Cap-gains haircut on kept (released, not sold) RSU shares: the
-  // shares have already paid income tax via withholding, but the gain
-  // since release (current_share_price − release_price) is taxable on
-  // sale at the jurisdiction's LTCG rate. If the release price isn't
-  // recorded (release_price === 0) we can't compute the basis and skip
-  // the release entirely. "Held" = kept from the release minus any sell
-  // events that have settled against it.
-  const releasedCapGainsHaircut = data.stocks
-    .filter((h) => h.equity_type === "RSU")
-    .reduce((sum, h) => {
-      const rate = defaultSaleTaxRate(h.jurisdiction) / 100;
-      let gainTotal = 0;
-      for (const r of h.releases ?? []) {
-        const release = parseISO(r.release_date);
-        if (!release || release > todayDate) continue;
-        const basis = r.release_price && r.release_price > 0
-          ? r.release_price
-          : h.cost_basis_per_share;
-        if (basis <= 0) continue;
-        let soldFromThis = 0;
-        for (const sell of h.sells ?? []) {
-          if (sell.release_id !== r.id) continue;
-          const sd = parseISO(sell.sell_date);
-          if (!sd || sd > todayDate) continue;
-          soldFromThis += sellSharesFor(sell, r);
-        }
-        const stillHeld = Math.max(0, releaseKeptShares(r) - soldFromThis);
-        const perShareGain = Math.max(0, h.current_share_price - basis);
-        gainTotal += stillHeld * perShareGain;
-      }
-      const haircutNative = gainTotal * rate;
-      return sum + convert(haircutNative, h.currency, displayCurrency, data.settings);
-    }, 0);
   // Unvested ("still to vest") gross value across all stocks, in display
   // currency. Options use intrinsic so an underwater grant reads as 0
   // rather than full-price.
@@ -164,23 +125,6 @@ export default function HomePage() {
       : h.current_share_price;
     const native = unvested * perShare;
     return sum + convert(native, h.currency, displayCurrency, data.settings);
-  }, 0);
-
-  // After-tax counterpart of toVestGross: for each RSU stock, apply the
-  // California income-tax rate to the RSU portion of unvested value; for
-  // non-RSU (Options / Common) shares pass the gross through since this
-  // engine doesn't model their vest-time tax. Small-print projection on
-  // the "To vest" tile so the user sees what actually lands in-pocket.
-  const toVestAfterRsuTax = data.stocks.reduce((sum, h) => {
-    const unvested = unvestedSharesAt(h, todayDate);
-    const perShare = h.equity_type === "Stock Options"
-      ? Math.max(0, h.current_share_price - (h.strike_price ?? 0))
-      : h.current_share_price;
-    const nativeGross = unvested * perShare;
-    const factor = h.equity_type === "RSU"
-      ? Math.max(0, 1 - POST_TAX_RATES[0].rate / 100)
-      : 1;
-    return sum + convert(nativeGross * factor, h.currency, displayCurrency, data.settings);
   }, 0);
 
   // Look-ahead window: equity tranches that will vest, plus expected
@@ -394,23 +338,14 @@ export default function HomePage() {
                       </div>
                       <div className="rounded-md border p-2">
                         <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                          🌱 To vest · after RSU tax
+                          🌱 To vest
                         </div>
                         <div className="text-lg font-semibold tabular-nums">
-                          {formatMoney(toVestAfterRsuTax, displayCurrency)}
+                          {formatMoney(toVestGross, displayCurrency)}
                         </div>
                         {toVestAlt !== null ? (
                           <div className="text-[10px] text-muted-foreground tabular-nums">
-                            ≈ {formatMoney(
-                              convert(toVestAfterRsuTax, displayCurrency, secondary, data.settings),
-                              secondary,
-                            )}
-                          </div>
-                        ) : null}
-                        {toVestGross > 0 ? (
-                          <div className="mt-1 text-[10px] text-muted-foreground leading-tight tabular-nums">
-                            Pre-income-tax gross: <b>{formatMoney(toVestGross, displayCurrency)}</b>
-                            {" "}· {POST_TAX_RATES[0].label} {POST_TAX_RATES[0].rate}% applied to RSU
+                            ≈ {formatMoney(toVestAlt, secondary)}
                           </div>
                         ) : null}
                       </div>
@@ -427,32 +362,6 @@ export default function HomePage() {
                           </div>
                         ) : null}
                       </div>
-                      {(preTaxRsuValue > 0 || releasedCapGainsHaircut > 0)
-                        ? POST_TAX_RATES.map(({ label, rate }) => {
-                            const value = today - preTaxRsuValue * (rate / 100) - releasedCapGainsHaircut;
-                            const alt = haveRates
-                              ? convert(value, displayCurrency, secondary, data.settings)
-                              : null;
-                            return (
-                              <div key={label} className="rounded-md border p-2">
-                                <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                                  💸 Vested worth · RSU tax applied
-                                </div>
-                                <div className="text-lg font-semibold tabular-nums">
-                                  {formatMoney(value, displayCurrency)}
-                                </div>
-                                {alt !== null ? (
-                                  <div className="text-[10px] text-muted-foreground tabular-nums">
-                                    ≈ {formatMoney(alt, secondary)}
-                                  </div>
-                                ) : null}
-                                <div className="mt-1 text-[10px] text-muted-foreground leading-tight">
-                                  {rate}% RSU tax + cap-gains on released. Property &amp; options at gross.
-                                </div>
-                              </div>
-                            );
-                          })
-                        : null}
                     </>
                   );
                 })()}
