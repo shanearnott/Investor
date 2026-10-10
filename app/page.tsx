@@ -396,6 +396,11 @@ export default function HomePage() {
                             )}
                           </div>
                         ) : null}
+                        {toVestGross > 0 ? (
+                          <div className="mt-1 text-[10px] text-muted-foreground tabular-nums">
+                            Pre-tax: {formatMoney(toVestGross, displayCurrency)}
+                          </div>
+                        ) : null}
                       </div>
                       <div className="rounded-md border p-2">
                         <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
