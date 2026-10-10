@@ -339,38 +339,58 @@ export default function HomePage() {
                             ≈ {formatMoney(sharesAlt, secondary)}
                           </div>
                         ) : null}
-                        {taxPaidRsuValue > 0 || preTaxRsuValue > 0 ? (
-                          <div className="mt-1 text-[10px] text-muted-foreground leading-tight">
-                            {taxPaidRsuValue > 0 ? (
-                              <div>
-                                Released (tax-paid): {formatMoney(taxPaidRsuValue, displayCurrency)}
-                              </div>
-                            ) : null}
-                            {preTaxRsuValue > 0 ? (
-                              <div>
-                                RSU unreleased (tax owed): {formatMoney(preTaxRsuValue, displayCurrency)}
-                              </div>
-                            ) : null}
-                          </div>
-                        ) : null}
+                        {(() => {
+                          // Headline = outright + non-RSU vested + untaxed
+                          // RSU + tax-paid RSU. The two RSU sub-lines don't
+                          // cover outright shares or non-RSU equity, so
+                          // without this third line the subtotals wouldn't
+                          // sum to the headline.
+                          const otherEquity = Math.max(
+                            0,
+                            sharesGross - taxPaidRsuValue - preTaxRsuValue,
+                          );
+                          const anyRsu = taxPaidRsuValue > 0 || preTaxRsuValue > 0;
+                          if (!anyRsu && otherEquity <= 0) return null;
+                          return (
+                            <div className="mt-1 text-[10px] text-muted-foreground leading-tight">
+                              {taxPaidRsuValue > 0 ? (
+                                <div>
+                                  Released RSU (tax-paid): {formatMoney(taxPaidRsuValue, displayCurrency)}
+                                </div>
+                              ) : null}
+                              {preTaxRsuValue > 0 ? (
+                                <div>
+                                  Unreleased RSU (tax owed): {formatMoney(preTaxRsuValue, displayCurrency)}
+                                </div>
+                              ) : null}
+                              {otherEquity > 0.5 ? (
+                                <div>
+                                  Other equity (outright + options / common): {formatMoney(otherEquity, displayCurrency)}
+                                </div>
+                              ) : null}
+                            </div>
+                          );
+                        })()}
                       </div>
                       <div className="rounded-md border p-2">
                         <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                          🌱 To vest · pre-income-tax
+                          🌱 To vest · after RSU tax
                         </div>
                         <div className="text-lg font-semibold tabular-nums">
-                          {formatMoney(toVestGross, displayCurrency)}
+                          {formatMoney(toVestAfterRsuTax, displayCurrency)}
                         </div>
                         {toVestAlt !== null ? (
                           <div className="text-[10px] text-muted-foreground tabular-nums">
-                            ≈ {formatMoney(toVestAlt, secondary)}
+                            ≈ {formatMoney(
+                              convert(toVestAfterRsuTax, displayCurrency, secondary, data.settings),
+                              secondary,
+                            )}
                           </div>
                         ) : null}
                         {toVestGross > 0 ? (
                           <div className="mt-1 text-[10px] text-muted-foreground leading-tight tabular-nums">
-                            After RSU income tax
-                            {" "}({POST_TAX_RATES[0].label} {POST_TAX_RATES[0].rate}%):
-                            {" "}<b>{formatMoney(toVestAfterRsuTax, displayCurrency)}</b>
+                            Pre-income-tax gross: <b>{formatMoney(toVestGross, displayCurrency)}</b>
+                            {" "}· {POST_TAX_RATES[0].label} {POST_TAX_RATES[0].rate}% applied to RSU
                           </div>
                         ) : null}
                       </div>
