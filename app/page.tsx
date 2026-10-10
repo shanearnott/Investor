@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 
 import { CurrencySelector } from "@/components/currency-selector";
@@ -37,6 +37,9 @@ type LookaheadMonths = (typeof LOOKAHEAD_OPTIONS)[number];
 export default function HomePage() {
   const { data, loadDemo, loading, displayCurrency } = useData();
   const [lookaheadMonths, setLookaheadMonths] = useState<LookaheadMonths>(6);
+  // Optional explicit cut-off date. When set, overrides the months dropdown
+  // and the lookahead window runs today → customEndDate inclusive.
+  const [customEndDate, setCustomEndDate] = useState<string>("");
 
   const stocksCount = data.stocks.length;
   const propertiesCount = data.properties.length;
@@ -180,14 +183,31 @@ export default function HomePage() {
     return sum + convert(nativeGross * factor, h.currency, displayCurrency, data.settings);
   }, 0);
 
-  // Look-ahead window: equity tranches that will vest, plus expected property
-  // growth between now and N months from now (user-selectable).
+  // Look-ahead window: equity tranches that will vest, plus expected
+  // property growth between now and the chosen cut-off. A valid
+  // customEndDate wins over the months dropdown.
+  const lookaheadEndDate = useMemo(() => {
+    const today = new Date();
+    if (customEndDate) {
+      const parsed = parseISO(customEndDate);
+      if (parsed && parsed > today) return parsed;
+    }
+    return new Date(Date.UTC(
+      today.getUTCFullYear(),
+      today.getUTCMonth() + lookaheadMonths,
+      today.getUTCDate(),
+    ));
+  }, [customEndDate, lookaheadMonths]);
+  const lookaheadMode: "months" | "date" =
+    customEndDate && parseISO(customEndDate) && parseISO(customEndDate)! > new Date()
+      ? "date"
+      : "months";
   const lookahead = computeLookahead({
     holdings: data.stocks,
     properties: data.properties,
     settings: data.settings,
     displayCurrency,
-    months: lookaheadMonths,
+    endDate: lookaheadEndDate,
   });
 
   const showWelcome = !loading && stocksCount === 0 && propertiesCount === 0;
@@ -446,22 +466,52 @@ export default function HomePage() {
         <CardHeader>
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <CardTitle>Next {lookaheadMonths} months</CardTitle>
+              <CardTitle>
+                {lookaheadMode === "date"
+                  ? `Through ${lookahead.endLabel}`
+                  : `Next ${lookaheadMonths} months`}
+              </CardTitle>
               <CardDescription>
                 Vesting events and projected property growth between now and {lookahead.endLabel}
               </CardDescription>
             </div>
-            <div className="flex items-center gap-2">
-              <label className="text-[11px] text-muted-foreground">Look ahead</label>
-              <Select
-                value={String(lookaheadMonths)}
-                onChange={(e) => setLookaheadMonths(Number(e.target.value) as LookaheadMonths)}
-                className="h-8 w-[110px] text-xs"
-              >
-                {LOOKAHEAD_OPTIONS.map((m) => (
-                  <option key={m} value={m}>{m} months</option>
-                ))}
-              </Select>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-2">
+                <label className="text-[11px] text-muted-foreground">Look ahead</label>
+                <Select
+                  value={String(lookaheadMonths)}
+                  onChange={(e) => {
+                    setLookaheadMonths(Number(e.target.value) as LookaheadMonths);
+                    setCustomEndDate("");
+                  }}
+                  className="h-8 w-[110px] text-xs"
+                  disabled={lookaheadMode === "date"}
+                >
+                  {LOOKAHEAD_OPTIONS.map((m) => (
+                    <option key={m} value={m}>{m} months</option>
+                  ))}
+                </Select>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-[11px] text-muted-foreground">Until date</label>
+                <input
+                  type="date"
+                  value={customEndDate}
+                  min={new Date().toISOString().slice(0, 10)}
+                  onChange={(e) => setCustomEndDate(e.target.value)}
+                  className="h-8 rounded-md border bg-background px-2 text-xs"
+                />
+                {customEndDate ? (
+                  <button
+                    type="button"
+                    onClick={() => setCustomEndDate("")}
+                    className="h-8 rounded-md border bg-background px-2 text-[11px] text-muted-foreground hover:bg-accent"
+                    title="Clear date and use the dropdown"
+                  >
+                    Clear
+                  </button>
+                ) : null}
+              </div>
             </div>
           </div>
         </CardHeader>
@@ -599,7 +649,9 @@ export default function HomePage() {
             </>
           ) : (
             <p className="text-xs text-muted-foreground">
-              Nothing vesting and no property gains projected over the next {lookaheadMonths} months.
+              Nothing vesting and no property gains projected {lookaheadMode === "date"
+                ? `through ${lookahead.endLabel}`
+                : `over the next ${lookaheadMonths} months`}.
             </p>
           )}
         </CardContent>
@@ -657,7 +709,7 @@ function computeLookahead(args: {
   properties: Property[];
   settings: ReturnType<typeof useData>["data"]["settings"];
   displayCurrency: string;
-  months: number;
+  endDate: Date;
 }): {
   hasAny: boolean;
   endLabel: string;
@@ -669,7 +721,7 @@ function computeLookahead(args: {
   propertyGains: PropertyGain[];
 } {
   const today = new Date();
-  const end = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + args.months, today.getUTCDate()));
+  const end = args.endDate;
   const endLabel = end.toISOString().slice(0, 10);
 
   const events: VestingEvent[] = [];
@@ -729,6 +781,13 @@ function computeLookahead(args: {
 
   const propertyGains: PropertyGain[] = [];
   let totalGain = 0;
+  // Months between today and the chosen end, measured in fractional
+  // months so a custom date (not month-aligned) still compounds the
+  // right distance.
+  const monthsSpan = Math.max(
+    0,
+    (end.getTime() - today.getTime()) / (1000 * 60 * 60 * 24 * 30.4375),
+  );
   for (const p of args.properties) {
     const provider = lookupGrowthRate({
       country: p.country, region: p.region, suburb: p.suburb, postcode: p.postcode,
@@ -736,7 +795,7 @@ function computeLookahead(args: {
     });
     const annualPct = provider.rate;
     const monthly = Math.pow(1 + annualPct / 100, 1 / 12) - 1;
-    const projected = p.current_value * Math.pow(1 + monthly, args.months);
+    const projected = p.current_value * Math.pow(1 + monthly, monthsSpan);
     const gainNative = projected - p.current_value;
     const gainDisplay = convert(gainNative, p.currency, args.displayCurrency, args.settings);
     if (gainDisplay > 0) {
