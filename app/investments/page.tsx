@@ -914,7 +914,26 @@ function PropertiesSection(props: {
                 <Card>
                   <CardHeader className="flex flex-row items-start justify-between gap-2 space-y-0 pb-2">
                     <div>
-                      <CardTitle className="text-base">{p.name || "(unnamed)"}</CardTitle>
+                      <CardTitle className="flex flex-wrap items-center gap-2 text-base">
+                        <span>{p.name || "(unnamed)"}</span>
+                        {p.mortgage_balance <= 0 ? (
+                          <span className="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-800">
+                            Owned outright
+                          </span>
+                        ) : (
+                          (() => {
+                            const equityPct =
+                              p.current_value > 0
+                                ? ((p.current_value - p.mortgage_balance) / p.current_value) * 100
+                                : 0;
+                            return (
+                              <span className="inline-flex items-center rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-medium text-sky-800">
+                                Mortgaged · {Math.max(0, equityPct).toFixed(0)}% equity
+                              </span>
+                            );
+                          })()
+                        )}
+                      </CardTitle>
                       <CardDescription>
                         {p.suburb}, {p.region}, {p.country} ·{" "}
                         {formatMoney(p.current_value, p.currency)}
