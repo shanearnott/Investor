@@ -149,7 +149,7 @@ export default function InvestmentsPage() {
             </p>
           </div>
           <AskClaudeButton
-            heading="You're helping me reason about my equity holdings — tranches, vest schedule, release events (post-income-tax, net of withholding) and planned / past sell events. Shares not covered by a release event are still pre-income-tax; released shares have withholding already applied. The full set of saved scenarios is included so you can tie release/sell planning to the growth and tax assumptions I've defined."
+            heading="You're helping me reason about my equity holdings — tranches, vest schedule, release events (post-income-tax, net of withholding) and planned / past sell events. Shares not covered by a release event are still pre-income-tax; released shares have withholding already applied. Be concrete per ticker and reference release/sell ids where it matters."
             dataLabel="Investments context"
             displayCurrency={data.settings.primary_currency}
             buildData={() => ({
@@ -161,7 +161,6 @@ export default function InvestmentsPage() {
               // event, every release and sell. No summarisation.
               stocks: data.stocks,
               properties: data.properties,
-              scenarios: data.scenarios,
             })}
           />
         </div>
