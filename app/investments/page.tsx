@@ -149,7 +149,7 @@ export default function InvestmentsPage() {
             </p>
           </div>
           <AskClaudeButton
-            heading="You're helping me reason about my equity holdings — tranches, vest schedule, release events (post-income-tax, net of withholding) and planned / past sell events. Shares not covered by a release event are still pre-income-tax; released shares have withholding already applied. Be concrete per ticker and reference release/sell ids where it matters."
+            heading="You're helping me reason about my equity holdings — tranches, vest schedule, release events (post-income-tax, net of withholding) and planned / past sell events. Shares not covered by a release event are still pre-income-tax; released shares have withholding already applied. The full set of saved scenarios is included so you can tie release/sell planning to the growth and tax assumptions I've defined."
             dataLabel="Investments context"
             displayCurrency={data.settings.primary_currency}
             buildData={() => ({
@@ -157,29 +157,11 @@ export default function InvestmentsPage() {
               display_currency: data.settings.primary_currency,
               default_jurisdiction: data.settings.default_jurisdiction,
               fx_rates: data.settings.fx_rates ?? {},
-              stocks: data.stocks.map((h) => ({
-                id: h.id,
-                ticker: h.ticker,
-                company_name: h.company_name,
-                equity_type: h.equity_type,
-                currency: h.currency,
-                jurisdiction: h.jurisdiction,
-                current_share_price: h.current_share_price,
-                cost_basis_per_share: h.cost_basis_per_share,
-                strike_price: h.strike_price,
-                shares_owned_outright: h.shares_owned_outright,
-                tranches: h.tranches.map((t) => ({
-                  id: t.id,
-                  name: t.name,
-                  grant_date: t.grant_date,
-                  total_shares: t.vest_events.reduce((s, ev) => s + ev.shares, 0),
-                  vest_events: t.vest_events,
-                  notes: t.notes,
-                })),
-                releases: h.releases ?? [],
-                sells: h.sells ?? [],
-                notes: h.notes,
-              })),
+              // Raw holdings — every stock, every tranche, every vest
+              // event, every release and sell. No summarisation.
+              stocks: data.stocks,
+              properties: data.properties,
+              scenarios: data.scenarios,
             })}
           />
         </div>
