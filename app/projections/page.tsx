@@ -601,28 +601,18 @@ export default function ProjectionsPage() {
                 series_by_scenario: Object.fromEntries(
                   chosen.map((s) => [s.name, seriesByScenario[s.id] ?? []]),
                 ),
-                holdings_summary: data.stocks.map((h) => ({
-                  ticker: h.ticker || h.company_name,
-                  equity_type: h.equity_type,
-                  jurisdiction: h.jurisdiction,
-                  current_share_price: h.current_share_price,
-                  currency: h.currency,
-                  strike_price: h.strike_price,
-                  shares_owned_outright: h.shares_owned_outright,
-                  total_granted: h.tranches.reduce(
-                    (sum, t) => sum + t.vest_events.reduce((s2, ev) => s2 + ev.shares, 0),
-                    0,
-                  ),
-                })),
-                properties_summary: data.properties.map((p) => ({
-                  name: p.name,
-                  country: p.country,
-                  region: p.region,
-                  currency: p.currency,
-                  current_value: p.current_value,
-                  mortgage_balance: p.mortgage_balance,
-                  annual_growth_pct: p.annual_growth_pct,
-                })),
+                // Full raw investments — tranches (grant date, vest events,
+                // notes), release events (post-income-tax net, withholding),
+                // and planned/past sell events — so Claude sees the complete
+                // vesting / sale schedule, not a summarised row-per-holding.
+                holdings: data.stocks,
+                properties: data.properties,
+                settings: {
+                  primary_currency: data.settings.primary_currency,
+                  secondary_currency: data.settings.secondary_currency,
+                  default_jurisdiction: data.settings.default_jurisdiction,
+                  fx_rates: data.settings.fx_rates ?? {},
+                },
               })}
             />
             <CurrencySelector />
