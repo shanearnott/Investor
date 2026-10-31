@@ -573,7 +573,60 @@ export default function ProjectionsPage() {
       <div className="sticky top-[44px] sm:top-[52px] z-20 -mx-3 sm:-mx-6 px-3 sm:px-6 py-2 bg-background/95 backdrop-blur border-b">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h1 className="text-xl font-semibold">Projections</h1>
-          <CurrencySelector />
+          <div className="flex items-center gap-2">
+            <AskClaudeButton
+              heading="You're helping me reason about my personal financial projections. The data below is a snapshot of my selected scenarios, their projected net-worth series through the horizon, and the current pie breakdown. Be concrete and reference the scenario names where relevant."
+              dataLabel="Projections context"
+              displayCurrency={ccy}
+              buildData={() => ({
+                as_of: new Date().toISOString().slice(0, 10),
+                display_currency: ccy,
+                horizon_months: Math.max(...chosen.map((s) => s.horizon_years * 12), 0),
+                selected_scenarios: chosen.map((s) => ({
+                  id: s.id,
+                  name: s.name,
+                  description: s.description,
+                  horizon_years: s.horizon_years,
+                  default_stock_growth_pct: s.default_stock_growth_pct,
+                  default_property_growth_pct: s.default_property_growth_pct,
+                  inflation_pct: s.inflation_pct,
+                  rsu_tax_jurisdiction: s.rsu_tax_jurisdiction,
+                  rsu_tax_rate_pct: s.rsu_tax_rate_pct,
+                  rsu_tax_year_overrides: s.rsu_tax_year_overrides,
+                  stock_overrides: s.stock_overrides,
+                  property_overrides: s.property_overrides,
+                  releases: s.releases,
+                  sells: s.sells,
+                })),
+                series_by_scenario: Object.fromEntries(
+                  chosen.map((s) => [s.name, seriesByScenario[s.id] ?? []]),
+                ),
+                holdings_summary: data.stocks.map((h) => ({
+                  ticker: h.ticker || h.company_name,
+                  equity_type: h.equity_type,
+                  jurisdiction: h.jurisdiction,
+                  current_share_price: h.current_share_price,
+                  currency: h.currency,
+                  strike_price: h.strike_price,
+                  shares_owned_outright: h.shares_owned_outright,
+                  total_granted: h.tranches.reduce(
+                    (sum, t) => sum + t.vest_events.reduce((s2, ev) => s2 + ev.shares, 0),
+                    0,
+                  ),
+                })),
+                properties_summary: data.properties.map((p) => ({
+                  name: p.name,
+                  country: p.country,
+                  region: p.region,
+                  currency: p.currency,
+                  current_value: p.current_value,
+                  mortgage_balance: p.mortgage_balance,
+                  annual_growth_pct: p.annual_growth_pct,
+                })),
+              })}
+            />
+            <CurrencySelector />
+          </div>
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-1">
           <Label className="text-xs text-muted-foreground mr-1">Scenarios</Label>
@@ -601,57 +654,6 @@ export default function ProjectionsPage() {
               </button>
             );
           })}
-          <AskClaudeButton
-            heading="You're helping me reason about my personal financial projections. The data below is a snapshot of my selected scenarios, their projected net-worth series through the horizon, and the current pie breakdown. Be concrete and reference the scenario names where relevant."
-            dataLabel="Projections context"
-            displayCurrency={ccy}
-            buildData={() => ({
-              as_of: new Date().toISOString().slice(0, 10),
-              display_currency: ccy,
-              horizon_months: Math.max(...chosen.map((s) => s.horizon_years * 12), 0),
-              selected_scenarios: chosen.map((s) => ({
-                id: s.id,
-                name: s.name,
-                description: s.description,
-                horizon_years: s.horizon_years,
-                default_stock_growth_pct: s.default_stock_growth_pct,
-                default_property_growth_pct: s.default_property_growth_pct,
-                inflation_pct: s.inflation_pct,
-                rsu_tax_jurisdiction: s.rsu_tax_jurisdiction,
-                rsu_tax_rate_pct: s.rsu_tax_rate_pct,
-                rsu_tax_year_overrides: s.rsu_tax_year_overrides,
-                stock_overrides: s.stock_overrides,
-                property_overrides: s.property_overrides,
-                releases: s.releases,
-                sells: s.sells,
-              })),
-              series_by_scenario: Object.fromEntries(
-                chosen.map((s) => [s.name, seriesByScenario[s.id] ?? []]),
-              ),
-              holdings_summary: data.stocks.map((h) => ({
-                ticker: h.ticker || h.company_name,
-                equity_type: h.equity_type,
-                jurisdiction: h.jurisdiction,
-                current_share_price: h.current_share_price,
-                currency: h.currency,
-                strike_price: h.strike_price,
-                shares_owned_outright: h.shares_owned_outright,
-                total_granted: h.tranches.reduce(
-                  (sum, t) => sum + t.vest_events.reduce((s2, ev) => s2 + ev.shares, 0),
-                  0,
-                ),
-              })),
-              properties_summary: data.properties.map((p) => ({
-                name: p.name,
-                country: p.country,
-                region: p.region,
-                currency: p.currency,
-                current_value: p.current_value,
-                mortgage_balance: p.mortgage_balance,
-                annual_growth_pct: p.annual_growth_pct,
-              })),
-            })}
-          />
           <div className="ml-auto flex items-center gap-2">
             <Label className="text-xs text-muted-foreground">Start</Label>
             <Input
