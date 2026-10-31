@@ -1,44 +1,60 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { Check, ClipboardCopy, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/input";
 
-/** "Copy for Claude" affordance that assembles a page-scoped JSON
- *  payload plus a prompt header and (optionally) the user's question,
- *  then puts the whole thing on the clipboard so the user can paste
- *  into Claude.ai or Claude Desktop. No API calls; no key; works on
- *  iPad as long as the clipboard permission grant goes through. */
+/** Compact Claude-style asterisk mark — eight petals in a radial
+ *  arrangement, rendered inline so it inherits text colour. */
+function ClaudeMark({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="-16 -16 32 32"
+      width="14"
+      height="14"
+      fill="currentColor"
+      aria-hidden="true"
+      className={className}
+    >
+      {[0, 45, 90, 135, 180, 225, 270, 315].map((d) => (
+        <ellipse
+          key={d}
+          cx="0"
+          cy="-9"
+          rx="2.2"
+          ry="5"
+          transform={`rotate(${d})`}
+        />
+      ))}
+    </svg>
+  );
+}
+
+/** Single-click copy-to-Claude affordance. Builds a prompt header + a
+ *  JSON slice of the current page's state + a trailing "My question:"
+ *  placeholder, puts the whole thing on the clipboard. No panel, no
+ *  textarea — the user types their question in Claude after pasting. */
 export function AskClaudeButton({
   heading,
   dataLabel,
   buildData,
   displayCurrency,
 }: {
-  /** One-line system-style preamble pasted above the data. */
   heading: string;
-  /** Short label for the data block (e.g. "Projections context"). */
   dataLabel: string;
-  /** Called at copy-time so the payload reflects the current state. */
   buildData: () => unknown;
-  /** Primary currency the UI is using, surfaced so Claude knows what
-   *  the numbers are denominated in. */
   displayCurrency: string;
 }) {
-  const [open, setOpen] = useState(false);
-  const [question, setQuestion] = useState("");
-  const [copied, setCopied] = useState<"ok" | "err" | null>(null);
+  const [status, setStatus] = useState<"idle" | "ok" | "err">("idle");
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const flash = (kind: "ok" | "err") => {
-    setCopied(kind);
+    setStatus(kind);
     if (resetTimer.current) clearTimeout(resetTimer.current);
-    resetTimer.current = setTimeout(() => setCopied(null), 2500);
+    resetTimer.current = setTimeout(() => setStatus("idle"), 2500);
   };
 
-  const handleCopy = async () => {
+  const handleClick = async () => {
     let payload: string;
     try {
       payload = JSON.stringify(buildData(), null, 2);
@@ -46,13 +62,12 @@ export function AskClaudeButton({
       flash("err");
       return;
     }
-    const trimmed = question.trim();
     const text = `${heading}\n\n`
       + `${dataLabel} (display currency: ${displayCurrency}, today: ${new Date().toISOString().slice(0, 10)}):\n\n`
       + "```json\n"
       + payload
       + "\n```\n\n"
-      + (trimmed ? `My question:\n${trimmed}` : "My question:");
+      + "My question:";
     try {
       if (typeof navigator === "undefined" || !navigator.clipboard) throw new Error("no clipboard");
       await navigator.clipboard.writeText(text);
@@ -62,52 +77,17 @@ export function AskClaudeButton({
     }
   };
 
-  if (!open) {
-    return (
-      <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
-        <ClipboardCopy className="h-3.5 w-3.5" /> Copy for Claude
-      </Button>
-    );
-  }
-
   return (
-    <div className="rounded-md border bg-background p-2 space-y-2 w-full sm:max-w-md">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[11px] font-medium text-muted-foreground">
-          Ask Claude · via clipboard
-        </span>
-        <button
-          type="button"
-          onClick={() => setOpen(false)}
-          className="rounded-md p-0.5 text-muted-foreground hover:bg-accent"
-          aria-label="Close"
-        >
-          <X className="h-3.5 w-3.5" />
-        </button>
-      </div>
-      <Textarea
-        value={question}
-        onChange={(e) => setQuestion(e.target.value)}
-        placeholder="Optional — type your question here, or leave blank and type it in Claude after pasting."
-        rows={3}
-        className="text-xs"
-      />
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[10px] text-muted-foreground">
-          {copied === "ok"
-            ? "Copied. Paste into Claude."
-            : copied === "err"
-              ? "Couldn't copy — clipboard blocked."
-              : "Nothing leaves your device until you paste."}
-        </span>
-        <Button size="sm" variant={copied === "ok" ? "default" : "outline"} onClick={handleCopy}>
-          {copied === "ok" ? (
-            <><Check className="h-3.5 w-3.5" /> Copied</>
-          ) : (
-            <><ClipboardCopy className="h-3.5 w-3.5" /> Copy</>
-          )}
-        </Button>
-      </div>
+    <div className="flex items-center gap-2">
+      <Button size="sm" variant="outline" onClick={handleClick}>
+        <span>Ask</span>
+        <ClaudeMark className="text-[#D97757]" />
+      </Button>
+      {status === "ok" ? (
+        <span className="text-[11px] text-emerald-700">Query copied, paste to Claude</span>
+      ) : status === "err" ? (
+        <span className="text-[11px] text-rose-700">Couldn&apos;t copy — clipboard blocked</span>
+      ) : null}
     </div>
   );
 }
