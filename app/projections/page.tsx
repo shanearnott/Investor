@@ -575,27 +575,15 @@ export default function ProjectionsPage() {
           <h1 className="text-xl font-semibold">Projections</h1>
           <div className="flex items-center gap-2">
             <AskClaudeButton
-              heading="You're helping me reason about my personal financial projections. The data below is my full investments + every scenario I've defined, plus which scenarios are currently ticked and their projected net-worth series. Reference scenarios and tickers by name where relevant."
+              heading="You're helping me reason about my personal financial projections. The data below is my full set of investments and every scenario I've defined — enough to answer questions about variations on any scenario or combination of them. Reference tickers and scenarios by name where relevant."
               dataLabel="Projections context"
               displayCurrency={ccy}
               buildData={() => ({
                 as_of: new Date().toISOString().slice(0, 10),
                 display_currency: ccy,
-                horizon_months: Math.max(...chosen.map((s) => s.horizon_years * 12), 0),
-                // Every scenario I've defined (unaltered), plus which
-                // ones are ticked and their computed series. Series is
-                // only produced for the ticked ones since computing it
-                // for every scenario on every click would be wasteful;
-                // the raw definitions are the full set.
+                // Everything, raw. No selected-subset — Claude can combine
+                // or vary scenarios however the question calls for.
                 scenarios: data.scenarios,
-                selected_scenario_ids: chosen.map((s) => s.id),
-                series_by_scenario: Object.fromEntries(
-                  chosen.map((s) => [s.name, seriesByScenario[s.id] ?? []]),
-                ),
-                // Full raw investments — tranches (grant date, vest
-                // events, notes), release events (post-income-tax net,
-                // withholding), planned/past sell events, outright
-                // shares, cost basis. Properties with mortgage balance.
                 holdings: data.stocks,
                 properties: data.properties,
                 settings: {
