@@ -575,36 +575,27 @@ export default function ProjectionsPage() {
           <h1 className="text-xl font-semibold">Projections</h1>
           <div className="flex items-center gap-2">
             <AskClaudeButton
-              heading="You're helping me reason about my personal financial projections. The data below is a snapshot of my selected scenarios, their projected net-worth series through the horizon, and the current pie breakdown. Be concrete and reference the scenario names where relevant."
+              heading="You're helping me reason about my personal financial projections. The data below is my full investments + every scenario I've defined, plus which scenarios are currently ticked and their projected net-worth series. Reference scenarios and tickers by name where relevant."
               dataLabel="Projections context"
               displayCurrency={ccy}
               buildData={() => ({
                 as_of: new Date().toISOString().slice(0, 10),
                 display_currency: ccy,
                 horizon_months: Math.max(...chosen.map((s) => s.horizon_years * 12), 0),
-                selected_scenarios: chosen.map((s) => ({
-                  id: s.id,
-                  name: s.name,
-                  description: s.description,
-                  horizon_years: s.horizon_years,
-                  default_stock_growth_pct: s.default_stock_growth_pct,
-                  default_property_growth_pct: s.default_property_growth_pct,
-                  inflation_pct: s.inflation_pct,
-                  rsu_tax_jurisdiction: s.rsu_tax_jurisdiction,
-                  rsu_tax_rate_pct: s.rsu_tax_rate_pct,
-                  rsu_tax_year_overrides: s.rsu_tax_year_overrides,
-                  stock_overrides: s.stock_overrides,
-                  property_overrides: s.property_overrides,
-                  releases: s.releases,
-                  sells: s.sells,
-                })),
+                // Every scenario I've defined (unaltered), plus which
+                // ones are ticked and their computed series. Series is
+                // only produced for the ticked ones since computing it
+                // for every scenario on every click would be wasteful;
+                // the raw definitions are the full set.
+                scenarios: data.scenarios,
+                selected_scenario_ids: chosen.map((s) => s.id),
                 series_by_scenario: Object.fromEntries(
                   chosen.map((s) => [s.name, seriesByScenario[s.id] ?? []]),
                 ),
-                // Full raw investments — tranches (grant date, vest events,
-                // notes), release events (post-income-tax net, withholding),
-                // and planned/past sell events — so Claude sees the complete
-                // vesting / sale schedule, not a summarised row-per-holding.
+                // Full raw investments — tranches (grant date, vest
+                // events, notes), release events (post-income-tax net,
+                // withholding), planned/past sell events, outright
+                // shares, cost basis. Properties with mortgage balance.
                 holdings: data.stocks,
                 properties: data.properties,
                 settings: {
